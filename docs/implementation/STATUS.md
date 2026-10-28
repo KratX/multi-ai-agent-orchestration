@@ -40,15 +40,16 @@
 - `TENANT-001 & TENANT-003`: Created `src/server/db/repositories/tenant-repository.ts` implementing `ensureUser()`, transactional `createOrganizationWithOwner()`, `resolveActorContext()`, `upsertMembership()`, `removeMembership()`, and the last-owner safeguard.
 - `TENANT-004`: Created and verified `tests/security/tenant-isolation.test.ts` (`4/4 passing` against PostgreSQL) covering cross-tenant negative access, anti-spoofing, role escalation prevention, and last-owner protection.
 - `AGENT-001 & AGENT-002 (Part 1 — Schema & Migration 0002)`: Created `src/server/db/schema/agents.ts` (`agents` + `agent_versions` with SHA-256 `snapshot_hash` and composite unique constraints) and updated `src/server/db/client.ts` to run `MIGRATION_0002_AGENTS_SQL`.
+- `AGENT-001 & AGENT-002 (Part 2 — Repository & Snapshot Hashing)`: Created `src/server/db/repositories/agent-repository.ts` implementing `createAgentDraft()`, `updateAgentDraft()`, `computeAgentSnapshotHash()`, `publishAgentVersion()`, `getAgentVersionForActor()`, `listAgentVersions()`, and `archiveAgent()`.
 
 ## In progress
-- `AGENT-001 & AGENT-002 (Part 2 — Repository & Snapshot Hashing)`: Create `src/server/db/repositories/agent-repository.ts` implementing tenant-scoped Agent CRUD, canonical SHA-256 snapshot hashing, and transactional version publishing (`v1`, `v2`, ...).
+- `AGENT-001 & AGENT-002 (Part 3 — Verification)`: Create and execute `tests/integration/agent-versions.test.ts` to verify draft editing, immutable version publishing (`v1`, `v2`), SHA-256 snapshot integrity, and cross-tenant agent isolation against PostgreSQL.
 
 ## Blockers and risks
 - None recorded yet.
 
 ## Next task
-- `AGENT-001 & AGENT-002 (Part 2)`: Implement `src/server/db/repositories/agent-repository.ts` and verify with PostgreSQL integration tests.
+- `AGENT-001 & AGENT-002 (Part 3)`: Write and run `tests/integration/agent-versions.test.ts`.
 
 ## Test evidence
 - `npx --yes tsx --test tests/unit/env.test.ts` -> `7 tests, 7 pass, 0 fail`.
@@ -58,6 +59,7 @@
 - `npx --yes tsx --test tests/security/tenant-isolation.test.ts` -> `4 tests, 4 pass, 0 fail`.
 
 ## Change log
+- 2026-10-28: Created `src/server/db/repositories/agent-repository.ts` (`AGENT-001` & `AGENT-002` Part 2).
 - 2026-10-28: Created `src/server/db/schema/agents.ts` and updated `src/server/db/client.ts` (`AGENT-001` & `AGENT-002` Part 1).
 - 2026-10-28: Completed `TENANT-004` (`tests/security/tenant-isolation.test.ts` 4/4 passing). Phase 2 complete!
 - 2026-10-28: Created `src/server/db/repositories/tenant-repository.ts` (`TENANT-001` & `TENANT-003`).
