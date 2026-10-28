@@ -10,8 +10,10 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/unit/*.test.ts",
+    "test": "tsx --test tests/unit/*.test.ts tests/integration/*.test.ts tests/security/*.test.ts",
     "test:unit": "tsx --test tests/unit/*.test.ts",
+    "test:integration": "tsx --test tests/integration/*.test.ts",
+    "test:security": "tsx --test tests/security/*.test.ts",
     "db:up": "docker compose up -d",
     "db:stop": "docker compose stop",
     "db:logs": "docker compose logs -f postgres"
@@ -43,4 +45,3 @@
     "@types/express": "^4.17.21"
   }
 }
-
