@@ -1,0 +1,34 @@
+# Ticket REPO-004: Local PostgreSQL Service Definition
+# Usage:
+#   Start background DB:  docker compose up -d
+#   Check DB health:      docker compose ps
+#   View DB logs:         docker compose logs -f postgres
+#   Stop (preserve data): docker compose stop
+#
+# Note: Data is persisted in the named volume `aegis_postgres_data`.
+# Normal start/stop commands never delete this volume.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aegis-runtime-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_platform}
+    volumes:
+      - aegis_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-agent_platform}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  aegis_postgres_data:
+    name: aegis_runtime_postgres_data
+
