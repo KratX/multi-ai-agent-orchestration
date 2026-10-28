@@ -17,6 +17,14 @@ export interface ReadinessCheckResult {
   engine: 'postgres' | 'pglite' | 'unverified';
 }
 
+export interface DatabaseReadinessCheck {
+  ping(): Promise<{
+    reachable: boolean;
+    latencyMs: number;
+    error?: string;
+  }>;
+}
+
 export interface HealthRouteDependencies {
   rawEnv?: Record<string, string | undefined>;
   checkDatabaseReadiness?: () => Promise<ReadinessCheckResult>;
@@ -113,4 +121,3 @@ export async function GET(
     );
   }
 }
-

@@ -104,7 +104,7 @@ describe('TENANT-004: Multi-Tenant Isolation & Security Negative Tests', () => {
     await assert.rejects(
       async () => getOrganizationForActor(ctx.db, aliceActorInOrgA, orgB.id),
       (err: unknown) => {
-        assert.ok(err instanceof AuthorizationError);
+        if (!(err instanceof AuthorizationError)) return false;
         assert.equal(err.code, 'TENANT_MISMATCH');
         assert.equal(err.statusCode, 404);
         return true;
@@ -115,7 +115,7 @@ describe('TENANT-004: Multi-Tenant Isolation & Security Negative Tests', () => {
     await assert.rejects(
       async () => listOrganizationMembers(ctx.db, aliceActorInOrgA, orgB.id),
       (err: unknown) => {
-        assert.ok(err instanceof AuthorizationError);
+        if (!(err instanceof AuthorizationError)) return false;
         assert.equal(err.code, 'TENANT_MISMATCH');
         assert.equal(err.statusCode, 404);
         return true;
@@ -131,7 +131,7 @@ describe('TENANT-004: Multi-Tenant Isolation & Security Negative Tests', () => {
           role: 'admin',
         }),
       (err: unknown) => {
-        assert.ok(err instanceof AuthorizationError);
+        if (!(err instanceof AuthorizationError)) return false;
         assert.equal(err.code, 'TENANT_MISMATCH');
         assert.equal(err.statusCode, 404);
         return true;
@@ -142,7 +142,7 @@ describe('TENANT-004: Multi-Tenant Isolation & Security Negative Tests', () => {
     await assert.rejects(
       async () => removeMembership(ctx.db, aliceActorInOrgA, orgB.id, bob.id),
       (err: unknown) => {
-        assert.ok(err instanceof AuthorizationError);
+        if (!(err instanceof AuthorizationError)) return false;
         assert.equal(err.code, 'TENANT_MISMATCH');
         assert.equal(err.statusCode, 404);
         return true;
@@ -200,7 +200,7 @@ describe('TENANT-004: Multi-Tenant Isolation & Security Negative Tests', () => {
           role: 'owner',
         }),
       (err: unknown) => {
-        assert.ok(err instanceof AuthorizationError);
+        if (!(err instanceof AuthorizationError)) return false;
         assert.equal(err.code, 'INSUFFICIENT_ROLE');
         assert.equal(err.statusCode, 403);
         return true;
@@ -212,7 +212,7 @@ describe('TENANT-004: Multi-Tenant Isolation & Security Negative Tests', () => {
       async () =>
         removeMembership(ctx.db, adminActor, organization.id, ownerUser.id),
       (err: unknown) => {
-        assert.ok(err instanceof AuthorizationError);
+        if (!(err instanceof AuthorizationError)) return false;
         assert.equal(err.code, 'INSUFFICIENT_ROLE');
         assert.equal(err.statusCode, 403);
         return true;
@@ -246,7 +246,7 @@ describe('TENANT-004: Multi-Tenant Isolation & Security Negative Tests', () => {
           role: 'admin',
         }),
       (err: unknown) => {
-        assert.ok(err instanceof TenantConstraintError);
+        if (!(err instanceof TenantConstraintError)) return false;
         assert.equal(err.code, 'LAST_OWNER_PROTECTED');
         assert.equal(err.statusCode, 409);
         return true;
@@ -258,7 +258,7 @@ describe('TENANT-004: Multi-Tenant Isolation & Security Negative Tests', () => {
       async () =>
         removeMembership(ctx.db, firstOwnerActor, organization.id, firstOwner.id),
       (err: unknown) => {
-        assert.ok(err instanceof TenantConstraintError);
+        if (!(err instanceof TenantConstraintError)) return false;
         assert.equal(err.code, 'LAST_OWNER_PROTECTED');
         assert.equal(err.statusCode, 409);
         return true;

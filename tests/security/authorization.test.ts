@@ -43,7 +43,7 @@ describe('TENANT-002: Central Authorization Policy Engine (authorization.ts)', (
     assert.throws(
       () => requireAuthorization(null, 'org.view', resourceInOrgA),
       (err: unknown) => {
-        assert.ok(err instanceof AuthorizationError);
+        if (!(err instanceof AuthorizationError)) return false;
         assert.equal(err.code, 'UNAUTHENTICATED');
         assert.equal(err.statusCode, 401);
         return true;
@@ -75,7 +75,7 @@ describe('TENANT-002: Central Authorization Policy Engine (authorization.ts)', (
     assert.throws(
       () => requireAuthorization(ownerOfOrgA, 'agent.view', resourceInOrgB),
       (err: unknown) => {
-        assert.ok(err instanceof AuthorizationError);
+        if (!(err instanceof AuthorizationError)) return false;
         assert.equal(err.code, 'TENANT_MISMATCH');
         assert.equal(err.statusCode, 404);
         return true;
@@ -205,7 +205,7 @@ describe('TENANT-002: Central Authorization Policy Engine (authorization.ts)', (
     assert.throws(
       () => requireAuthorization(viewer, 'run.start', resourceInOrgA),
       (err: unknown) => {
-        assert.ok(err instanceof AuthorizationError);
+        if (!(err instanceof AuthorizationError)) return false;
         assert.equal(err.code, 'INSUFFICIENT_ROLE');
         assert.equal(err.statusCode, 403);
         return true;

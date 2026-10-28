@@ -98,8 +98,6 @@ export type NewMembershipRow = typeof memberships.$inferInsert;
  * Used to bootstrap empty PostgreSQL / PGlite instances deterministically in migrations and tests.
  */
 export const MIGRATION_0001_TENANT_SQL = `
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
 CREATE TABLE IF NOT EXISTS organizations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 100),
@@ -126,4 +124,3 @@ CREATE TABLE IF NOT EXISTS memberships (
   CONSTRAINT memberships_org_user_pk PRIMARY KEY (organization_id, user_id)
 );
 `;
-

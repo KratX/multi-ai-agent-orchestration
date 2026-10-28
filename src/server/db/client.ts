@@ -1,8 +1,8 @@
-import { PGlite } from '@electric-sql/pglite';
-import { drizzle, type PgliteDatabase } from 'drizzle-orm/pglite';
-import * as tenantSchema from './schema/tenant';
-import { MIGRATION_0001_TENANT_SQL } from './schema/tenant';
-import type { DatabaseReadinessCheck } from '../../app/api/v1/health/route';
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
+import * as tenantSchema from "./schema/tenant";
+import { MIGRATION_0001_TENANT_SQL } from "./schema/tenant";
+import type { DatabaseReadinessCheck } from "../../app/api/v1/health/route";
 
 /**
  * Ticket REPO-005 (Part 2): Drizzle ORM Database Client & Migration Runner
@@ -81,14 +81,14 @@ export function getSharedDatabase(): Promise<DatabaseContext> {
  * `GET /api/v1/health` (`src/app/api/v1/health/route.ts`).
  */
 export function createDrizzleReadinessProbe(
-  contextProvider: () => Promise<DatabaseContext> = getSharedDatabase
+  contextProvider: () => Promise<DatabaseContext> = getSharedDatabase,
 ): DatabaseReadinessCheck {
   return {
     async ping() {
       const start = performance.now();
       try {
         const { pg } = await contextProvider();
-        await pg.query('SELECT 1 AS ok;');
+        await pg.query("SELECT 1 AS ok;");
         const latencyMs = Math.max(0, Math.round(performance.now() - start));
         return {
           reachable: true,
@@ -97,7 +97,9 @@ export function createDrizzleReadinessProbe(
       } catch (err) {
         const latencyMs = Math.max(0, Math.round(performance.now() - start));
         const message =
-          err instanceof Error ? err.message : 'Database readiness query failed';
+          err instanceof Error
+            ? err.message
+            : "Database readiness query failed";
         return {
           reachable: false,
           latencyMs,

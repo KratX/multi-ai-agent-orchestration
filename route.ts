@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { parseEnv, getPublicEnvSummary } from '../../../../server/config/env';
+import { parseEnv, getPublicEnvSummary } from './src/server/config/env';
 
 /**
  * Ticket REPO-004: Health & Readiness Route Handler (Next.js App Router Contract)
