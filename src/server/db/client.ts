@@ -1,23 +1,24 @@
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
-import * as tenantSchema from "./schema/tenant";
-import { MIGRATION_0001_TENANT_SQL } from "./schema/tenant";
-import type { DatabaseReadinessCheck } from "../../app/api/v1/health/route";
+import { PGlite } from '@electric-sql/pglite';
+import { drizzle, type PgliteDatabase } from 'drizzle-orm/pglite';
+import * as tenantSchema from './schema/tenant';
+import { MIGRATION_0001_TENANT_SQL } from './schema/tenant';
+import * as agentsSchema from './schema/agents';
+import { MIGRATION_0002_AGENTS_SQL } from './schema/agents';
+import type { DatabaseReadinessCheck } from '../../app/api/v1/health/route';
 
 /**
- * Ticket REPO-005 (Part 2): Drizzle ORM Database Client & Migration Runner
+ * Ticket REPO-005 & AGENT-001: Drizzle ORM Database Client & Migration Runner
  *
- * Provides:
- * 1. `createDatabaseClient()`: Creates an isolated PostgreSQL instance backed by PGlite
- *    (real PostgreSQL engine compiled to WASM) or persistent data directory, wrapped
- *    with Drizzle ORM and our typed `tenantSchema`.
- * 2. `applyTenantMigrations()`: Applies versioned SQL DDL (`MIGRATION_0001_TENANT_SQL`)
- *    idempotently so all tables, composite primary keys, and SQL CHECK constraints are active.
- * 3. `createDrizzleReadinessProbe()`: Concrete `DatabaseReadinessCheck` implementation
- *    that runs a real `SELECT 1 AS ok` query against PostgreSQL for `/api/v1/health`.
+ * Combines all domain schemas (`tenantSchema` + `agentsSchema`) and applies
+ * sequential versioned SQL migrations (`0001` + `0002`) idempotently.
  */
 
-export type AegisDatabase = PgliteDatabase<typeof tenantSchema>;
+export const aegisSchema = {
+  ...tenantSchema,
+  ...agentsSchema,
+};
+
+export type AegisDatabase = PgliteDatabase<typeof aegisSchema>;
 
 export interface DatabaseContext {
   pg: PGlite;
@@ -26,19 +27,16 @@ export interface DatabaseContext {
 }
 
 /**
- * Applies the foundational multi-tenant SQL migration (0001) to the given PGlite instance.
+ * Applies all sequential SQL migrations (0001 Tenant + 0002 Agents) to the given PGlite instance.
  * Safe to call multiple times because statements use `IF NOT EXISTS`.
  */
 export async function applyTenantMigrations(pg: PGlite): Promise<void> {
   await pg.exec(MIGRATION_0001_TENANT_SQL);
+  await pg.exec(MIGRATION_0002_AGENTS_SQL);
 }
 
 /**
  * Creates a fresh, migrated PostgreSQL + Drizzle database context.
- * - Pass no arguments (or `dataDir: 'memory://'`) for an isolated in-memory PostgreSQL
- *   instance in unit/integration tests.
- * - Pass a filesystem path (e.g. `.aegis-pgdata`) for local persistent storage when
- *   Docker is not running.
  */
 export async function createDatabaseClient(options?: {
   dataDir?: string;
@@ -51,7 +49,7 @@ export async function createDatabaseClient(options?: {
     await applyTenantMigrations(pg);
   }
 
-  const db = drizzle(pg, { schema: tenantSchema });
+  const db = drizzle(pg, { schema: aegisSchema });
 
   return {
     pg,
@@ -81,14 +79,14 @@ export function getSharedDatabase(): Promise<DatabaseContext> {
  * `GET /api/v1/health` (`src/app/api/v1/health/route.ts`).
  */
 export function createDrizzleReadinessProbe(
-  contextProvider: () => Promise<DatabaseContext> = getSharedDatabase,
+  contextProvider: () => Promise<DatabaseContext> = getSharedDatabase
 ): DatabaseReadinessCheck {
   return {
     async ping() {
       const start = performance.now();
       try {
         const { pg } = await contextProvider();
-        await pg.query("SELECT 1 AS ok;");
+        await pg.query('SELECT 1 AS ok;');
         const latencyMs = Math.max(0, Math.round(performance.now() - start));
         return {
           reachable: true,
@@ -97,9 +95,7 @@ export function createDrizzleReadinessProbe(
       } catch (err) {
         const latencyMs = Math.max(0, Math.round(performance.now() - start));
         const message =
-          err instanceof Error
-            ? err.message
-            : "Database readiness query failed";
+          err instanceof Error ? err.message : 'Database readiness query failed';
         return {
           reachable: false,
           latencyMs,

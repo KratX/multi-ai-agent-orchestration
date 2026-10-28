@@ -1,11 +1,11 @@
 # Implementation Status
 
-- Current phase: Phase 1 — Repository and local developer experience
-- Current ticket: REPO-005 (In Progress — package.json & tenant.ts written, db client & migration test next)
-- Last updated: 2026-10-27
+- Current phase: Phase 3 — Agent Studio & Immutable Versioning
+- Current ticket: AGENT-001 & AGENT-002 (In Progress — `agents.ts` schema & `client.ts` migration 0002 written, repository & publishing logic next)
+- Last updated: 2026-10-28
 - Demo mode: verified (`AI_MODE=demo` unit tests passing)
-- Local database: Drizzle schema `src/server/db/schema/tenant.ts` written (`client.ts` & integration test next)
-- CI status: local unit test suites verified (`11/11 tests passing` via `pnpm test` / `tsx --test`)
+- Local database: Drizzle schema + PGlite PostgreSQL migrations 0001 & 0002 active
+- CI status: local unit + integration + security test suites verified (`27/27 tests passing`, `pnpm typecheck` 0 errors)
 
 ## 1. Confirmed MVP Scope & Explicit Non-Goals (`PLAN-001`)
 
@@ -32,24 +32,35 @@
 - `PLAN-002`: Wrote system architecture overview, responsibility boundaries, Mermaid diagrams, and state machine specification (`docs/architecture.md`).
 - `PLAN-003`: Wrote security threat model, trust boundaries, T-01..T-07 mitigation catalog, and residual risk disclosure (`docs/threat-model.md`).
 - `PLAN-004`: Created `docs/adr/ADR-001-local-first-free-tier.md` and `docs/adr/ADR-003-postgres-job-queue.md`.
-- `REPO-001 & REPO-002`: Updated `package.json` with `pnpm`-ready scripts (`test`, `test:unit`, `typecheck`, `db:up`, `db:stop`, `db:logs`).
+- `REPO-001 & REPO-002`: Updated `package.json`, `tsconfig.json`, and `pnpm-workspace.yaml` with `pnpm` 12 `allowBuilds` and strict typechecking.
 - `REPO-003`: Updated `.env.example`, implemented `src/server/config/env.ts`, and verified all 7 unit tests in `tests/unit/env.test.ts` (`7/7 passing`).
 - `REPO-004`: Created `docker-compose.yml`, implemented `src/app/api/v1/health/route.ts`, and verified all 4 unit tests in `tests/unit/health-route.test.ts` (`4/4 passing`).
-- `REPO-005 (Part 1)`: Created `src/server/db/schema/tenant.ts` defining `organizations`, `users`, and `memberships` with Drizzle ORM and SQL `CHECK` / composite primary key constraints.
+- `REPO-005`: Created `src/server/db/schema/tenant.ts`, `src/server/db/client.ts`, and verified all 6 PostgreSQL constraint integration tests in `tests/integration/tenant-schema.test.ts` (`6/6 passing`).
+- `TENANT-002`: Created `src/server/policies/authorization.ts` and verified all 6 RBAC and cross-tenant boundary unit tests in `tests/unit/authorization.test.ts` (`6/6 passing`).
+- `TENANT-001 & TENANT-003`: Created `src/server/db/repositories/tenant-repository.ts` implementing `ensureUser()`, transactional `createOrganizationWithOwner()`, `resolveActorContext()`, `upsertMembership()`, `removeMembership()`, and the last-owner safeguard.
+- `TENANT-004`: Created and verified `tests/security/tenant-isolation.test.ts` (`4/4 passing` against PostgreSQL) covering cross-tenant negative access, anti-spoofing, role escalation prevention, and last-owner protection.
+- `AGENT-001 & AGENT-002 (Part 1 — Schema & Migration 0002)`: Created `src/server/db/schema/agents.ts` (`agents` + `agent_versions` with SHA-256 `snapshot_hash` and composite unique constraints) and updated `src/server/db/client.ts` to run `MIGRATION_0002_AGENTS_SQL`.
 
 ## In progress
-- `REPO-005 (Part 2)`: Create `src/server/db/client.ts` and `tests/integration/tenant-schema.test.ts` to verify PostgreSQL constraints on `organizations`, `users`, and `memberships`.
+- `AGENT-001 & AGENT-002 (Part 2 — Repository & Snapshot Hashing)`: Create `src/server/db/repositories/agent-repository.ts` implementing tenant-scoped Agent CRUD, canonical SHA-256 snapshot hashing, and transactional version publishing (`v1`, `v2`, ...).
 
 ## Blockers and risks
 - None recorded yet.
 
 ## Next task
-- `REPO-005 (Part 2)`: Create `src/server/db/client.ts` (Drizzle + PGlite database client & migration runner) and test the schema constraints.
+- `AGENT-001 & AGENT-002 (Part 2)`: Implement `src/server/db/repositories/agent-repository.ts` and verify with PostgreSQL integration tests.
 
 ## Test evidence
 - `npx --yes tsx --test tests/unit/env.test.ts` -> `7 tests, 7 pass, 0 fail`.
 - `npx --yes tsx --test tests/unit/health-route.test.ts` -> `4 tests, 4 pass, 0 fail`.
+- `npx --yes tsx --test tests/integration/tenant-schema.test.ts` -> `6 tests, 6 pass, 0 fail`.
+- `npx --yes tsx --test tests/unit/authorization.test.ts` -> `6 tests, 6 pass, 0 fail`.
+- `npx --yes tsx --test tests/security/tenant-isolation.test.ts` -> `4 tests, 4 pass, 0 fail`.
 
 ## Change log
+- 2026-10-28: Created `src/server/db/schema/agents.ts` and updated `src/server/db/client.ts` (`AGENT-001` & `AGENT-002` Part 1).
+- 2026-10-28: Completed `TENANT-004` (`tests/security/tenant-isolation.test.ts` 4/4 passing). Phase 2 complete!
+- 2026-10-28: Created `src/server/db/repositories/tenant-repository.ts` (`TENANT-001` & `TENANT-003`).
+- 2026-10-28: Completed `TENANT-002` (`src/server/policies/authorization.ts` + `tests/unit/authorization.test.ts` 6/6 passing).
+- 2026-10-28: Completed `REPO-005` (`src/server/db/client.ts` + `tests/integration/tenant-schema.test.ts` 6/6 passing). Phase 1 complete!
 - 2026-10-27: Updated `package.json` (`REPO-001`/`REPO-002`) and created `src/server/db/schema/tenant.ts` (`REPO-005` Part 1).
-
