@@ -1,0 +1,43 @@
+name: Aegis Runtime CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Typecheck, Test (78/78), Seed & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Run TypeScript static analysis
+        run: pnpm typecheck
+
+      - name: Run Unit, Integration & Security test suites (PGlite PostgreSQL)
+        run: pnpm test
+
+      - name: Verify deterministic Flagship Workspace Seed (AI_MODE=demo)
+        run: pnpm seed
+
+      - name: Build production frontend bundle
+        run: pnpm build

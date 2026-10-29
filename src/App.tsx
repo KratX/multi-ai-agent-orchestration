@@ -73,6 +73,9 @@ import evalSseTestContent from '../tests/integration/eval-sse.test.ts?raw';
 import demoSeedContent from './server/seed/demo-seed.ts?raw';
 import flagshipE2eTestContent from '../tests/integration/flagship-e2e.test.ts?raw';
 import readmeContent from '../README.md?raw';
+import indexHtmlContent from '../index.html?raw';
+import viteConfigContent from '../vite.config.ts?raw';
+import ciWorkflowContent from '../.github/workflows/ci.yml?raw';
 
 interface ProjectFile {
   step: string;
@@ -636,6 +639,36 @@ const COMPLETED_FILES: ProjectFile[] = [
     summary: 'Documents the 9 verified subsystems, Mermaid architecture diagram, migrations 0001..0006, threat mitigations T-01..T-07, and pnpm test / pnpm seed workflows.',
     content: readmeContent,
   },
+  {
+    step: 'Step 8.2a (File #52)',
+    ticket: 'BUILD-001',
+    path: 'index.html',
+    filename: 'index.html',
+    title: 'Vite HTML Entry Point & OpenGraph Metadata (index.html)',
+    commitMessage: 'chore(build): add index.html Vite entry point and OpenGraph metadata (BUILD-001)',
+    summary: 'Provides the root HTML document and /src/main.tsx module entry required by pnpm dev and pnpm build.',
+    content: indexHtmlContent,
+  },
+  {
+    step: 'Step 8.2b (File #53)',
+    ticket: 'BUILD-001',
+    path: 'vite.config.ts',
+    filename: 'vite.config.ts',
+    title: 'Vite 8 + React 19 + Tailwind CSS v4 Build Configuration (vite.config.ts)',
+    commitMessage: 'chore(build): add vite.config.ts with React and Tailwind v4 plugins (BUILD-001)',
+    summary: 'Configures @vitejs/plugin-react, @tailwindcss/vite, and import.meta.dirname path aliasing for clean Vite 8 builds.',
+    content: viteConfigContent,
+  },
+  {
+    step: 'Step 8.2c (File #54)',
+    ticket: 'CI-001',
+    path: '.github/workflows/ci.yml',
+    filename: 'ci.yml',
+    title: 'GitHub Actions Continuous Integration Pipeline (.github/workflows/ci.yml)',
+    commitMessage: 'ci(github): add GitHub Actions workflow for typecheck, 78 tests, seed, and build (CI-001)',
+    summary: 'Runs pnpm typecheck, pnpm test (78/78), pnpm seed, and pnpm build automatically on every push and pull request to main.',
+    content: ciWorkflowContent,
+  },
 ];
 
 interface CurrentBatchItem {
@@ -646,34 +679,24 @@ interface CurrentBatchItem {
 
 const CURRENT_STEP_BATCH: CurrentBatchItem[] = [
   {
-    path: 'src/server/seed/demo-seed.ts',
+    path: 'index.html',
     status: 'NEW',
-    changeReason: 'Step 8.1a (SEED-001): Deterministic multi-tenant workspace seed & end-to-end verification runner (pnpm seed).',
+    changeReason: 'Step 8.2a (BUILD-001): Missing from GitHub repo — required by Vite for `pnpm dev` and `pnpm build` (`[UNRESOLVED_ENTRY] index.html`).',
   },
   {
-    path: 'tests/integration/flagship-e2e.test.ts',
+    path: 'vite.config.ts',
     status: 'NEW',
-    changeReason: 'Step 8.1b (SEED-001): End-to-end flagship PostgreSQL integration test suite (4/4 passing; 78/78 total tests).',
+    changeReason: 'Step 8.2b (BUILD-001): Missing from GitHub repo — configures React + Tailwind CSS v4 and Vite 8 `import.meta.dirname` alias.',
   },
   {
-    path: 'README.md',
+    path: '.github/workflows/ci.yml',
     status: 'NEW',
-    changeReason: 'Step 8.1c (DOCS-001): Flagship portfolio README with architecture diagram, schema table, threat model T-01..T-07, and quickstart.',
-  },
-  {
-    path: 'package.json',
-    status: 'UPDATED',
-    changeReason: 'Added "seed": "tsx src/server/seed/demo-seed.ts" script to package.json.',
-  },
-  {
-    path: 'docs/implementation/STATUS.md',
-    status: 'UPDATED',
-    changeReason: 'Marked Phase 8 (SEED-001 & DOCS-001) complete with all 16 test suites (78/78 tests) passing.',
+    changeReason: 'Step 8.2c (CI-001): Automated GitHub Actions workflow running `pnpm typecheck`, `pnpm test` (78/78), `pnpm seed`, and `pnpm build`.',
   },
   {
     path: 'src/App.tsx',
     status: 'UPDATED',
-    changeReason: 'Registered Step 8.1 files and added the Interactive Operator Console mode alongside the Step Batch .zip exporter.',
+    changeReason: 'Registered `index.html`, `vite.config.ts`, and `.github/workflows/ci.yml` in the Step 8.2 GitHub Verification Closure batch.',
   },
 ];
 
@@ -1329,10 +1352,10 @@ export default function App() {
                     Current Step Download Batch — Preserves Exact Folder Hierarchy (.zip)
                   </div>
                   <h2 className="text-lg font-bold text-slate-900 mt-0.5">
-                    Step 8.1 Final Batch ({batchFiles.length} Files: New + Updated)
+                    Step 8.2 GitHub Verification Closure Batch ({batchFiles.length} Files: Build + CI)
                   </h2>
                   <p className="text-xs text-slate-600 mt-1">
-                    Click <span className="font-mono font-semibold text-slate-800">Download Batch .zip (With Folders)</span> and run <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">unzip -o ~/Downloads/aegis-current-step-batch.zip</span> in your repo root — every file extracts directly into its exact subfolder (`src/server/seed/...`, `tests/integration/...`, `README.md`).
+                    Click <span className="font-mono font-semibold text-slate-800">Download Batch .zip (With Folders)</span> and run <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">unzip -o ~/Downloads/aegis-current-step-batch.zip</span> in your repo root — adds <span className="font-mono">index.html</span>, <span className="font-mono">vite.config.ts</span>, and <span className="font-mono">.github/workflows/ci.yml</span> so <span className="font-mono">pnpm build</span> and GitHub Actions CI pass out of the box.
                   </p>
                 </div>
 
