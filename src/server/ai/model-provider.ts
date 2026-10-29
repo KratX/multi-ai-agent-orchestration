@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { AgentModelConfig, AllowedToolName } from '../db/schema/agents';
 import type { AppEnv } from '../config/env';
+import { GeminiModelProvider } from './gemini-provider';
 
 /**
  * Ticket AGENT-003: Provider-Neutral ModelProvider Interface & Deterministic MockModelProvider
@@ -531,9 +532,13 @@ export class MockModelProvider implements ModelProvider {
 /**
  * Factory that resolves the configured `ModelProvider` from validated environment config.
  * Defaults to `MockModelProvider` in `AI_MODE=demo` and `AI_MODE=local`.
+ * Routes to `GeminiModelProvider` when `AI_MODE=provider`.
  */
 export function createModelProvider(
-  env: Pick<AppEnv, 'AI_MODE' | 'AI_PROVIDER_MODEL'>,
+  env: Pick<AppEnv, 'AI_MODE' | 'AI_PROVIDER_MODEL'> & {
+    AI_PROVIDER_API_KEY?: string;
+    GEMINI_API_KEY?: string;
+  },
   customProvider?: ModelProvider
 ): ModelProvider {
   if (customProvider) {
@@ -544,7 +549,23 @@ export function createModelProvider(
     return new MockModelProvider();
   }
 
-  throw new Error(
-    `Live provider adapter for AI_MODE="${env.AI_MODE}" (model "${env.AI_PROVIDER_MODEL}") is not registered yet. Use AI_MODE="demo" or pass a configured ModelProvider adapter.`
-  );
+  const apiKey = (
+    env.AI_PROVIDER_API_KEY ||
+    env.GEMINI_API_KEY ||
+    process.env.AI_PROVIDER_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    ''
+  ).trim();
+
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === 'replace-me') {
+    throw new Error(
+      `AI_MODE="provider" requires a valid server-side AI_PROVIDER_API_KEY or GEMINI_API_KEY for model "${env.AI_PROVIDER_MODEL}". Use AI_MODE="demo" for zero-key deterministic execution.`
+    );
+  }
+
+  return new GeminiModelProvider({
+    apiKey,
+    defaultModel: env.AI_PROVIDER_MODEL,
+  });
 }
+

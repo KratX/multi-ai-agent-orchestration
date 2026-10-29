@@ -411,8 +411,8 @@ CREATE TABLE IF NOT EXISTS eval_experiments (
     REFERENCES agents(organization_id, id)
     ON DELETE CASCADE,
   CONSTRAINT eval_experiments_org_agent_version_fk
-    FOREIGN KEY (organization_id, agent_version_id)
-    REFERENCES agent_versions(organization_id, id)
+    FOREIGN KEY (organization_id, agent_id, agent_version_id)
+    REFERENCES agent_versions(organization_id, agent_id, id)
     ON DELETE RESTRICT
 );
 
@@ -448,7 +448,7 @@ CREATE TABLE IF NOT EXISTS eval_case_results (
   CONSTRAINT eval_case_results_org_run_fk
     FOREIGN KEY (organization_id, run_id)
     REFERENCES runs(organization_id, id)
-    ON DELETE SET NULL
+    ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS eval_case_results_experiment_case_unique

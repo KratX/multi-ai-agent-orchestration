@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS agents (
   created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT agents_org_id_unique UNIQUE (organization_id, id),
   CONSTRAINT agents_org_slug_unique UNIQUE (organization_id, slug)
 );
 
@@ -172,9 +173,16 @@ CREATE TABLE IF NOT EXISTS agent_versions (
   snapshot_hash TEXT NOT NULL CHECK (length(trim(snapshot_hash)) = 64),
   published_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   published_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT agent_versions_org_id_unique UNIQUE (organization_id, id),
+  CONSTRAINT agent_versions_org_agent_id_unique UNIQUE (organization_id, agent_id, id),
+  CONSTRAINT agent_versions_org_agent_fk
+    FOREIGN KEY (organization_id, agent_id)
+    REFERENCES agents(organization_id, id)
+    ON DELETE CASCADE,
   CONSTRAINT agent_versions_agent_version_unique UNIQUE (agent_id, version_number)
 );
 
 CREATE INDEX IF NOT EXISTS agent_versions_org_agent_idx
   ON agent_versions (organization_id, agent_id, version_number DESC);
 `;
+

@@ -1,21 +1,17 @@
 import crypto from 'node:crypto';
 import { parseEnv, getPublicEnvSummary } from '../../../../server/config/env';
+import { evaluateDatabaseReadiness } from '../../../../server/modules/health/health-service';
 
 /**
- * Ticket REPO-004: Health & Readiness Route Handler (Next.js App Router Contract)
+ * Ticket REPO-004: Health & Readiness Route Handler
  *
  * Enforces Blueprint Section 6.2, 10.1, 10.2, and 10.5:
+ * - Executes a real `SELECT 1` database readiness query by default via `evaluateDatabaseReadiness()`.
  * - Returns a standard `{ data: ... }` envelope on 200 OK.
  * - Returns an RFC 9457 Problem Details envelope on 503 Service Unavailable.
  * - Includes a correlation `requestId` in both headers (`x-request-id`) and body.
  * - Never exposes raw secrets, API keys, or DATABASE_URL connection strings.
  */
-
-export interface ReadinessCheckResult {
-  databaseReady: boolean;
-  latencyMs: number;
-  engine: 'postgres' | 'pglite' | 'unverified';
-}
 
 export interface DatabaseReadinessCheck {
   ping(): Promise<{
@@ -25,17 +21,19 @@ export interface DatabaseReadinessCheck {
   }>;
 }
 
+export interface ReadinessCheckResult {
+  databaseReady: boolean;
+  latencyMs: number;
+  engine: 'postgres' | 'pglite' | 'unverified';
+}
+
 export interface HealthRouteDependencies {
   rawEnv?: Record<string, string | undefined>;
   checkDatabaseReadiness?: () => Promise<ReadinessCheckResult>;
 }
 
 const defaultReadinessCheck = async (): Promise<ReadinessCheckResult> => {
-  return {
-    databaseReady: true,
-    latencyMs: 1,
-    engine: 'pglite',
-  };
+  return evaluateDatabaseReadiness();
 };
 
 export async function GET(

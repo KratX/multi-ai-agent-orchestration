@@ -303,7 +303,16 @@ CREATE TABLE IF NOT EXISTS runs (
   completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT runs_org_idempotency_unique UNIQUE (organization_id, idempotency_key)
+  CONSTRAINT runs_org_id_unique UNIQUE (organization_id, id),
+  CONSTRAINT runs_org_idempotency_unique UNIQUE (organization_id, idempotency_key),
+  CONSTRAINT runs_org_agent_fk
+    FOREIGN KEY (organization_id, agent_id)
+    REFERENCES agents(organization_id, id)
+    ON DELETE CASCADE,
+  CONSTRAINT runs_org_agent_version_fk
+    FOREIGN KEY (organization_id, agent_id, agent_version_id)
+    REFERENCES agent_versions(organization_id, agent_id, id)
+    ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS runs_org_created_idx
@@ -325,6 +334,10 @@ CREATE TABLE IF NOT EXISTS run_steps (
   status TEXT NOT NULL DEFAULT 'succeeded' CHECK (status IN ('succeeded', 'failed', 'skipped')),
   error_message TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT run_steps_org_run_fk
+    FOREIGN KEY (organization_id, run_id)
+    REFERENCES runs(organization_id, id)
+    ON DELETE CASCADE,
   CONSTRAINT run_steps_run_step_index_unique UNIQUE (run_id, step_index)
 );
 
@@ -339,6 +352,10 @@ CREATE TABLE IF NOT EXISTS run_events (
   event_type TEXT NOT NULL,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT run_events_org_run_fk
+    FOREIGN KEY (organization_id, run_id)
+    REFERENCES runs(organization_id, id)
+    ON DELETE CASCADE,
   CONSTRAINT run_events_run_sequence_unique UNIQUE (run_id, sequence_no)
 );
 
@@ -360,9 +377,14 @@ CREATE TABLE IF NOT EXISTS job_queue (
   last_error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT job_queue_org_run_fk
+    FOREIGN KEY (organization_id, run_id)
+    REFERENCES runs(organization_id, id)
+    ON DELETE CASCADE,
   CONSTRAINT job_queue_run_id_unique UNIQUE (run_id)
 );
 
 CREATE INDEX IF NOT EXISTS job_queue_claim_idx
   ON job_queue (status, available_at ASC);
 `;
+

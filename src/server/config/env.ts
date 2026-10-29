@@ -23,6 +23,10 @@ export const envSchema = z
       .string()
       .min(1, 'DATABASE_URL must not be empty')
       .default('postgresql://postgres:postgres@localhost:5432/agent_platform'),
+    PGLITE_DATA_DIR: z
+      .string()
+      .min(1, 'PGLITE_DATA_DIR must not be empty')
+      .default('.local/aegis-db'),
 
     AUTH_SECRET: z
       .string()
@@ -34,7 +38,7 @@ export const envSchema = z
     AI_MODE: z.enum(['demo', 'local', 'provider']).default('demo'),
     AI_PROVIDER_API_KEY: z.string().optional().default(''),
     GEMINI_API_KEY: z.string().optional().default(''),
-    AI_PROVIDER_MODEL: z.string().min(1).default('gemini-2.5-flash'),
+    AI_PROVIDER_MODEL: z.string().min(1).default('gemini-3.8-flash'),
 
     UPLOAD_DIR: z.string().min(1).default('.local/uploads'),
     MAX_UPLOAD_BYTES: z.coerce
@@ -166,4 +170,3 @@ export function getPublicEnvSummary(env: AppEnv = parseEnv()) {
     },
   };
 }
-

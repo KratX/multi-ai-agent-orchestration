@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle, type PgliteDatabase } from 'drizzle-orm/pglite';
 import * as tenantSchema from './schema/tenant';
@@ -13,10 +15,11 @@ import { MIGRATION_0005_WORKFLOWS_SQL } from './schema/workflows';
 import * as evalsSchema from './schema/evals';
 import { MIGRATION_0006_EVALS_SQL } from './schema/evals';
 import type { DatabaseReadinessCheck } from '../../app/api/v1/health/route';
+import { parseEnv } from '../config/env';
 
 /**
  * Ticket REPO-005, AGENT-001, RUN-001, RAG-001, WORKFLOW-001 & EVAL-001:
- * Drizzle ORM Database Client & Migration Runner
+ * Drizzle ORM Database Client, File-Backed Persistence & Migration Runner
  *
  * Combines all domain schemas (`tenantSchema` + `agentsSchema` + `runsSchema` +
  * `knowledgeSchema` + `workflowsSchema` + `evalsSchema`) and applies sequential
@@ -37,6 +40,8 @@ export type AegisDatabase = PgliteDatabase<typeof aegisSchema>;
 export interface DatabaseContext {
   pg: PGlite;
   db: AegisDatabase;
+  storageMode: 'file' | 'memory';
+  dataDir?: string;
   close: () => Promise<void>;
 }
 
@@ -55,13 +60,23 @@ export async function applyTenantMigrations(pg: PGlite): Promise<void> {
 }
 
 /**
- * Creates a fresh, migrated PostgreSQL + Drizzle database context.
+ * Creates a migrated PostgreSQL + Drizzle database context.
+ * When `options.dataDir` is provided (and not `'memory://'`), persists PostgreSQL data on disk.
  */
 export async function createDatabaseClient(options?: {
   dataDir?: string;
   autoMigrate?: boolean;
 }): Promise<DatabaseContext> {
-  const pg = new PGlite(options?.dataDir);
+  const rawDir = options?.dataDir?.trim();
+  const isFileBacked = Boolean(rawDir && rawDir !== 'memory://');
+  let resolvedDir: string | undefined;
+
+  if (isFileBacked && rawDir) {
+    resolvedDir = path.resolve(rawDir);
+    fs.mkdirSync(resolvedDir, { recursive: true });
+  }
+
+  const pg = new PGlite(resolvedDir);
   await pg.waitReady;
 
   if (options?.autoMigrate !== false) {
@@ -73,6 +88,8 @@ export async function createDatabaseClient(options?: {
   return {
     pg,
     db,
+    storageMode: isFileBacked ? 'file' : 'memory',
+    dataDir: resolvedDir,
     close: async () => {
       if (!pg.closed) {
         await pg.close();
@@ -84,18 +101,52 @@ export async function createDatabaseClient(options?: {
 let sharedContextPromise: Promise<DatabaseContext> | null = null;
 
 /**
- * Returns a process-wide singleton PostgreSQL + Drizzle context for runtime routes.
+ * Returns a process-wide singleton PostgreSQL + Drizzle context for runtime routes and workers.
+ * Uses file-backed persistence (`PGLITE_DATA_DIR`, default `.local/aegis-db`) in development/production,
+ * or in-memory storage when `PGLITE_DATA_DIR="memory://"` or `NODE_ENV="test"`.
  */
-export function getSharedDatabase(): Promise<DatabaseContext> {
+export function getSharedDatabase(options?: { dataDir?: string }): Promise<DatabaseContext> {
   if (!sharedContextPromise) {
-    sharedContextPromise = createDatabaseClient({ autoMigrate: true });
+    let targetDir = options?.dataDir;
+    if (targetDir === undefined) {
+      try {
+        const env = parseEnv(process.env);
+        const isTestRunner =
+          env.NODE_ENV === 'test' || Boolean(process.env.NODE_TEST_CONTEXT);
+        targetDir =
+          isTestRunner && !process.env.PGLITE_DATA_DIR
+            ? 'memory://'
+            : env.PGLITE_DATA_DIR;
+      } catch {
+        targetDir = '.local/aegis-db';
+      }
+    }
+    sharedContextPromise = createDatabaseClient({
+      dataDir: targetDir,
+      autoMigrate: true,
+    });
   }
   return sharedContextPromise;
 }
 
 /**
+ * Allows the application server or integration tests to inject or reset the shared database context.
+ */
+export function setSharedDatabaseForRuntime(context: DatabaseContext | null): void {
+  sharedContextPromise = context ? Promise.resolve(context) : null;
+}
+
+export async function closeSharedDatabase(): Promise<void> {
+  if (sharedContextPromise) {
+    const ctx = await sharedContextPromise;
+    sharedContextPromise = null;
+    await ctx.close();
+  }
+}
+
+/**
  * Adapts a `DatabaseContext` into the `DatabaseReadinessCheck` interface expected by
- * `GET /api/v1/health` (`src/app/api/v1/health/route.ts`).
+ * `GET /api/v1/health` and `GET /api/v1/health/ready`.
  */
 export function createDrizzleReadinessProbe(
   contextProvider: () => Promise<DatabaseContext> = getSharedDatabase

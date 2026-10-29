@@ -423,7 +423,7 @@ CREATE TABLE IF NOT EXISTS approval_requests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   run_id UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-  workflow_version_id UUID REFERENCES workflow_versions(id) ON DELETE SET NULL,
+  workflow_version_id UUID REFERENCES workflow_versions(id) ON DELETE CASCADE,
   node_id TEXT NOT NULL,
   title TEXT NOT NULL CHECK (length(btrim(title)) > 0),
   reason TEXT NOT NULL,
@@ -436,6 +436,14 @@ CREATE TABLE IF NOT EXISTS approval_requests (
   decided_at TIMESTAMPTZ,
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT approval_requests_org_run_fk
+    FOREIGN KEY (organization_id, run_id)
+    REFERENCES runs(organization_id, id)
+    ON DELETE CASCADE,
+  CONSTRAINT approval_requests_org_workflow_version_fk
+    FOREIGN KEY (organization_id, workflow_version_id)
+    REFERENCES workflow_versions(organization_id, id)
+    ON DELETE CASCADE,
   CONSTRAINT approval_requests_run_node_unique UNIQUE (run_id, node_id)
 );
 
@@ -465,8 +473,8 @@ CREATE TABLE IF NOT EXISTS usage_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   run_id UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-  workflow_version_id UUID REFERENCES workflow_versions(id) ON DELETE SET NULL,
-  agent_version_id UUID REFERENCES agent_versions(id) ON DELETE SET NULL,
+  workflow_version_id UUID REFERENCES workflow_versions(id) ON DELETE CASCADE,
+  agent_version_id UUID REFERENCES agent_versions(id) ON DELETE RESTRICT,
   provider_mode TEXT NOT NULL DEFAULT 'mock' CHECK (provider_mode IN ('mock', 'live')),
   model_id TEXT NOT NULL,
   input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
@@ -474,7 +482,19 @@ CREATE TABLE IF NOT EXISTS usage_events (
   total_tokens INTEGER NOT NULL DEFAULT 0 CHECK (total_tokens >= 0),
   tool_calls_count INTEGER NOT NULL DEFAULT 0 CHECK (tool_calls_count >= 0),
   is_estimated BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT usage_events_org_run_fk
+    FOREIGN KEY (organization_id, run_id)
+    REFERENCES runs(organization_id, id)
+    ON DELETE CASCADE,
+  CONSTRAINT usage_events_org_workflow_version_fk
+    FOREIGN KEY (organization_id, workflow_version_id)
+    REFERENCES workflow_versions(organization_id, id)
+    ON DELETE CASCADE,
+  CONSTRAINT usage_events_org_agent_version_fk
+    FOREIGN KEY (organization_id, agent_version_id)
+    REFERENCES agent_versions(organization_id, id)
+    ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_events_org_created
@@ -483,3 +503,4 @@ CREATE INDEX IF NOT EXISTS idx_usage_events_org_created
 CREATE INDEX IF NOT EXISTS idx_usage_events_org_mode
   ON usage_events (organization_id, provider_mode);
 `;
+
