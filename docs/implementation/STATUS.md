@@ -1,11 +1,11 @@
 # Implementation Status
 
-- Current phase: Phase 3 — Agent Studio & Immutable Versioning
-- Current ticket: AGENT-001 & AGENT-002 (In Progress — `agents.ts` schema & `client.ts` migration 0002 written, repository & publishing logic next)
+- Current phase: Phase 3 — Agent Studio, Immutable Versioning & Mock Model Provider
+- Current ticket: AGENT-003 (Next — Deterministic `MockModelProvider` & `ModelProvider` Interface)
 - Last updated: 2026-10-28
 - Demo mode: verified (`AI_MODE=demo` unit tests passing)
 - Local database: Drizzle schema + PGlite PostgreSQL migrations 0001 & 0002 active
-- CI status: local unit + integration + security test suites verified (`27/27 tests passing`, `pnpm typecheck` 0 errors)
+- CI status: local unit + integration + security test suites verified (`30/30 tests passing`, `pnpm typecheck` 0 errors)
 
 ## 1. Confirmed MVP Scope & Explicit Non-Goals (`PLAN-001`)
 
@@ -39,17 +39,16 @@
 - `TENANT-002`: Created `src/server/policies/authorization.ts` and verified all 6 RBAC and cross-tenant boundary unit tests in `tests/unit/authorization.test.ts` (`6/6 passing`).
 - `TENANT-001 & TENANT-003`: Created `src/server/db/repositories/tenant-repository.ts` implementing `ensureUser()`, transactional `createOrganizationWithOwner()`, `resolveActorContext()`, `upsertMembership()`, `removeMembership()`, and the last-owner safeguard.
 - `TENANT-004`: Created and verified `tests/security/tenant-isolation.test.ts` (`4/4 passing` against PostgreSQL) covering cross-tenant negative access, anti-spoofing, role escalation prevention, and last-owner protection.
-- `AGENT-001 & AGENT-002 (Part 1 — Schema & Migration 0002)`: Created `src/server/db/schema/agents.ts` (`agents` + `agent_versions` with SHA-256 `snapshot_hash` and composite unique constraints) and updated `src/server/db/client.ts` to run `MIGRATION_0002_AGENTS_SQL`.
-- `AGENT-001 & AGENT-002 (Part 2 — Repository & Snapshot Hashing)`: Created `src/server/db/repositories/agent-repository.ts` implementing `createAgentDraft()`, `updateAgentDraft()`, `computeAgentSnapshotHash()`, `publishAgentVersion()`, `getAgentVersionForActor()`, `listAgentVersions()`, and `archiveAgent()`.
+- `AGENT-001 & AGENT-002`: Completed `src/server/db/schema/agents.ts`, `src/server/db/client.ts` (`MIGRATION_0002_AGENTS_SQL`), `src/server/db/repositories/agent-repository.ts`, and verified all 3 PostgreSQL integration tests in `tests/integration/agent-versions.test.ts` (`3/3 passing`).
 
 ## In progress
-- `AGENT-001 & AGENT-002 (Part 3 — Verification)`: Create and execute `tests/integration/agent-versions.test.ts` to verify draft editing, immutable version publishing (`v1`, `v2`), SHA-256 snapshot integrity, and cross-tenant agent isolation against PostgreSQL.
+- `AGENT-003`: Implement `src/server/ai/model-provider.ts` defining the `ModelProvider` contract and the deterministic zero-cost `MockModelProvider` (`AI_MODE=demo`), plus unit tests in `tests/unit/mock-model-provider.test.ts`.
 
 ## Blockers and risks
 - None recorded yet.
 
 ## Next task
-- `AGENT-001 & AGENT-002 (Part 3)`: Write and run `tests/integration/agent-versions.test.ts`.
+- `AGENT-003`: Create `src/server/ai/model-provider.ts` and `tests/unit/mock-model-provider.test.ts`.
 
 ## Test evidence
 - `npx --yes tsx --test tests/unit/env.test.ts` -> `7 tests, 7 pass, 0 fail`.
@@ -57,8 +56,10 @@
 - `npx --yes tsx --test tests/integration/tenant-schema.test.ts` -> `6 tests, 6 pass, 0 fail`.
 - `npx --yes tsx --test tests/unit/authorization.test.ts` -> `6 tests, 6 pass, 0 fail`.
 - `npx --yes tsx --test tests/security/tenant-isolation.test.ts` -> `4 tests, 4 pass, 0 fail`.
+- `npx --yes tsx --test tests/integration/agent-versions.test.ts` -> `3 tests, 3 pass, 0 fail`.
 
 ## Change log
+- 2026-10-28: Completed `AGENT-001 & AGENT-002` (`tests/integration/agent-versions.test.ts` 3/3 passing; 30/30 total tests passing).
 - 2026-10-28: Created `src/server/db/repositories/agent-repository.ts` (`AGENT-001` & `AGENT-002` Part 2).
 - 2026-10-28: Created `src/server/db/schema/agents.ts` and updated `src/server/db/client.ts` (`AGENT-001` & `AGENT-002` Part 1).
 - 2026-10-28: Completed `TENANT-004` (`tests/security/tenant-isolation.test.ts` 4/4 passing). Phase 2 complete!

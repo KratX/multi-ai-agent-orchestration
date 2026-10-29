@@ -1,1 +1,68 @@
-node_modules
+# ============================================================================
+# Aegis Cloud — Production & Local-First .gitignore
+# ============================================================================
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.pnpm-debug.log*
+
+# Build & TypeScript outputs
+dist/
+build/
+out/
+.next/
+.vite/
+.turbo/
+*.tsbuildinfo
+
+# Environment variables & secrets (keep .env.example committed!)
+.env
+.env.*
+!.env.example
+
+# Local-first runtime storage & embedded DB state
+# (Matches LOCAL_STORAGE_PATH=./.local/storage in .env.example)
+.local/
+*.db
+*.sqlite
+*.sqlite3
+pglite-data/
+postgres-data/
+
+# Test & Playwright artifacts
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Logs & runtime PIDs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.pid
+*.seed
+*.pid.lock
+
+# Companion step-sync archives (prevent accidental commit when unzipping)
+aegis-current-step-batch.zip
+aegis-cloud-full-workspace.zip
+*.zip
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
