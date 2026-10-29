@@ -1,11 +1,11 @@
 # Implementation Status
 
-- Current phase: Phase 5 — Tenant-Isolated Knowledge Base Ingestion & Full-Text / Vector RAG (Next)
-- Current ticket: RAG-001 (Next — Knowledge Documents & Chunks Schema + Deterministic Chunker)
+- Current phase: Phase 6 — Directed Acyclic Workflow Engine, Human-in-the-Loop Approvals & Audit/Usage Ledger (Next)
+- Current ticket: WORKFLOW-001 (Next — Workflow Definitions, Immutable Versions, DAG Validator & Approval Gates)
 - Last updated: 2026-10-29
-- Demo mode: verified (`AI_MODE=demo` unit & integration tests passing, `MockModelProvider` + `ToolGateway` + `RunExecutor` verified)
-- Local database: Drizzle schema + PGlite PostgreSQL migrations 0001, 0002 & 0003 active
-- CI status: local unit + integration + security test suites verified (`45/45 tests passing`, `pnpm typecheck` 0 errors)
+- Demo mode: verified (`AI_MODE=demo` unit & integration tests passing, `MockModelProvider` + `ToolGateway` + `RunExecutor` + `KnowledgeService` verified)
+- Local database: Drizzle schema + PGlite PostgreSQL migrations 0001, 0002, 0003 & 0004 active
+- CI status: local unit + integration + security test suites verified (`54/54 tests passing`, `pnpm typecheck` 0 errors)
 
 ## 1. Confirmed MVP Scope & Explicit Non-Goals (`PLAN-001`)
 
@@ -43,15 +43,16 @@
 - `AGENT-003`: Implemented `src/server/ai/model-provider.ts` (`ModelProvider` contract, deterministic `MockModelProvider`, `verifyModelCitations()`, and `embedText()`) and verified all 6 unit tests in `tests/unit/mock-model-provider.test.ts` (`6/6 passing`). Phase 3 complete!
 - `TOOL-001 & TOOL-002`: Implemented `src/server/modules/tools/tool-gateway.ts` (`evaluateSafeArithmetic` recursive-descent parser with zero `eval()`, `ToolGateway` allowlist/Zod/payload/timeout enforcement, and tenant-scoped `knowledge_search` adapter) and verified all 6 unit/security tests in `tests/unit/tool-gateway.test.ts` (`6/6 passing`).
 - `RUN-001, RUN-002, QUEUE-001 & QUEUE-002`: Implemented `src/server/db/schema/runs.ts` (`runs`, `run_steps`, `run_events`, `job_queue` + `MIGRATION_0003_RUNS_SQL`), updated `src/server/db/client.ts`, implemented `src/server/modules/runs/run-executor.ts` (idempotent `enqueueAgentRun`, `FOR UPDATE SKIP LOCKED` `claimNextPendingJob`, `recoverExpiredJobLeases`, and bounded `executeAgentRun`), and verified all 3 PostgreSQL integration tests in `tests/integration/run-executor.test.ts` (`3/3 passing`). Phase 4 complete!
+- `RAG-001, RAG-002 & RAG-003`: Implemented `src/server/db/schema/knowledge.ts` (`knowledge_documents`, `document_chunks` with composite tenant FKs & GIN `tsvector` index + `MIGRATION_0004_KNOWLEDGE_SQL`), `src/server/modules/knowledge/chunker.ts` (deterministic chunker, `T-05` path-traversal sanitizer, `T-03` prompt-injection detector & `<untrusted_knowledge_context>` delimiter wrapper), `src/server/modules/knowledge/knowledge-service.ts` (transactional ingestion, SHA-256 deduplication, hybrid `tsvector` + vector cosine search, and `createTenantKnowledgeRetriever`), and verified `tests/unit/rag-chunker.test.ts` (`6/6 passing`) + `tests/integration/knowledge-rag.test.ts` (`3/3 passing`). Phase 5 complete!
 
 ## In progress
-- `RAG-001`: Define Drizzle PostgreSQL schema and SQL migration 0004 for `knowledge_documents` and `knowledge_chunks` with deterministic chunker and tenant-isolated retrieval.
+- `WORKFLOW-001`: Directed acyclic workflow schema, DAG cycle/reachability validator, human-in-the-loop approval gates (`HITL-001`), and audit/usage ledger.
 
 ## Blockers and risks
 - None recorded yet.
 
 ## Next task
-- `RAG-001, RAG-002 & RAG-003`: Create `src/server/db/schema/knowledge.ts`, implement `src/server/modules/knowledge/knowledge-service.ts`, and verify tenant-scoped RAG & prompt-injection defense (`T-02`).
+- `WORKFLOW-001, WORKFLOW-002 & HITL-001`: Implement workflow DAG engine, approval gates (`waiting_approval` -> `running` / `cancelled`), and immutable security `audit_events` + `usage_events`.
 
 ## Test evidence
 - `npx --yes tsx --test tests/unit/env.test.ts` -> `7 tests, 7 pass, 0 fail`.
@@ -63,8 +64,11 @@
 - `npx --yes tsx --test tests/unit/mock-model-provider.test.ts` -> `6 tests, 6 pass, 0 fail`.
 - `npx --yes tsx --test tests/unit/tool-gateway.test.ts` -> `6 tests, 6 pass, 0 fail`.
 - `npx --yes tsx --test tests/integration/run-executor.test.ts` -> `3 tests, 3 pass, 0 fail`.
+- `npx --yes tsx --test tests/unit/rag-chunker.test.ts` -> `6 tests, 6 pass, 0 fail`.
+- `npx --yes tsx --test tests/integration/knowledge-rag.test.ts` -> `3 tests, 3 pass, 0 fail`.
 
 ## Change log
+- 2026-10-29: Completed `RAG-001, RAG-002 & RAG-003` (`src/server/db/schema/knowledge.ts`, `src/server/modules/knowledge/chunker.ts`, `src/server/modules/knowledge/knowledge-service.ts`, `tests/unit/rag-chunker.test.ts` 6/6 passing, `tests/integration/knowledge-rag.test.ts` 3/3 passing; 54/54 total tests passing). Phase 5 complete!
 - 2026-10-29: Completed `RUN-001, RUN-002, QUEUE-001 & QUEUE-002` (`src/server/db/schema/runs.ts`, `src/server/modules/runs/run-executor.ts`, `tests/integration/run-executor.test.ts` 3/3 passing; 45/45 total tests passing). Phase 4 complete!
 - 2026-10-29: Completed `TOOL-001 & TOOL-002` (`src/server/modules/tools/tool-gateway.ts` + `tests/unit/tool-gateway.test.ts` 6/6 passing; 42/42 total tests passing).
 - 2026-10-29: Completed `AGENT-003` (`src/server/ai/model-provider.ts` + `tests/unit/mock-model-provider.test.ts` 6/6 passing; 36/36 total tests passing). Phase 3 complete!

@@ -34,6 +34,7 @@ import {
   ToolExecutionError,
   ToolGateway,
 } from '../tools/tool-gateway';
+import { createTenantKnowledgeRetriever } from '../knowledge/knowledge-service';
 
 /**
  * Tickets RUN-002 & QUEUE-002: Bounded Agent Runtime Executor & PostgreSQL Job Queue Worker
@@ -488,7 +489,13 @@ export async function executeAgentRun(
   options: ExecuteAgentRunOptions = {}
 ): Promise<RunRow> {
   const modelProvider = options.modelProvider ?? new MockModelProvider();
-  const toolGateway = options.toolGateway ?? new ToolGateway();
+  const toolGateway =
+    options.toolGateway ??
+    new ToolGateway({
+      knowledgeSearchRetriever: createTenantKnowledgeRetriever(db, {
+        modelProvider,
+      }),
+    });
   const maxStepsCeiling = options.maxStepsCeiling ?? DEFAULT_RUN_MAX_STEPS;
   const maxToolCallsCeiling =
     options.maxToolCallsCeiling ?? DEFAULT_RUN_MAX_TOOL_CALLS;

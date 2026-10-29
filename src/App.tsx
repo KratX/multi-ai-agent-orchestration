@@ -39,6 +39,11 @@ import toolGatewayTestContent from '../tests/unit/tool-gateway.test.ts?raw';
 import runsSchemaContent from './server/db/schema/runs.ts?raw';
 import runExecutorContent from './server/modules/runs/run-executor.ts?raw';
 import runExecutorTestContent from '../tests/integration/run-executor.test.ts?raw';
+import knowledgeSchemaContent from './server/db/schema/knowledge.ts?raw';
+import chunkerContent from './server/modules/knowledge/chunker.ts?raw';
+import knowledgeServiceContent from './server/modules/knowledge/knowledge-service.ts?raw';
+import ragChunkerTestContent from '../tests/unit/rag-chunker.test.ts?raw';
+import knowledgeRagTestContent from '../tests/integration/knowledge-rag.test.ts?raw';
 
 interface ProjectFile {
   step: string;
@@ -422,6 +427,56 @@ const COMPLETED_FILES: ProjectFile[] = [
     summary: 'Verifies idempotent run enqueue, immutable v1 pinning, multi-step calculator + knowledge_search + citation guard, T-03/T-04 guards, 404 isolation, and lease recovery.',
     content: runExecutorTestContent,
   },
+  {
+    step: 'Step 5.1a (File #34)',
+    ticket: 'RAG-001',
+    path: 'src/server/db/schema/knowledge.ts',
+    filename: 'knowledge.ts',
+    title: 'Drizzle PostgreSQL Schema: Knowledge Documents & Chunks (knowledge.ts)',
+    commitMessage: 'feat(rag): add Drizzle schema and migration 0004 for knowledge_documents and document_chunks (RAG-001)',
+    summary: 'Defines knowledge_documents and document_chunks with composite tenant FKs (Threat T-01), byte/MIME bounds, and GIN tsvector index.',
+    content: knowledgeSchemaContent,
+  },
+  {
+    step: 'Step 5.1b (File #35)',
+    ticket: 'RAG-002',
+    path: 'src/server/modules/knowledge/chunker.ts',
+    filename: 'chunker.ts',
+    title: 'Deterministic Chunker, T-05 Path Sanitizer & T-03 Prompt-Injection Guard (chunker.ts)',
+    commitMessage: 'feat(rag): add deterministic chunker, filename sanitizer, and prompt-injection delimiter wrapper (RAG-002)',
+    summary: 'Implements sanitizeDisplayFilename(), generateOpaqueStorageKey(), chunkDocumentText(), detectPromptInjectionPatterns(), and wrapUntrustedKnowledgeChunk().',
+    content: chunkerContent,
+  },
+  {
+    step: 'Step 5.1c (File #36)',
+    ticket: 'RAG-003',
+    path: 'src/server/modules/knowledge/knowledge-service.ts',
+    filename: 'knowledge-service.ts',
+    title: 'Tenant-Isolated Knowledge Ingestion & Hybrid Full-Text / Vector RAG Service (knowledge-service.ts)',
+    commitMessage: 'feat(rag): add tenant-isolated knowledge ingestion and hybrid FTS/vector retrieval service (RAG-003)',
+    summary: 'Implements transactional ingestKnowledgeDocument(), SHA-256 deduplication, hybrid tsvector + vector cosine searchKnowledgeChunks(), and createTenantKnowledgeRetriever().',
+    content: knowledgeServiceContent,
+  },
+  {
+    step: 'Step 5.1d (File #37)',
+    ticket: 'RAG-002',
+    path: 'tests/unit/rag-chunker.test.ts',
+    filename: 'rag-chunker.test.ts',
+    title: 'Unit Test Suite for Deterministic Chunker & T-03 / T-05 Security Guards (6/6 Passing)',
+    commitMessage: 'test(rag): add unit tests for deterministic chunker, path traversal sanitizer, and injection guards (RAG-002)',
+    summary: 'Verifies path-traversal sanitization, deterministic Markdown chunking with heading breadcrumbs, maxChunks cap, and prompt-injection delimiter breakout protection.',
+    content: ragChunkerTestContent,
+  },
+  {
+    step: 'Step 5.1e (File #38)',
+    ticket: 'RAG-001 / RAG-003',
+    path: 'tests/integration/knowledge-rag.test.ts',
+    filename: 'knowledge-rag.test.ts',
+    title: 'PostgreSQL Integration Tests for Tenant-Isolated RAG & Live Agent Runs (3/3 Passing)',
+    commitMessage: 'test(rag): add PostgreSQL integration tests for tenant-isolated RAG and grounded agent citations (RAG-003)',
+    summary: 'Verifies transactional document ingestion, SHA-256 deduplication, hybrid search ranking, strict cross-tenant 0-result & 404 isolation, and live agent run citation verification.',
+    content: knowledgeRagTestContent,
+  },
 ];
 
 interface CurrentBatchItem {
@@ -432,39 +487,49 @@ interface CurrentBatchItem {
 
 const CURRENT_STEP_BATCH: CurrentBatchItem[] = [
   {
-    path: 'src/server/db/schema/runs.ts',
+    path: 'src/server/db/schema/knowledge.ts',
     status: 'NEW',
-    changeReason: 'Step 4.2a (RUN-001 & QUEUE-001): Drizzle schema & SQL migration 0003 for runs, run_steps, run_events, and job_queue.',
+    changeReason: 'Step 5.1a (RAG-001): Drizzle schema & SQL migration 0004 for knowledge_documents and document_chunks with composite tenant FKs & GIN FTS index.',
   },
   {
-    path: 'src/server/modules/runs/run-executor.ts',
+    path: 'src/server/modules/knowledge/chunker.ts',
     status: 'NEW',
-    changeReason: 'Step 4.2b (RUN-002 & QUEUE-002): Bounded agent runtime executor, idempotent run enqueue, and FOR UPDATE SKIP LOCKED job worker.',
+    changeReason: 'Step 5.1b (RAG-002): Deterministic chunker, T-05 filename sanitizer, and T-03 prompt-injection detector & XML delimiter wrapper.',
   },
   {
-    path: 'tests/integration/run-executor.test.ts',
+    path: 'src/server/modules/knowledge/knowledge-service.ts',
     status: 'NEW',
-    changeReason: 'Step 4.2c (RUN-002 & QUEUE-002): PostgreSQL integration tests (3/3 passing) covering multi-step execution, T-03/T-04 guards, and job lease recovery.',
+    changeReason: 'Step 5.1c (RAG-003): Tenant-isolated document ingestion, SHA-256 deduplication, hybrid FTS + vector search, and ToolGateway retriever adapter.',
+  },
+  {
+    path: 'tests/unit/rag-chunker.test.ts',
+    status: 'NEW',
+    changeReason: 'Step 5.1d (RAG-002): Unit test suite (6/6 passing) for deterministic chunking, path traversal sanitization, and prompt-injection defense.',
+  },
+  {
+    path: 'tests/integration/knowledge-rag.test.ts',
+    status: 'NEW',
+    changeReason: 'Step 5.1e (RAG-001 & RAG-003): PostgreSQL integration tests (3/3 passing) covering ingestion, hybrid search, cross-tenant isolation, and live agent run citations.',
   },
   {
     path: 'src/server/db/client.ts',
     status: 'UPDATED',
-    changeReason: 'Registered runsSchema and MIGRATION_0003_RUNS_SQL in applyTenantMigrations().',
+    changeReason: 'Registered knowledgeSchema and MIGRATION_0004_KNOWLEDGE_SQL in applyTenantMigrations().',
   },
   {
-    path: 'docs/adr/ADR-002-tenant-isolation.md',
-    status: 'NEW',
-    changeReason: 'Included missing ADR-002 (Defense-in-Depth Multi-Tenant Isolation & 404 Masking) so docs/adr/ is 100% complete.',
+    path: 'src/server/modules/runs/run-executor.ts',
+    status: 'UPDATED',
+    changeReason: 'Wired createTenantKnowledgeRetriever(db) as the default knowledgeSearchRetriever in executeAgentRun().',
   },
   {
     path: 'docs/implementation/STATUS.md',
     status: 'UPDATED',
-    changeReason: 'Updated implementation ledger marking Phase 4 (RUN-001, RUN-002, QUEUE-001, QUEUE-002) verified (45/45 tests passing).',
+    changeReason: 'Updated implementation ledger marking Phase 5 (RAG-001, RAG-002, RAG-003) verified (54/54 tests passing).',
   },
   {
     path: 'src/App.tsx',
     status: 'UPDATED',
-    changeReason: 'Registered Step 4.2 files and updated CURRENT_STEP_BATCH zip bundle.',
+    changeReason: 'Registered Step 5.1 files and updated CURRENT_STEP_BATCH zip bundle.',
   },
 ];
 
@@ -593,7 +658,7 @@ export default function App() {
             All Files ({COMPLETED_FILES.length})
           </a>
           <a href="#git-helper" className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0">
-            Phase 4 Complete (45/45 Pass)
+            Phase 5 Complete (54/54 Pass)
           </a>
         </nav>
 
@@ -621,7 +686,7 @@ export default function App() {
         <aside className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 p-5 flex flex-col gap-5 shrink-0">
           <div>
             <div className="text-xs font-medium text-emerald-700">
-              Phase 4 Complete · 45/45 Tests Passing
+              Phase 5 Complete · 54/54 Tests Passing
             </div>
             <h1 className="text-base font-bold text-slate-900 mt-1">
               Project Files ({COMPLETED_FILES.length})
@@ -687,7 +752,7 @@ export default function App() {
                   Current Step Download Batch — Preserves Exact Folder Hierarchy (.zip)
                 </div>
                 <h2 className="text-lg font-bold text-slate-900 mt-0.5">
-                  Step 4.2 Batch ({batchFiles.length} Files: New + Updated)
+                  Step 5.1 Batch ({batchFiles.length} Files: New + Updated)
                 </h2>
                 <p className="text-xs text-slate-600 mt-1">
                   Click <span className="font-mono font-semibold text-slate-800">Download Batch .zip (With Folders)</span> and run <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">unzip -o ~/Downloads/aegis-current-step-batch.zip</span> in your repo root — every file extracts directly into its exact subfolder (`src/server/ai/...`, `tests/unit/...`, `docs/...`).

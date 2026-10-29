@@ -6,19 +6,22 @@ import * as agentsSchema from './schema/agents';
 import { MIGRATION_0002_AGENTS_SQL } from './schema/agents';
 import * as runsSchema from './schema/runs';
 import { MIGRATION_0003_RUNS_SQL } from './schema/runs';
+import * as knowledgeSchema from './schema/knowledge';
+import { MIGRATION_0004_KNOWLEDGE_SQL } from './schema/knowledge';
 import type { DatabaseReadinessCheck } from '../../app/api/v1/health/route';
 
 /**
- * Ticket REPO-005, AGENT-001 & RUN-001: Drizzle ORM Database Client & Migration Runner
+ * Ticket REPO-005, AGENT-001, RUN-001 & RAG-001: Drizzle ORM Database Client & Migration Runner
  *
- * Combines all domain schemas (`tenantSchema` + `agentsSchema` + `runsSchema`) and applies
- * sequential versioned SQL migrations (`0001` + `0002` + `0003`) idempotently.
+ * Combines all domain schemas (`tenantSchema` + `agentsSchema` + `runsSchema` + `knowledgeSchema`)
+ * and applies sequential versioned SQL migrations (`0001`..`0004`) idempotently.
  */
 
 export const aegisSchema = {
   ...tenantSchema,
   ...agentsSchema,
   ...runsSchema,
+  ...knowledgeSchema,
 };
 
 export type AegisDatabase = PgliteDatabase<typeof aegisSchema>;
@@ -30,13 +33,14 @@ export interface DatabaseContext {
 }
 
 /**
- * Applies all sequential SQL migrations (0001 Tenant + 0002 Agents + 0003 Runs/Queue)
+ * Applies all sequential SQL migrations (0001 Tenant + 0002 Agents + 0003 Runs/Queue + 0004 Knowledge)
  * to the given PGlite instance. Safe to call multiple times because statements use `IF NOT EXISTS`.
  */
 export async function applyTenantMigrations(pg: PGlite): Promise<void> {
   await pg.exec(MIGRATION_0001_TENANT_SQL);
   await pg.exec(MIGRATION_0002_AGENTS_SQL);
   await pg.exec(MIGRATION_0003_RUNS_SQL);
+  await pg.exec(MIGRATION_0004_KNOWLEDGE_SQL);
 }
 
 /**
