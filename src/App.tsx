@@ -6,6 +6,7 @@ import statusContent from '../docs/implementation/STATUS.md?raw';
 import architectureContent from '../docs/architecture.md?raw';
 import threatModelContent from '../docs/threat-model.md?raw';
 import adr001Content from '../docs/adr/ADR-001-local-first-free-tier.md?raw';
+import adr002Content from '../docs/adr/ADR-002-tenant-isolation.md?raw';
 import adr003Content from '../docs/adr/ADR-003-postgres-job-queue.md?raw';
 import envExampleContent from '../.env.example?raw';
 import envTsContent from './server/config/env.ts?raw';
@@ -33,6 +34,11 @@ import indexCssContent from './index.css?raw';
 import mainTsxContent from './main.tsx?raw';
 import zipTsContent from './utils/zip.ts?raw';
 import appTsxContent from './App.tsx?raw';
+import toolGatewayContent from './server/modules/tools/tool-gateway.ts?raw';
+import toolGatewayTestContent from '../tests/unit/tool-gateway.test.ts?raw';
+import runsSchemaContent from './server/db/schema/runs.ts?raw';
+import runExecutorContent from './server/modules/runs/run-executor.ts?raw';
+import runExecutorTestContent from '../tests/integration/run-executor.test.ts?raw';
 
 interface ProjectFile {
   step: string;
@@ -85,6 +91,16 @@ const COMPLETED_FILES: ProjectFile[] = [
     commitMessage: 'docs(adr): add ADR-001 local-first free-tier constraints (PLAN-004)',
     summary: 'Documents why the platform uses deterministic MockModelProvider by default and avoids mandatory paid cloud dependencies.',
     content: adr001Content,
+  },
+  {
+    step: 'Step 1.4b (File #4b)',
+    ticket: 'PLAN-004',
+    path: 'docs/adr/ADR-002-tenant-isolation.md',
+    filename: 'ADR-002-tenant-isolation.md',
+    title: 'ADR-002: Defense-in-Depth Multi-Tenant Isolation & 404 Masking',
+    commitMessage: 'docs(adr): add ADR-002 multi-tenant isolation and 404 masking policy (PLAN-004)',
+    summary: 'Documents three-layer tenant isolation: organization_id FKs, central RBAC 404 cross-tenant masking, and server-injected tool context.',
+    content: adr002Content,
   },
   {
     step: 'Step 1.5 (File #5)',
@@ -356,6 +372,56 @@ const COMPLETED_FILES: ProjectFile[] = [
     summary: 'Provides live file inspection, step batch .zip downloads with full folder structure, and git commit helpers.',
     content: appTsxContent,
   },
+  {
+    step: 'Step 4.1a (File #29)',
+    ticket: 'TOOL-001 / TOOL-002',
+    path: 'src/server/modules/tools/tool-gateway.ts',
+    filename: 'tool-gateway.ts',
+    title: 'Server-Authorized Tool Gateway & Safe Arithmetic Calculator (tool-gateway.ts)',
+    commitMessage: 'feat(tools): add ToolGateway and safe recursive-descent arithmetic calculator (TOOL-001)',
+    summary: 'Enforces AgentVersionSnapshot.allowedTools (Threat T-03), Zod argument validation, payload/timeout budgets, and safe parsed arithmetic with zero eval().',
+    content: toolGatewayContent,
+  },
+  {
+    step: 'Step 4.1b (File #30)',
+    ticket: 'TOOL-001 / TOOL-002',
+    path: 'tests/unit/tool-gateway.test.ts',
+    filename: 'tool-gateway.test.ts',
+    title: 'Unit & Security Test Suite for Tool Gateway & Calculator (6/6 Passing)',
+    commitMessage: 'test(tools): add unit and security tests for ToolGateway and safe calculator (TOOL-002)',
+    summary: 'Verifies safe arithmetic evaluation, code-injection rejection, T-03 allowlist enforcement, tenant-scoped knowledge_search, and byte/timeout limits.',
+    content: toolGatewayTestContent,
+  },
+  {
+    step: 'Step 4.2a (File #31)',
+    ticket: 'RUN-001 / QUEUE-001',
+    path: 'src/server/db/schema/runs.ts',
+    filename: 'runs.ts',
+    title: 'Drizzle PostgreSQL Schema: Runs, Run Steps, Run Events & Job Queue (runs.ts)',
+    commitMessage: 'feat(runs): add Drizzle schema and migration 0003 for runs, run_steps, run_events, and job_queue (RUN-001)',
+    summary: 'Defines runs (pinned to immutable agent_versions + idempotency key), run_steps, monotonic run_events, and FOR UPDATE SKIP LOCKED job_queue.',
+    content: runsSchemaContent,
+  },
+  {
+    step: 'Step 4.2b (File #32)',
+    ticket: 'RUN-002 / QUEUE-002',
+    path: 'src/server/modules/runs/run-executor.ts',
+    filename: 'run-executor.ts',
+    title: 'Bounded Agent Runtime Executor & PostgreSQL Job Queue Worker (run-executor.ts)',
+    commitMessage: 'feat(runs): add bounded agent runtime executor and FOR UPDATE SKIP LOCKED job worker (RUN-002)',
+    summary: 'Implements atomic enqueueAgentRun, claimNextPendingJob, recoverExpiredJobLeases, bounded executeAgentRun loop, citation verification, and SSE event replay.',
+    content: runExecutorContent,
+  },
+  {
+    step: 'Step 4.2c (File #33)',
+    ticket: 'RUN-002 / QUEUE-002',
+    path: 'tests/integration/run-executor.test.ts',
+    filename: 'run-executor.test.ts',
+    title: 'PostgreSQL Integration Tests for Bounded Agent Runtime & Job Queue (3/3 Passing)',
+    commitMessage: 'test(runs): add integration tests for bounded agent runtime and job queue leases (RUN-002)',
+    summary: 'Verifies idempotent run enqueue, immutable v1 pinning, multi-step calculator + knowledge_search + citation guard, T-03/T-04 guards, 404 isolation, and lease recovery.',
+    content: runExecutorTestContent,
+  },
 ];
 
 interface CurrentBatchItem {
@@ -366,34 +432,39 @@ interface CurrentBatchItem {
 
 const CURRENT_STEP_BATCH: CurrentBatchItem[] = [
   {
+    path: 'src/server/db/schema/runs.ts',
+    status: 'NEW',
+    changeReason: 'Step 4.2a (RUN-001 & QUEUE-001): Drizzle schema & SQL migration 0003 for runs, run_steps, run_events, and job_queue.',
+  },
+  {
+    path: 'src/server/modules/runs/run-executor.ts',
+    status: 'NEW',
+    changeReason: 'Step 4.2b (RUN-002 & QUEUE-002): Bounded agent runtime executor, idempotent run enqueue, and FOR UPDATE SKIP LOCKED job worker.',
+  },
+  {
+    path: 'tests/integration/run-executor.test.ts',
+    status: 'NEW',
+    changeReason: 'Step 4.2c (RUN-002 & QUEUE-002): PostgreSQL integration tests (3/3 passing) covering multi-step execution, T-03/T-04 guards, and job lease recovery.',
+  },
+  {
+    path: 'src/server/db/client.ts',
+    status: 'UPDATED',
+    changeReason: 'Registered runsSchema and MIGRATION_0003_RUNS_SQL in applyTenantMigrations().',
+  },
+  {
+    path: 'docs/adr/ADR-002-tenant-isolation.md',
+    status: 'NEW',
+    changeReason: 'Included missing ADR-002 (Defense-in-Depth Multi-Tenant Isolation & 404 Masking) so docs/adr/ is 100% complete.',
+  },
+  {
+    path: 'docs/implementation/STATUS.md',
+    status: 'UPDATED',
+    changeReason: 'Updated implementation ledger marking Phase 4 (RUN-001, RUN-002, QUEUE-001, QUEUE-002) verified (45/45 tests passing).',
+  },
+  {
     path: 'src/App.tsx',
-    status: 'NEW',
-    changeReason: 'Requested missing file #1: Interactive Curriculum Sync, ZIP Exporter & Verification Workbench UI.',
-  },
-  {
-    path: 'src/index.css',
-    status: 'NEW',
-    changeReason: 'Requested missing file #2: Tailwind CSS entry stylesheet.',
-  },
-  {
-    path: 'src/main.tsx',
-    status: 'NEW',
-    changeReason: 'Requested missing file #3: React DOM root entry point.',
-  },
-  {
-    path: 'src/utils/zip.ts',
-    status: 'NEW',
-    changeReason: 'Requested missing file #4: Pure TypeScript PKZIP builder that preserves nested folder paths.',
-  },
-  {
-    path: 'tests/integration/tenant-schema.test.ts',
-    status: 'NEW',
-    changeReason: 'Requested missing file #5: PostgreSQL Tenant Schema Integration Tests (6/6 passing) in tests/integration/.',
-  },
-  {
-    path: 'tests/unit/authorization.test.ts',
-    status: 'NEW',
-    changeReason: 'Requested missing file #6: Central RBAC & Tenant Boundary Unit Tests (6/6 passing) in tests/unit/.',
+    status: 'UPDATED',
+    changeReason: 'Registered Step 4.2 files and updated CURRENT_STEP_BATCH zip bundle.',
   },
 ];
 
@@ -522,7 +593,7 @@ export default function App() {
             All Files ({COMPLETED_FILES.length})
           </a>
           <a href="#git-helper" className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0">
-            Phase 3 Complete (36/36 Pass)
+            Phase 4 Complete (45/45 Pass)
           </a>
         </nav>
 
@@ -550,7 +621,7 @@ export default function App() {
         <aside className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 p-5 flex flex-col gap-5 shrink-0">
           <div>
             <div className="text-xs font-medium text-emerald-700">
-              AGENT-003 Verified · 36/36 Tests Passing
+              Phase 4 Complete · 45/45 Tests Passing
             </div>
             <h1 className="text-base font-bold text-slate-900 mt-1">
               Project Files ({COMPLETED_FILES.length})
@@ -616,7 +687,7 @@ export default function App() {
                   Current Step Download Batch — Preserves Exact Folder Hierarchy (.zip)
                 </div>
                 <h2 className="text-lg font-bold text-slate-900 mt-0.5">
-                  Step 3.4 Batch ({batchFiles.length} Files: New + Updated)
+                  Step 4.2 Batch ({batchFiles.length} Files: New + Updated)
                 </h2>
                 <p className="text-xs text-slate-600 mt-1">
                   Click <span className="font-mono font-semibold text-slate-800">Download Batch .zip (With Folders)</span> and run <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">unzip -o ~/Downloads/aegis-current-step-batch.zip</span> in your repo root — every file extracts directly into its exact subfolder (`src/server/ai/...`, `tests/unit/...`, `docs/...`).
