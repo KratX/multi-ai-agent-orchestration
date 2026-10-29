@@ -1,5 +1,21 @@
 import React, { useState } from 'react';
-import { Download, Copy, Check, GitCommit, Terminal, FolderArchive } from 'lucide-react';
+import {
+  Download,
+  Copy,
+  Check,
+  GitCommit,
+  Terminal,
+  FolderArchive,
+  ShieldCheck,
+  GitBranch,
+  Play,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  Database,
+  Radio,
+  FileCode2,
+} from 'lucide-react';
 import { createZipBlob } from './utils/zip';
 
 import statusContent from '../docs/implementation/STATUS.md?raw';
@@ -54,6 +70,9 @@ import evalHarnessContent from './server/modules/evals/eval-harness.ts?raw';
 import sseStreamContent from './server/modules/runs/sse-stream.ts?raw';
 import evalGradersTestContent from '../tests/unit/eval-graders.test.ts?raw';
 import evalSseTestContent from '../tests/integration/eval-sse.test.ts?raw';
+import demoSeedContent from './server/seed/demo-seed.ts?raw';
+import flagshipE2eTestContent from '../tests/integration/flagship-e2e.test.ts?raw';
+import readmeContent from '../README.md?raw';
 
 interface ProjectFile {
   step: string;
@@ -194,7 +213,7 @@ const COMPLETED_FILES: ProjectFile[] = [
     filename: 'package.json',
     title: 'Package Manifest & pnpm Scripts (package.json)',
     commitMessage: 'chore(repo): configure pnpm scripts and Drizzle/PGlite dependencies (REPO-001)',
-    summary: 'Configures pnpm test, typecheck, db:up, db:stop, and dependencies (zod, drizzle-orm, @electric-sql/pglite).',
+    summary: 'Configures pnpm test, typecheck, seed, db:up, db:stop, and dependencies (zod, drizzle-orm, @electric-sql/pglite).',
     content: packageJsonContent,
   },
   {
@@ -214,7 +233,7 @@ const COMPLETED_FILES: ProjectFile[] = [
     filename: 'client.ts',
     title: 'Drizzle ORM Database Client, Migration Runner & Readiness Probe',
     commitMessage: 'feat(db): add Drizzle PGlite database client, migration runner, and health probe (REPO-005)',
-    summary: 'Creates isolated or singleton PostgreSQL instances, runs MIGRATION_0001_TENANT_SQL, and implements DatabaseReadinessCheck.',
+    summary: 'Creates isolated or singleton PostgreSQL instances, runs migrations 0001..0006, and implements DatabaseReadinessCheck.',
     content: dbClientContent,
   },
   {
@@ -274,7 +293,7 @@ const COMPLETED_FILES: ProjectFile[] = [
     filename: 'tsconfig.json',
     title: 'TypeScript Compiler Configuration (tsconfig.json)',
     commitMessage: 'chore(ts): configure bundler moduleResolution and node/vite types (REPO-001)',
-    summary: 'Configures moduleResolution: "bundler" so extensionless relative TypeScript imports (like "../db/schema/tenant") resolve cleanly in VS Code and pnpm typecheck.',
+    summary: 'Configures moduleResolution: "bundler" so extensionless relative TypeScript imports resolve cleanly in VS Code and pnpm typecheck.',
     content: tsconfigContent,
   },
   {
@@ -382,9 +401,9 @@ const COMPLETED_FILES: ProjectFile[] = [
     ticket: 'REPO-001',
     path: 'src/App.tsx',
     filename: 'App.tsx',
-    title: 'Interactive Curriculum Sync, ZIP Exporter & Verification Workbench (src/App.tsx)',
-    commitMessage: 'feat(ui): add interactive curriculum workbench and folder-preserving zip exporter (REPO-001)',
-    summary: 'Provides live file inspection, step batch .zip downloads with full folder structure, and git commit helpers.',
+    title: 'Interactive Curriculum Sync, ZIP Exporter & Operator Console Workbench (src/App.tsx)',
+    commitMessage: 'feat(ui): add interactive operator console and folder-preserving zip exporter (UI-001)',
+    summary: 'Provides live file inspection, step batch .zip downloads with full folder structure, git commit helpers, and the interactive Operator Console.',
     content: appTsxContent,
   },
   {
@@ -587,6 +606,36 @@ const COMPLETED_FILES: ProjectFile[] = [
     summary: 'Verifies 100% pass rate on Agent v1, regression detection when Agent v2 drops calculator tool, SSE reconnect replay with Last-Event-ID, and 403/404 isolation.',
     content: evalSseTestContent,
   },
+  {
+    step: 'Step 8.1a (File #49)',
+    ticket: 'SEED-001',
+    path: 'src/server/seed/demo-seed.ts',
+    filename: 'demo-seed.ts',
+    title: 'Deterministic Flagship Workspace Seed & Verification Runner (demo-seed.ts)',
+    commitMessage: 'feat(seed): add deterministic multi-tenant flagship seed runner across all 9 MVP subsystems (SEED-001)',
+    summary: 'Provisions Acme Cyber Defense & Beta Logistics, 4 RBAC roles, RAG runbook chunks, Agent v1/v2 snapshots, HITL workflow run, Eval diff, and SSE cursor replay.',
+    content: demoSeedContent,
+  },
+  {
+    step: 'Step 8.1b (File #50)',
+    ticket: 'SEED-001',
+    path: 'tests/integration/flagship-e2e.test.ts',
+    filename: 'flagship-e2e.test.ts',
+    title: 'End-to-End Flagship Verification Test Suite (4/4 Passing)',
+    commitMessage: 'test(e2e): add flagship end-to-end PostgreSQL verification suite for seedFlagshipWorkspace (SEED-001)',
+    summary: 'Verifies end-to-end seeding, cross-tenant 404 isolation between Acme and Beta, v1-vs-v2 regression detection, SSE Last-Event-ID replay, and RBAC audit logs.',
+    content: flagshipE2eTestContent,
+  },
+  {
+    step: 'Step 8.1c (File #51)',
+    ticket: 'DOCS-001',
+    path: 'README.md',
+    filename: 'README.md',
+    title: 'Production Architecture, Threat Model & Quickstart Documentation (README.md)',
+    commitMessage: 'docs(readme): add flagship README covering 9 MVP subsystems, threat model, and quickstart commands (DOCS-001)',
+    summary: 'Documents the 9 verified subsystems, Mermaid architecture diagram, migrations 0001..0006, threat mitigations T-01..T-07, and pnpm test / pnpm seed workflows.',
+    content: readmeContent,
+  },
 ];
 
 interface CurrentBatchItem {
@@ -597,52 +646,146 @@ interface CurrentBatchItem {
 
 const CURRENT_STEP_BATCH: CurrentBatchItem[] = [
   {
-    path: 'src/server/db/schema/evals.ts',
+    path: 'src/server/seed/demo-seed.ts',
     status: 'NEW',
-    changeReason: 'Step 7.1a (EVAL-001): Drizzle schema & SQL migration 0006 for eval_suites, eval_cases, eval_experiments, and eval_case_results.',
+    changeReason: 'Step 8.1a (SEED-001): Deterministic multi-tenant workspace seed & end-to-end verification runner (pnpm seed).',
   },
   {
-    path: 'src/server/modules/evals/eval-harness.ts',
+    path: 'tests/integration/flagship-e2e.test.ts',
     status: 'NEW',
-    changeReason: 'Step 7.1b (EVAL-001): Deterministic graders (exact_match, contains, json_schema, citation_required, tool_called), experiment runner, and v1-vs-v2 regression comparator.',
+    changeReason: 'Step 8.1b (SEED-001): End-to-end flagship PostgreSQL integration test suite (4/4 passing; 78/78 total tests).',
   },
   {
-    path: 'src/server/modules/runs/sse-stream.ts',
+    path: 'README.md',
     status: 'NEW',
-    changeReason: 'Step 7.1c (SSE-001): Server-Sent Events (SSE) replay stream engine supporting Last-Event-ID / afterSequence cursor reconnect without duplicate frames.',
+    changeReason: 'Step 8.1c (DOCS-001): Flagship portfolio README with architecture diagram, schema table, threat model T-01..T-07, and quickstart.',
   },
   {
-    path: 'tests/unit/eval-graders.test.ts',
-    status: 'NEW',
-    changeReason: 'Step 7.1d (EVAL-001 / SSE-001): Unit test suite (6/6 passing) for evaluation assertion graders and SSE wire protocol cursor/frame helpers.',
-  },
-  {
-    path: 'tests/integration/eval-sse.test.ts',
-    status: 'NEW',
-    changeReason: 'Step 7.1e (EVAL-001 / SSE-001): PostgreSQL integration tests (4/4 passing) for evaluation suites, v1-vs-v2 regression detection, SSE cursor replay, and 403/404 isolation.',
-  },
-  {
-    path: 'src/server/db/client.ts',
+    path: 'package.json',
     status: 'UPDATED',
-    changeReason: 'Registered evalsSchema and MIGRATION_0006_EVALS_SQL in applyTenantMigrations().',
+    changeReason: 'Added "seed": "tsx src/server/seed/demo-seed.ts" script to package.json.',
   },
   {
     path: 'docs/implementation/STATUS.md',
     status: 'UPDATED',
-    changeReason: 'Updated implementation ledger marking Phase 7 (EVAL-001, SSE-001, UI-001) verified (74/74 tests passing).',
+    changeReason: 'Marked Phase 8 (SEED-001 & DOCS-001) complete with all 16 test suites (78/78 tests) passing.',
   },
   {
     path: 'src/App.tsx',
     status: 'UPDATED',
-    changeReason: 'Registered Step 7.1 files and updated CURRENT_STEP_BATCH zip bundle.',
+    changeReason: 'Registered Step 8.1 files and added the Interactive Operator Console mode alongside the Step Batch .zip exporter.',
+  },
+];
+
+type ConsoleActorId = 'acme-owner' | 'acme-admin' | 'acme-dev' | 'acme-viewer' | 'beta-owner';
+
+interface ConsoleActorSpec {
+  id: ConsoleActorId;
+  label: string;
+  organizationName: string;
+  organizationSlug: string;
+  role: 'owner' | 'admin' | 'developer' | 'viewer';
+  canDecideHitl: boolean;
+  canViewAudit: boolean;
+  isCrossTenantToAcme: boolean;
+}
+
+const CONSOLE_ACTORS: ConsoleActorSpec[] = [
+  {
+    id: 'acme-owner',
+    label: 'Elena Vance (Acme Owner)',
+    organizationName: 'Acme Cyber Defense',
+    organizationSlug: 'acme-cyber-defense',
+    role: 'owner',
+    canDecideHitl: true,
+    canViewAudit: true,
+    isCrossTenantToAcme: false,
+  },
+  {
+    id: 'acme-admin',
+    label: 'Marcus Sterling (Acme Admin)',
+    organizationName: 'Acme Cyber Defense',
+    organizationSlug: 'acme-cyber-defense',
+    role: 'admin',
+    canDecideHitl: true,
+    canViewAudit: true,
+    isCrossTenantToAcme: false,
+  },
+  {
+    id: 'acme-dev',
+    label: 'Priya Nair (Acme Developer)',
+    organizationName: 'Acme Cyber Defense',
+    organizationSlug: 'acme-cyber-defense',
+    role: 'developer',
+    canDecideHitl: false,
+    canViewAudit: false,
+    isCrossTenantToAcme: false,
+  },
+  {
+    id: 'acme-viewer',
+    label: 'Lucas Meyer (Acme Viewer)',
+    organizationName: 'Acme Cyber Defense',
+    organizationSlug: 'acme-cyber-defense',
+    role: 'viewer',
+    canDecideHitl: false,
+    canViewAudit: false,
+    isCrossTenantToAcme: false,
+  },
+  {
+    id: 'beta-owner',
+    label: 'Sora Takahashi (Beta Logistics Owner)',
+    organizationName: 'Beta Logistics',
+    organizationSlug: 'beta-logistics',
+    role: 'owner',
+    canDecideHitl: false,
+    canViewAudit: false,
+    isCrossTenantToAcme: true,
+  },
+];
+
+const SEEDED_SSE_EVENTS = [
+  {
+    sequence: 1,
+    eventType: 'run.queued',
+    payload: '{"status":"queued","agentVersion":"v1 (c9f2a8b1...)","prompt":"Calculate 12 * 12 using calculator"}',
+  },
+  {
+    sequence: 2,
+    eventType: 'run.started',
+    payload: '{"workerId":"worker-eval-1","leaseSeconds":30,"maxSteps":6}',
+  },
+  {
+    sequence: 3,
+    eventType: 'tool.called',
+    payload: '{"step":1,"toolName":"calculator","input":{"expression":"12 * 12"}}',
+  },
+  {
+    sequence: 4,
+    eventType: 'tool.completed',
+    payload: '{"step":1,"toolName":"calculator","output":{"result":144},"durationMs":2}',
+  },
+  {
+    sequence: 5,
+    eventType: 'run.succeeded',
+    payload: '{"finalOutput":"Calculated result: 144","totalTokens":62,"providerMode":"mock"}',
   },
 ];
 
 export default function App() {
+  const [activeView, setActiveView] = useState<'workbench' | 'console'>('workbench');
   const [selectedIndex, setSelectedIndex] = useState<number>(COMPLETED_FILES.length - 1);
   const [copiedType, setCopiedType] = useState<'content' | 'git' | 'batch-git' | null>(null);
 
+  // Interactive Operator Console states
+  const [selectedActorId, setSelectedActorId] = useState<ConsoleActorId>('acme-admin');
+  const [hitlStatus, setHitlStatus] = useState<'waiting_approval' | 'succeeded' | 'cancelled'>('waiting_approval');
+  const [hitlDecisionMessage, setHitlDecisionMessage] = useState<string>(
+    'Paused at node approval-gate-1 (Calculated change risk score 150 > threshold 100).'
+  );
+  const [lastEventIdCursor, setLastEventIdCursor] = useState<number>(0);
+
   const activeFile = COMPLETED_FILES[selectedIndex];
+  const currentActor = CONSOLE_ACTORS.find((a) => a.id === selectedActorId) ?? CONSOLE_ACTORS[0]!;
 
   const batchFiles = CURRENT_STEP_BATCH.map((item) => {
     const index = COMPLETED_FILES.findIndex((f) => f.path === item.path);
@@ -695,34 +838,6 @@ export default function App() {
     triggerBlobDownload(zipBlob, 'aegis-full-repo-with-folders.zip');
   };
 
-  const handleDownloadAllScript = () => {
-    const scriptLines = [
-      '#!/usr/bin/env bash',
-      'set -euo pipefail',
-      '# Aegis Runtime — Auto-generated Step-by-Step File Sync & Folder Organizer Script',
-      '',
-      '# 1. Remove any flat copies accidentally saved into the repository root by browser downloads',
-      'rm -f ./STATUS.md ./architecture.md ./threat-model.md ./ADR-001-local-first-free-tier.md ./ADR-003-postgres-job-queue.md',
-      'rm -f ./env.ts ./env.test.ts ./route.ts ./health-route.test.ts ./tenant.ts ./client.ts ./tenant-schema.test.ts',
-      'rm -f ./authorization.ts ./authorization.test.ts ./tenant-repository.ts ./tenant-isolation.test.ts ./agents.ts',
-      '',
-      '# 2. Create exact directory tree and write every file to its canonical path',
-    ];
-    for (const f of COMPLETED_FILES) {
-      const dir = f.path.includes('/') ? f.path.substring(0, f.path.lastIndexOf('/')) : '';
-      if (dir) {
-        scriptLines.push(`mkdir -p "${dir}"`);
-      }
-      scriptLines.push(`cat << 'EOF_AEGIS_FILE' > "${f.path}"`);
-      scriptLines.push(f.content);
-      scriptLines.push('EOF_AEGIS_FILE');
-      scriptLines.push(`echo "Synced ${f.path}"`);
-      scriptLines.push('');
-    }
-    const blob = new Blob([scriptLines.join('\n')], { type: 'text/x-shellscript;charset=utf-8' });
-    triggerBlobDownload(blob, 'sync-aegis-files.sh');
-  };
-
   const buildTerminalCommand = (file: ProjectFile) => {
     const dir = file.path.includes('/') ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
     const mkdirPart = dir ? `mkdir -p "${dir}" && ` : '';
@@ -747,25 +862,72 @@ export default function App() {
     setTimeout(() => setCopiedType(null), 2000);
   };
 
+  const handleSimulateHitlDecision = (decision: 'approved' | 'rejected') => {
+    if (currentActor.isCrossTenantToAcme) {
+      setHitlDecisionMessage(
+        `HTTP 404 Not Found (TENANT_MISMATCH): ${currentActor.label} belongs to Beta Logistics and cannot enumerate or decide Acme Cyber Defense approval gates (ADR-002).`
+      );
+      return;
+    }
+    if (!currentActor.canDecideHitl) {
+      setHitlDecisionMessage(
+        `HTTP 403 Forbidden (INSUFFICIENT_ROLE): ${currentActor.label} (${currentActor.role}) is blocked from deciding production approval gates. Recorded outcome='denied' in audit_events (Threat T-06).`
+      );
+      return;
+    }
+    if (decision === 'approved') {
+      setHitlStatus('succeeded');
+      setHitlDecisionMessage(
+        `Approved by ${currentActor.label}: Workflow resumed from approval-gate-1 -> agent-summary -> end-1 (status='succeeded'). Recorded outcome='allowed' in audit_events.`
+      );
+    } else {
+      setHitlStatus('cancelled');
+      setHitlDecisionMessage(
+        `Rejected by ${currentActor.label}: Workflow transitioned to status='cancelled' (errorCode='APPROVAL_REJECTED'). Recorded outcome='allowed' in audit_events.`
+      );
+    }
+  };
+
+  const replayedSseEvents = SEEDED_SSE_EVENTS.filter((e) => e.sequence > lastEventIdCursor);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       {/* Top Bar Contract: 3 zones */}
-      <header className="flex items-center justify-between gap-8 px-6 py-3.5 bg-white border-b border-slate-200">
-        <a href="#top" className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0">
-          Aegis Runtime
-        </a>
+      <header className="flex flex-wrap items-center justify-between gap-4 px-6 py-3.5 bg-white border-b border-slate-200">
+        <div className="flex items-center gap-3">
+          <a href="#top" className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0">
+            Aegis Runtime
+          </a>
+          <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 tabular-nums">
+            Phase 8 Complete · 78/78 Tests Passing
+          </span>
+        </div>
 
-        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
-          <a href="#current-batch" className="text-slate-900 hover:text-blue-600 transition-colors whitespace-nowrap shrink-0">
-            Current Step Batch ({batchFiles.length})
-          </a>
-          <a href="#files" className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0">
-            All Files ({COMPLETED_FILES.length})
-          </a>
-          <a href="#git-helper" className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0">
-            Phase 7 Complete (74/74 Pass)
-          </a>
-        </nav>
+        {/* Mode Switcher */}
+        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg">
+          <button
+            onClick={() => setActiveView('workbench')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeView === 'workbench'
+                ? 'bg-slate-900 text-white'
+                : 'text-slate-700 hover:text-slate-900'
+            }`}
+          >
+            <FileCode2 className="w-3.5 h-3.5" />
+            Step 8.1 Batch & File Inspector ({COMPLETED_FILES.length})
+          </button>
+          <button
+            onClick={() => setActiveView('console')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeView === 'console'
+                ? 'bg-slate-900 text-white'
+                : 'text-slate-700 hover:text-slate-900'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            Live Operator Console (Flagship Seed)
+          </button>
+        </div>
 
         <div className="flex items-center gap-2.5 shrink-0">
           <button
@@ -785,235 +947,546 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Workspace Layout: 300px Sidebar + Content */}
-      <div className="flex-1 flex flex-col lg:flex-row max-w-[1440px] w-full mx-auto">
-        {/* Left Sidebar: File-by-File Progression */}
-        <aside className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 p-5 flex flex-col gap-5 shrink-0">
-          <div>
-            <div className="text-xs font-medium text-emerald-700">
-              Phase 7 Complete · 74/74 Tests Passing
+      {activeView === 'console' ? (
+        <main className="flex-1 max-w-[1440px] w-full mx-auto p-6 lg:p-8 flex flex-col gap-6">
+          {/* Operator Actor Bar */}
+          <section className="bg-white border border-slate-200 rounded-lg p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div>
+              <div className="text-xs font-semibold text-blue-700">
+                Interactive RBAC & Multi-Tenant Isolation Simulator (SEED-001)
+              </div>
+              <h1 className="text-lg font-bold text-slate-900 mt-0.5">
+                Flagship Seeded Workspace — {currentActor.organizationName}
+              </h1>
+              <p className="text-xs text-slate-600 mt-1">
+                Switch active operator identity below to verify RBAC approval gates (`403` with `denied` audit log) and cross-tenant `404 TENANT_MISMATCH` masking (`ADR-002`).
+              </p>
             </div>
-            <h1 className="text-base font-bold text-slate-900 mt-1">
-              Project Files ({COMPLETED_FILES.length})
-            </h1>
-            <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-              Every file uses live disk imports (`?raw`), so updated files always contain their latest version.
-            </p>
-          </div>
 
-          <div className="flex flex-col gap-1.5" role="listbox" aria-label="Completed project files">
-            {COMPLETED_FILES.map((file, idx) => {
-              const isSelected = idx === selectedIndex;
-              const batchEntry = CURRENT_STEP_BATCH.find((b) => b.path === file.path);
-              return (
+            <div className="flex flex-wrap items-center gap-2">
+              {CONSOLE_ACTORS.map((actor) => (
                 <button
-                  key={file.path}
-                  onClick={() => setSelectedIndex(idx)}
-                  className={`w-full text-left px-3.5 py-3 rounded-lg border transition-colors cursor-pointer ${
-                    isSelected
+                  key={actor.id}
+                  onClick={() => setSelectedActorId(actor.id)}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                    selectedActorId === actor.id
                       ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`text-xs font-mono tabular-nums ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
-                      {file.step}
-                    </span>
-                    {batchEntry && (
-                      <span
-                        className={`text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded ${
-                          batchEntry.status === 'NEW'
-                            ? isSelected
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : 'bg-emerald-50 text-emerald-700'
-                            : isSelected
-                              ? 'bg-amber-500/20 text-amber-300'
-                              : 'bg-amber-50 text-amber-800'
-                        }`}
-                      >
-                        {batchEntry.status}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-sm font-semibold mt-0.5 truncate">
-                    {file.path}
-                  </div>
-                  <div className={`text-xs mt-1 line-clamp-1 ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
-                    {file.title}
+                  <div>{actor.label}</div>
+                  <div className="text-[11px] font-mono opacity-80">
+                    org={actor.organizationSlug} · role={actor.role}
                   </div>
                 </button>
-              );
-            })}
-          </div>
-        </aside>
-
-        {/* Main Content Viewport */}
-        <main id="files" className="flex-1 p-6 lg:p-8 flex flex-col gap-6 min-w-0">
-          {/* Current Step Batch Section (New + Updated Files) */}
-          <section id="current-batch" className="bg-white border border-slate-200 rounded-lg p-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-              <div>
-                <div className="text-xs font-semibold text-blue-700">
-                  Current Step Download Batch — Preserves Exact Folder Hierarchy (.zip)
-                </div>
-                <h2 className="text-lg font-bold text-slate-900 mt-0.5">
-                  Step 7.1 Batch ({batchFiles.length} Files: New + Updated)
-                </h2>
-                <p className="text-xs text-slate-600 mt-1">
-                  Click <span className="font-mono font-semibold text-slate-800">Download Batch .zip (With Folders)</span> and run <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">unzip -o ~/Downloads/aegis-current-step-batch.zip</span> in your repo root — every file extracts directly into its exact subfolder (`src/server/ai/...`, `tests/unit/...`, `docs/...`).
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                <button
-                  onClick={handleDownloadCurrentBatchZip}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer"
-                >
-                  <FolderArchive className="w-3.5 h-3.5" />
-                  Download Batch .zip (With Folders)
-                </button>
-                <button
-                  onClick={() => handleCopy(buildBatchTerminalCommand(), 'batch-git')}
-                  className="px-3.5 py-2 text-xs font-semibold text-slate-800 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {copiedType === 'batch-git' ? (
-                    <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  ) : (
-                    <GitCommit className="w-3.5 h-3.5" />
-                  )}
-                  {copiedType === 'batch-git' ? 'Copied Batch Git Command' : 'Copy Batch Git Sync Command'}
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
-              {batchFiles.map(({ file, index, status, changeReason }) => (
-                <div
-                  key={file.path}
-                  className="border border-slate-200 rounded-lg p-3.5 flex flex-col justify-between gap-3 bg-slate-50/60"
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-mono font-semibold text-slate-900 truncate">
-                        {file.path}
-                      </span>
-                      <span
-                        className={`text-[11px] font-mono font-semibold px-2 py-0.5 rounded shrink-0 ${
-                          status === 'NEW'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-amber-100 text-amber-900'
-                        }`}
-                      >
-                        {status}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 mt-1">
-                      {changeReason}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/80">
-                    <button
-                      onClick={() => handleDownloadSingleFileWithFolderZip(file)}
-                      className="px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 rounded hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <FolderArchive className="w-3 h-3" />
-                      .zip (With Folder Path)
-                    </button>
-                    <button
-                      onClick={() => handleDownloadFile(file)}
-                      className="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors flex items-center gap-1 cursor-pointer"
-                    >
-                      <Download className="w-3 h-3" />
-                      Raw {file.filename}
-                    </button>
-                    <button
-                      onClick={() => setSelectedIndex(index)}
-                      className="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors cursor-pointer"
-                    >
-                      Inspect
-                    </button>
-                  </div>
-                </div>
               ))}
             </div>
           </section>
 
-          {/* Active File Header & Download Actions */}
-          <section className="bg-white border border-slate-200 rounded-lg p-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-200">
-              <div>
-                <div className="text-xs text-slate-500 font-mono tabular-nums">
-                  {activeFile.step} · Ticket {activeFile.ticket} · Target Path: {activeFile.path}
-                </div>
-                <h2 className="text-xl font-bold text-slate-900 mt-1">
-                  {activeFile.title}
-                </h2>
-                <p className="text-sm text-slate-600 mt-1">
-                  {activeFile.summary}
-                </p>
+          {/* 4-Card KPI Summary */}
+          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <div className="text-xs font-medium text-slate-500">Automated Test Suites</div>
+              <div className="text-2xl font-bold text-slate-900 mt-1 font-mono tabular-nums">
+                78 / 78 Passing
               </div>
-
-              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                <button
-                  onClick={() => handleDownloadSingleFileWithFolderZip(activeFile)}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer"
-                >
-                  <FolderArchive className="w-3.5 h-3.5" />
-                  Download {activeFile.path} (.zip)
-                </button>
-
-                <button
-                  onClick={() => handleDownloadFile(activeFile)}
-                  className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Raw {activeFile.filename}
-                </button>
-
-                <button
-                  onClick={() => handleCopy(activeFile.content, 'content')}
-                  className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {copiedType === 'content' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copiedType === 'content' ? 'Copied File Content' : 'Copy Raw File'}
-                </button>
+              <div className="text-xs text-emerald-700 mt-1 font-medium">
+                16 Suites · PGlite PostgreSQL Migrations 0001..0006
               </div>
             </div>
 
-            {/* Git Commit Helper Box */}
-            <div id="git-helper" className="mt-5 bg-slate-900 text-slate-100 rounded-lg p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-2 text-xs font-mono text-slate-300">
-                  <Terminal className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>Local Git Repo Helper — Creates directory, writes {activeFile.path}, and commits:</span>
-                </div>
-                <button
-                  onClick={() => handleCopy(buildTerminalCommand(activeFile), 'git')}
-                  className="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-white rounded border border-slate-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {copiedType === 'git' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <GitCommit className="w-3.5 h-3.5" />}
-                  {copiedType === 'git' ? 'Copied Terminal Command' : 'Copy mkdir + cat + git commit'}
-                </button>
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <div className="text-xs font-medium text-slate-500">Agent Version Snapshot</div>
+              <div className="text-2xl font-bold text-slate-900 mt-1 font-mono tabular-nums">
+                v1 vs v2 Diff
               </div>
-              <pre className="mt-2.5 text-xs font-mono text-emerald-300 overflow-x-auto">
-                <code>git add "{activeFile.path}" && git commit -m "{activeFile.commitMessage}"</code>
-              </pre>
+              <div className="text-xs text-amber-800 mt-1 font-medium tabular-nums">
+                v1: 100% Pass · v2: 50% Pass (-50% Regression)
+              </div>
             </div>
 
-            {/* Full File Code Viewer */}
-            <div className="mt-5">
-              <div className="flex items-center justify-between text-xs font-mono text-slate-500 mb-2">
-                <span>File Preview: {activeFile.path}</span>
-                <span className="tabular-nums">{activeFile.content.split('\n').length} lines</span>
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <div className="text-xs font-medium text-slate-500">Workflow HITL State</div>
+              <div className="text-2xl font-bold text-slate-900 mt-1 font-mono tabular-nums">
+                {hitlStatus}
               </div>
-              <pre className="bg-slate-950 text-slate-100 p-5 rounded-lg text-xs font-mono leading-relaxed overflow-x-auto max-h-[540px] overflow-y-auto border border-slate-800">
-                <code>{activeFile.content}</code>
-              </pre>
+              <div className="text-xs text-slate-600 mt-1">
+                Node: approval-gate-1 (Risk Score 150 &gt; 100)
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <div className="text-xs font-medium text-slate-500">FinOps Token Ledger</div>
+              <div className="text-2xl font-bold text-slate-900 mt-1 font-mono tabular-nums">
+                AI_MODE=demo
+              </div>
+              <div className="text-xs text-slate-600 mt-1 tabular-nums">
+                312 Simulated Tokens ($0.00 Required Spend)
+              </div>
             </div>
           </section>
+
+          {/* Two-Column Interactive Grid: Workflow HITL + Eval Regression */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Left Column: Workflow DAG & HITL Approval Controller */}
+            <section className="bg-white border border-slate-200 rounded-lg p-6 flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-2">
+                  <GitBranch className="w-4 h-4 text-blue-600" />
+                  <h2 className="text-base font-bold text-slate-900">
+                    Workflow DAG & HITL Approval Gate (`prod-release-risk-gate`)
+                  </h2>
+                </div>
+                <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-800">
+                  WORKFLOW-002 / HITL-001
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                {[
+                  { id: 'start-1', kind: 'start', title: '1. Start Trigger', state: 'completed' },
+                  { id: 'calc-risk', kind: 'tool', title: '2. calculator (50*3=150)', state: 'completed' },
+                  { id: 'cond-risk', kind: 'condition', title: '3. Score > 100? (true)', state: 'completed' },
+                  {
+                    id: 'approval-gate-1',
+                    kind: 'approval',
+                    title: '4. Production Release Gate',
+                    state: hitlStatus === 'waiting_approval' ? 'paused' : hitlStatus,
+                  },
+                  {
+                    id: 'agent-summary',
+                    kind: 'agent',
+                    title: '5. Release Summarizer',
+                    state: hitlStatus === 'succeeded' ? 'completed' : 'pending',
+                  },
+                  {
+                    id: 'end-1',
+                    kind: 'end',
+                    title: '6. Completed',
+                    state: hitlStatus === 'succeeded' ? 'completed' : 'pending',
+                  },
+                ].map((node) => (
+                  <div
+                    key={node.id}
+                    className={`p-3 rounded-lg border ${
+                      node.state === 'completed' || node.state === 'succeeded'
+                        ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                        : node.state === 'paused'
+                          ? 'bg-amber-50 border-amber-300 text-amber-950'
+                          : node.state === 'cancelled'
+                            ? 'bg-rose-50 border-rose-200 text-rose-950'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                    }`}
+                  >
+                    <div className="font-mono text-[11px] uppercase opacity-75">{node.kind}</div>
+                    <div className="font-semibold mt-0.5">{node.title}</div>
+                    <div className="font-mono text-[11px] mt-1">state: {node.state}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-slate-900 text-slate-100 rounded-lg p-4 text-xs font-mono leading-relaxed">
+                <div className="text-slate-400">Active Actor: {currentActor.label}</div>
+                <div className="mt-1 text-emerald-300">{hitlDecisionMessage}</div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                <button
+                  onClick={() => handleSimulateHitlDecision('approved')}
+                  className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Approve Release Gate (decideApprovalRequest)
+                </button>
+                <button
+                  onClick={() => handleSimulateHitlDecision('rejected')}
+                  className="px-3.5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                  Reject & Cancel Run
+                </button>
+                <button
+                  onClick={() => {
+                    setHitlStatus('waiting_approval');
+                    setHitlDecisionMessage(
+                      'Reset workflow run to waiting_approval at node approval-gate-1.'
+                    );
+                  }}
+                  className="px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Reset Gate
+                </button>
+              </div>
+            </section>
+
+            {/* Right Column: Automated Eval Harness v1 vs v2 Regression Diff */}
+            <section className="bg-white border border-slate-200 rounded-lg p-6 flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-2">
+                  <Play className="w-4 h-4 text-blue-600" />
+                  <h2 className="text-base font-bold text-slate-900">
+                    Evaluation Suite Regression Diff (`compareEvalExperiments`)
+                  </h2>
+                </div>
+                <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-800">
+                  EVAL-001
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Compares immutable **Agent v1** (`allowedTools: ['calculator', 'knowledge_search']`) against **Agent v2** (`allowedTools: ['knowledge_search']`), catching the arithmetic tool regression before rollout.
+              </p>
+
+              <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                    <tr>
+                      <th className="p-3">Evaluation Case</th>
+                      <th className="p-3">Assertions Checked</th>
+                      <th className="p-3 font-mono tabular-nums">Baseline (v1)</th>
+                      <th className="p-3 font-mono tabular-nums">Candidate (v2)</th>
+                      <th className="p-3">Diff Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    <tr>
+                      <td className="p-3 font-semibold text-slate-900">
+                        1. Error Budget Burn Calculation
+                      </td>
+                      <td className="p-3 font-mono text-[11px] text-slate-600">
+                        tool_called(calculator), contains(144)
+                      </td>
+                      <td className="p-3 font-mono text-emerald-700 font-semibold tabular-nums">
+                        PASS (1.00)
+                      </td>
+                      <td className="p-3 font-mono text-rose-700 font-semibold tabular-nums">
+                        FAIL (0.00)
+                      </td>
+                      <td className="p-3">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-mono text-[11px] font-semibold">
+                          <AlertTriangle className="w-3 h-3" />
+                          regressed
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-semibold text-slate-900">
+                        2. SEV-1 Runbook Citation Grounding
+                      </td>
+                      <td className="p-3 font-mono text-[11px] text-slate-600">
+                        tool_called(knowledge_search), citation_required(1), contains(On-Call Commander)
+                      </td>
+                      <td className="p-3 font-mono text-emerald-700 font-semibold tabular-nums">
+                        PASS (1.00)
+                      </td>
+                      <td className="p-3 font-mono text-emerald-700 font-semibold tabular-nums">
+                        PASS (1.00)
+                      </td>
+                      <td className="p-3">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono text-[11px] font-semibold">
+                          unchanged_pass
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2 text-slate-700">
+                  <Database className="w-4 h-4 text-slate-500" />
+                  <span>
+                    Grounded RAG Citation Verified: <strong className="font-mono">incident-finops-runbook.md#chunk-0</strong>
+                  </span>
+                </div>
+                <span className="font-mono font-semibold text-rose-700 tabular-nums">
+                  passRateDelta: -50%
+                </span>
+              </div>
+            </section>
+          </div>
+
+          {/* SSE Replay Cursor Debugger */}
+          <section className="bg-white border border-slate-200 rounded-lg p-6 flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2">
+                <Radio className="w-4 h-4 text-blue-600" />
+                <h2 className="text-base font-bold text-slate-900">
+                  SSE Event Stream Replay Debugger (`Last-Event-ID` Reconnect Cursor)
+                </h2>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-600">
+                  Simulate Reconnect Cursor (`Last-Event-ID`):
+                </span>
+                {[0, 1, 2, 3].map((cursor) => (
+                  <button
+                    key={cursor}
+                    onClick={() => setLastEventIdCursor(cursor)}
+                    className={`px-2.5 py-1 rounded text-xs font-mono font-semibold cursor-pointer ${
+                      lastEventIdCursor === cursor
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    {cursor === 0 ? '0 (Full Stream)' : `id: ${cursor}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {currentActor.isCrossTenantToAcme ? (
+              <div className="bg-rose-50 border border-rose-200 text-rose-900 rounded-lg p-4 text-xs font-mono">
+                HTTP 404 Not Found (`TENANT_MISMATCH`): {currentActor.label} (Beta Logistics) is isolated from streaming Acme Cyber Defense run events (`createRunEventsSseResponse`).
+              </div>
+            ) : (
+              <pre className="bg-slate-950 text-emerald-300 p-4 rounded-lg text-xs font-mono leading-relaxed overflow-x-auto border border-slate-800">
+                <code>
+                  {`: stream-open run_id=eval-run-v1-case-1 after_sequence=${lastEventIdCursor}\n\n`}
+                  {replayedSseEvents
+                    .map(
+                      (ev) =>
+                        `id: ${ev.sequence}\nevent: ${ev.eventType}\ndata: ${ev.payload}\n`
+                    )
+                    .join('\n')}
+                  {`\nevent: run.stream_end\ndata: {"runId":"eval-run-v1-case-1","status":"succeeded","lastSequence":5,"replayedEventsCount":${replayedSseEvents.length}}`}
+                </code>
+              </pre>
+            )}
+          </section>
         </main>
-      </div>
+      ) : (
+        /* Main Workspace Layout: 300px Sidebar + Content */
+        <div className="flex-1 flex flex-col lg:flex-row max-w-[1440px] w-full mx-auto">
+          {/* Left Sidebar: File-by-File Progression */}
+          <aside className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 p-5 flex flex-col gap-5 shrink-0">
+            <div>
+              <div className="text-xs font-medium text-emerald-700">
+                Phase 8 Complete · 78/78 Tests Passing
+              </div>
+              <h1 className="text-base font-bold text-slate-900 mt-1">
+                Project Files ({COMPLETED_FILES.length})
+              </h1>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                Every file uses live disk imports (`?raw`), so updated files always contain their latest version.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5" role="listbox" aria-label="Completed project files">
+              {COMPLETED_FILES.map((file, idx) => {
+                const isSelected = idx === selectedIndex;
+                const batchEntry = CURRENT_STEP_BATCH.find((b) => b.path === file.path);
+                return (
+                  <button
+                    key={file.path}
+                    onClick={() => setSelectedIndex(idx)}
+                    className={`w-full text-left px-3.5 py-3 rounded-lg border transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-slate-900 text-white border-slate-900'
+                        : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`text-xs font-mono tabular-nums ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                        {file.step}
+                      </span>
+                      {batchEntry && (
+                        <span
+                          className={`text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded ${
+                            batchEntry.status === 'NEW'
+                              ? isSelected
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : 'bg-emerald-50 text-emerald-700'
+                              : isSelected
+                                ? 'bg-amber-500/20 text-amber-300'
+                                : 'bg-amber-50 text-amber-800'
+                          }`}
+                        >
+                          {batchEntry.status}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm font-semibold mt-0.5 truncate">
+                      {file.path}
+                    </div>
+                    <div className={`text-xs mt-1 line-clamp-1 ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                      {file.title}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+
+          {/* Main Content Viewport */}
+          <main id="files" className="flex-1 p-6 lg:p-8 flex flex-col gap-6 min-w-0">
+            {/* Current Step Batch Section (New + Updated Files) */}
+            <section id="current-batch" className="bg-white border border-slate-200 rounded-lg p-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+                <div>
+                  <div className="text-xs font-semibold text-blue-700">
+                    Current Step Download Batch — Preserves Exact Folder Hierarchy (.zip)
+                  </div>
+                  <h2 className="text-lg font-bold text-slate-900 mt-0.5">
+                    Step 8.1 Final Batch ({batchFiles.length} Files: New + Updated)
+                  </h2>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Click <span className="font-mono font-semibold text-slate-800">Download Batch .zip (With Folders)</span> and run <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">unzip -o ~/Downloads/aegis-current-step-batch.zip</span> in your repo root — every file extracts directly into its exact subfolder (`src/server/seed/...`, `tests/integration/...`, `README.md`).
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                  <button
+                    onClick={handleDownloadCurrentBatchZip}
+                    className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer"
+                  >
+                    <FolderArchive className="w-3.5 h-3.5" />
+                    Download Batch .zip (With Folders)
+                  </button>
+                  <button
+                    onClick={() => handleCopy(buildBatchTerminalCommand(), 'batch-git')}
+                    className="px-3.5 py-2 text-xs font-semibold text-slate-800 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {copiedType === 'batch-git' ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <GitCommit className="w-3.5 h-3.5" />
+                    )}
+                    {copiedType === 'batch-git' ? 'Copied Batch Git Command' : 'Copy Batch Git Sync Command'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+                {batchFiles.map(({ file, index, status, changeReason }) => (
+                  <div
+                    key={file.path}
+                    className="border border-slate-200 rounded-lg p-3.5 flex flex-col justify-between gap-3 bg-slate-50/60"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-mono font-semibold text-slate-900 truncate">
+                          {file.path}
+                        </span>
+                        <span
+                          className={`text-[11px] font-mono font-semibold px-2 py-0.5 rounded shrink-0 ${
+                            status === 'NEW'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-900'
+                          }`}
+                        >
+                          {status}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1">
+                        {changeReason}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/80">
+                      <button
+                        onClick={() => handleDownloadSingleFileWithFolderZip(file)}
+                        className="px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 rounded hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <FolderArchive className="w-3 h-3" />
+                        .zip (With Folder Path)
+                      </button>
+                      <button
+                        onClick={() => handleDownloadFile(file)}
+                        className="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download className="w-3 h-3" />
+                        Raw {file.filename}
+                      </button>
+                      <button
+                        onClick={() => setSelectedIndex(index)}
+                        className="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded hover:bg-slate-100 transition-colors cursor-pointer"
+                      >
+                        Inspect
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Active File Header & Download Actions */}
+            <section className="bg-white border border-slate-200 rounded-lg p-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-200">
+                <div>
+                  <div className="text-xs text-slate-500 font-mono tabular-nums">
+                    {activeFile.step} · Ticket {activeFile.ticket} · Target Path: {activeFile.path}
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-900 mt-1">
+                    {activeFile.title}
+                  </h2>
+                  <p className="text-sm text-slate-600 mt-1">
+                    {activeFile.summary}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                  <button
+                    onClick={() => handleDownloadSingleFileWithFolderZip(activeFile)}
+                    className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer"
+                  >
+                    <FolderArchive className="w-3.5 h-3.5" />
+                    Download {activeFile.path} (.zip)
+                  </button>
+
+                  <button
+                    onClick={() => handleDownloadFile(activeFile)}
+                    className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Raw {activeFile.filename}
+                  </button>
+
+                  <button
+                    onClick={() => handleCopy(activeFile.content, 'content')}
+                    className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {copiedType === 'content' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedType === 'content' ? 'Copied File Content' : 'Copy Raw File'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Git Commit Helper Box */}
+              <div id="git-helper" className="mt-5 bg-slate-900 text-slate-100 rounded-lg p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2 text-xs font-mono text-slate-300">
+                    <Terminal className="w-4 h-4 text-blue-400 shrink-0" />
+                    <span>Local Git Repo Helper — Creates directory, writes {activeFile.path}, and commits:</span>
+                  </div>
+                  <button
+                    onClick={() => handleCopy(buildTerminalCommand(activeFile), 'git')}
+                    className="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-white rounded border border-slate-700 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {copiedType === 'git' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <GitCommit className="w-3.5 h-3.5" />}
+                    {copiedType === 'git' ? 'Copied Terminal Command' : 'Copy mkdir + cat + git commit'}
+                  </button>
+                </div>
+                <pre className="mt-2.5 text-xs font-mono text-emerald-300 overflow-x-auto">
+                  <code>git add "{activeFile.path}" && git commit -m "{activeFile.commitMessage}"</code>
+                </pre>
+              </div>
+
+              {/* Full File Code Viewer */}
+              <div className="mt-5">
+                <div className="flex items-center justify-between text-xs font-mono text-slate-500 mb-2">
+                  <span>File Preview: {activeFile.path}</span>
+                  <span className="tabular-nums">{activeFile.content.split('\n').length} lines</span>
+                </div>
+                <pre className="bg-slate-950 text-slate-100 p-5 rounded-lg text-xs font-mono leading-relaxed overflow-x-auto max-h-[540px] overflow-y-auto border border-slate-800">
+                  <code>{activeFile.content}</code>
+                </pre>
+              </div>
+            </section>
+          </main>
+        </div>
+      )}
     </div>
   );
 }

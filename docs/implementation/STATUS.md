@@ -1,11 +1,11 @@
 # Implementation Status
 
-- Current phase: Phase 8 — Final Release Hardening, Deterministic Seed & Portfolio Packaging (Next)
-- Current ticket: SEED-001 & DOCS-001 (Next — End-to-End Seed Script & Final Release Verification)
+- Current phase: Phase 8 — Final Release Hardening, Deterministic Seed & Portfolio Packaging (COMPLETE)
+- Current ticket: All MVP Tickets Complete (`PLAN-001` .. `SEED-001` & `DOCS-001`)
 - Last updated: 2026-10-29
-- Demo mode: verified (`AI_MODE=demo` unit & integration tests passing, `MockModelProvider` + `ToolGateway` + `RunExecutor` + `KnowledgeService` + `WorkflowEngine` + `EvalHarness` + `SseStream` verified)
+- Demo mode: verified (`AI_MODE=demo` unit, integration, security & flagship E2E suites passing, `MockModelProvider` + `ToolGateway` + `RunExecutor` + `KnowledgeService` + `WorkflowEngine` + `EvalHarness` + `SseStream` + `seedFlagshipWorkspace` verified)
 - Local database: Drizzle schema + PGlite PostgreSQL migrations 0001, 0002, 0003, 0004, 0005 & 0006 active
-- CI status: local unit + integration + security test suites verified (`74/74 tests passing`, `pnpm typecheck` 0 errors)
+- CI status: local unit + integration + security + E2E test suites verified (`78/78 tests passing` across 16 suites, `pnpm typecheck` 0 errors)
 
 ## 1. Confirmed MVP Scope & Explicit Non-Goals (`PLAN-001`)
 
@@ -46,15 +46,16 @@
 - `RAG-001, RAG-002 & RAG-003`: Implemented `src/server/db/schema/knowledge.ts` (`knowledge_documents`, `document_chunks` with composite tenant FKs & GIN `tsvector` index + `MIGRATION_0004_KNOWLEDGE_SQL`), `src/server/modules/knowledge/chunker.ts` (deterministic chunker, `T-05` path-traversal sanitizer, `T-03` prompt-injection detector & `<untrusted_knowledge_context>` delimiter wrapper), `src/server/modules/knowledge/knowledge-service.ts` (transactional ingestion, SHA-256 deduplication, hybrid `tsvector` + vector cosine search, and `createTenantKnowledgeRetriever`), and verified `tests/unit/rag-chunker.test.ts` (`6/6 passing`) + `tests/integration/knowledge-rag.test.ts` (`3/3 passing`). Phase 5 complete!
 - `WORKFLOW-001, WORKFLOW-002, HITL-001, AUDIT-001 & USAGE-001`: Implemented `src/server/db/schema/workflows.ts` (`workflows`, `workflow_versions`, `approval_requests`, `audit_events`, `usage_events` + `MIGRATION_0005_WORKFLOWS_SQL`), `src/server/modules/workflows/dag-validator.ts` (3-color DFS cycle detector with exact cyclePath, reachability/dead-end checks, safe condition evaluator, canonical snapshot hashing), `src/server/modules/workflows/workflow-engine.ts` (DAG runner, `waiting_approval` HITL pause/resume/cancel gates, security `audit_events` for allowed/denied actions, and honest `mock` vs `live` `usage_events`), and verified `tests/unit/workflow-dag.test.ts` (`6/6 passing`) + `tests/integration/workflow-hitl-audit.test.ts` (`4/4 passing`). Phase 6 complete!
 - `EVAL-001, SSE-001 & UI-001`: Implemented `src/server/db/schema/evals.ts` (`eval_suites`, `eval_cases`, `eval_experiments`, `eval_case_results` + `MIGRATION_0006_EVALS_SQL`), `src/server/modules/evals/eval-harness.ts` (`exact_match`, `contains`, `json_schema`, `citation_required`, `tool_called` graders, `createEvalSuite`, `runEvalExperiment`, and `compareEvalExperiments` `v1` vs `v2` regression detector), `src/server/modules/runs/sse-stream.ts` (`Last-Event-ID` / `afterSequence` cursor replay stream without duplicate frames), and verified `tests/unit/eval-graders.test.ts` (`6/6 passing`) + `tests/integration/eval-sse.test.ts` (`4/4 passing`). Phase 7 complete!
+- `SEED-001 & DOCS-001`: Implemented `src/server/seed/demo-seed.ts` (`seedFlagshipWorkspace` deterministic multi-tenant seed & verification runner), `tests/integration/flagship-e2e.test.ts` (`4/4 passing`), production `README.md`, and upgraded `src/App.tsx` with the Interactive Operator Console + Step 8.1 `.zip` exporter. Phase 8 complete (`78/78` total tests passing across 16 suites)!
 
 ## In progress
-- `SEED-001 & DOCS-001`: Deterministic seed script and final README/portfolio documentation.
+- None — all 8 phases and 9 MVP pillars verified complete.
 
 ## Blockers and risks
-- None recorded yet.
+- None recorded.
 
 ## Next task
-- `SEED-001`: Implement deterministic demo seed runner and final release verification.
+- Ready for production release, local `pnpm seed` demo runs, and portfolio review.
 
 ## Test evidence
 - `npx --yes tsx --test tests/unit/env.test.ts` -> `7 tests, 7 pass, 0 fail`.
@@ -72,8 +73,10 @@
 - `npx --yes tsx --test tests/integration/workflow-hitl-audit.test.ts` -> `4 tests, 4 pass, 0 fail`.
 - `npx --yes tsx --test tests/unit/eval-graders.test.ts` -> `6 tests, 6 pass, 0 fail`.
 - `npx --yes tsx --test tests/integration/eval-sse.test.ts` -> `4 tests, 4 pass, 0 fail`.
+- `npx --yes tsx --test tests/integration/flagship-e2e.test.ts` -> `4 tests, 4 pass, 0 fail`.
 
 ## Change log
+- 2026-10-29: Completed `SEED-001 & DOCS-001` (`src/server/seed/demo-seed.ts`, `tests/integration/flagship-e2e.test.ts` 4/4 passing, `README.md`, `package.json` `seed` script, and `src/App.tsx` Interactive Operator Console; 78/78 total tests passing across 16 suites). Phase 8 complete!
 - 2026-10-29: Completed `EVAL-001, SSE-001 & UI-001` (`src/server/db/schema/evals.ts`, `src/server/modules/evals/eval-harness.ts`, `src/server/modules/runs/sse-stream.ts`, `tests/unit/eval-graders.test.ts` 6/6 passing, `tests/integration/eval-sse.test.ts` 4/4 passing; 74/74 total tests passing). Phase 7 complete!
 - 2026-10-29: Completed `WORKFLOW-001, WORKFLOW-002, HITL-001, AUDIT-001 & USAGE-001` (`src/server/db/schema/workflows.ts`, `src/server/modules/workflows/dag-validator.ts`, `src/server/modules/workflows/workflow-engine.ts`, `tests/unit/workflow-dag.test.ts` 6/6 passing, `tests/integration/workflow-hitl-audit.test.ts` 4/4 passing; 64/64 total tests passing). Phase 6 complete!
 - 2026-10-29: Completed `RAG-001, RAG-002 & RAG-003` (`src/server/db/schema/knowledge.ts`, `src/server/modules/knowledge/chunker.ts`, `src/server/modules/knowledge/knowledge-service.ts`, `tests/unit/rag-chunker.test.ts` 6/6 passing, `tests/integration/knowledge-rag.test.ts` 3/3 passing; 54/54 total tests passing). Phase 5 complete!

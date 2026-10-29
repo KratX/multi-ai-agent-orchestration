@@ -14,6 +14,7 @@
     "test:unit": "tsx --test tests/unit/*.test.ts",
     "test:integration": "tsx --test tests/integration/*.test.ts",
     "test:security": "tsx --test tests/security/*.test.ts",
+    "seed": "tsx src/server/seed/demo-seed.ts",
     "db:up": "docker compose up -d",
     "db:stop": "docker compose stop",
     "db:logs": "docker compose logs -f postgres"
