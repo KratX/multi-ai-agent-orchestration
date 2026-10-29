@@ -44,6 +44,11 @@ import chunkerContent from './server/modules/knowledge/chunker.ts?raw';
 import knowledgeServiceContent from './server/modules/knowledge/knowledge-service.ts?raw';
 import ragChunkerTestContent from '../tests/unit/rag-chunker.test.ts?raw';
 import knowledgeRagTestContent from '../tests/integration/knowledge-rag.test.ts?raw';
+import workflowsSchemaContent from './server/db/schema/workflows.ts?raw';
+import dagValidatorContent from './server/modules/workflows/dag-validator.ts?raw';
+import workflowEngineContent from './server/modules/workflows/workflow-engine.ts?raw';
+import workflowDagTestContent from '../tests/unit/workflow-dag.test.ts?raw';
+import workflowHitlAuditTestContent from '../tests/integration/workflow-hitl-audit.test.ts?raw';
 
 interface ProjectFile {
   step: string;
@@ -477,6 +482,56 @@ const COMPLETED_FILES: ProjectFile[] = [
     summary: 'Verifies transactional document ingestion, SHA-256 deduplication, hybrid search ranking, strict cross-tenant 0-result & 404 isolation, and live agent run citation verification.',
     content: knowledgeRagTestContent,
   },
+  {
+    step: 'Step 6.1a (File #39)',
+    ticket: 'WORKFLOW-001 / HITL-001 / AUDIT-001 / USAGE-001',
+    path: 'src/server/db/schema/workflows.ts',
+    filename: 'workflows.ts',
+    title: 'Drizzle PostgreSQL Schema: Workflows, Versions, Approval Gates, Audit & Usage Ledger (workflows.ts)',
+    commitMessage: 'feat(workflows): add Drizzle schema and migration 0005 for workflows, approval_requests, audit_events, and usage_events (WORKFLOW-001)',
+    summary: 'Defines workflows, immutable workflow_versions with composite tenant FKs, approval_requests, append-only audit_events, and honest usage_events.',
+    content: workflowsSchemaContent,
+  },
+  {
+    step: 'Step 6.1b (File #40)',
+    ticket: 'WORKFLOW-001 / WORKFLOW-002',
+    path: 'src/server/modules/workflows/dag-validator.ts',
+    filename: 'dag-validator.ts',
+    title: 'Directed Acyclic Workflow Validator, Cycle Detector & Safe Condition Evaluator (dag-validator.ts)',
+    commitMessage: 'feat(workflows): add 3-color DFS cycle detector, topological sorter, and safe condition evaluator (WORKFLOW-001)',
+    summary: 'Enforces node/edge limits, detects directed cycles with exact cyclePath, checks start/end reachability, evaluates conditions without eval(), and hashes graphs canonically.',
+    content: dagValidatorContent,
+  },
+  {
+    step: 'Step 6.1c (File #41)',
+    ticket: 'WORKFLOW-002 / HITL-001 / AUDIT-001 / USAGE-001',
+    path: 'src/server/modules/workflows/workflow-engine.ts',
+    filename: 'workflow-engine.ts',
+    title: 'Workflow Execution Engine, HITL Pause/Resume Controller & Audit/Usage Ledgers (workflow-engine.ts)',
+    commitMessage: 'feat(workflows): add DAG workflow runner, waiting_approval HITL gates, security audit log, and usage ledger (WORKFLOW-002)',
+    summary: 'Executes workflow DAGs, pauses at approval nodes, enforces RBAC and 404 isolation on approval decisions, logs allowed/denied audit_events, and separates mock vs live usage.',
+    content: workflowEngineContent,
+  },
+  {
+    step: 'Step 6.1d (File #42)',
+    ticket: 'WORKFLOW-001 / WORKFLOW-002',
+    path: 'tests/unit/workflow-dag.test.ts',
+    filename: 'workflow-dag.test.ts',
+    title: 'Unit Test Suite for Workflow DAG Validator & Condition Evaluator (6/6 Passing)',
+    commitMessage: 'test(workflows): add unit tests for DAG cycle detection, reachability, condition evaluation, and snapshot hashing (WORKFLOW-001)',
+    summary: 'Verifies valid branching DAG topological sort, cycle path diagnostics, self-loop rejection, orphan/dead-end rejection, safe condition operators, and canonical hashing.',
+    content: workflowDagTestContent,
+  },
+  {
+    step: 'Step 6.1e (File #43)',
+    ticket: 'WORKFLOW-002 / HITL-001 / AUDIT-001 / USAGE-001',
+    path: 'tests/integration/workflow-hitl-audit.test.ts',
+    filename: 'workflow-hitl-audit.test.ts',
+    title: 'PostgreSQL Integration Tests for Workflows, HITL Approvals, Audit Trail & Usage Ledger (4/4 Passing)',
+    commitMessage: 'test(workflows): add PostgreSQL integration tests for HITL pause/resume, denied audit logs, and usage ledger (HITL-001)',
+    summary: 'Verifies immutable workflow versions, waiting_approval pause & admin resume, 404 cross-tenant isolation, 403 viewer/developer denied audit events, and mock vs live usage.',
+    content: workflowHitlAuditTestContent,
+  },
 ];
 
 interface CurrentBatchItem {
@@ -487,49 +542,44 @@ interface CurrentBatchItem {
 
 const CURRENT_STEP_BATCH: CurrentBatchItem[] = [
   {
-    path: 'src/server/db/schema/knowledge.ts',
+    path: 'src/server/db/schema/workflows.ts',
     status: 'NEW',
-    changeReason: 'Step 5.1a (RAG-001): Drizzle schema & SQL migration 0004 for knowledge_documents and document_chunks with composite tenant FKs & GIN FTS index.',
+    changeReason: 'Step 6.1a (WORKFLOW-001 / HITL-001 / AUDIT-001 / USAGE-001): Drizzle schema & SQL migration 0005 for workflows, workflow_versions, approval_requests, audit_events, and usage_events.',
   },
   {
-    path: 'src/server/modules/knowledge/chunker.ts',
+    path: 'src/server/modules/workflows/dag-validator.ts',
     status: 'NEW',
-    changeReason: 'Step 5.1b (RAG-002): Deterministic chunker, T-05 filename sanitizer, and T-03 prompt-injection detector & XML delimiter wrapper.',
+    changeReason: 'Step 6.1b (WORKFLOW-001 / WORKFLOW-002): 3-color DFS cycle detector, reachability/dead-end validator, safe condition evaluator, and canonical SHA-256 snapshot hasher.',
   },
   {
-    path: 'src/server/modules/knowledge/knowledge-service.ts',
+    path: 'src/server/modules/workflows/workflow-engine.ts',
     status: 'NEW',
-    changeReason: 'Step 5.1c (RAG-003): Tenant-isolated document ingestion, SHA-256 deduplication, hybrid FTS + vector search, and ToolGateway retriever adapter.',
+    changeReason: 'Step 6.1c (WORKFLOW-002 / HITL-001 / AUDIT-001 / USAGE-001): DAG execution engine, waiting_approval HITL pause/resume/cancel gates, security audit log, and honest usage ledger.',
   },
   {
-    path: 'tests/unit/rag-chunker.test.ts',
+    path: 'tests/unit/workflow-dag.test.ts',
     status: 'NEW',
-    changeReason: 'Step 5.1d (RAG-002): Unit test suite (6/6 passing) for deterministic chunking, path traversal sanitization, and prompt-injection defense.',
+    changeReason: 'Step 6.1d (WORKFLOW-001): Unit test suite (6/6 passing) for DAG topological sort, cycle path reporting, orphan/dead-end rejection, and safe condition evaluation.',
   },
   {
-    path: 'tests/integration/knowledge-rag.test.ts',
+    path: 'tests/integration/workflow-hitl-audit.test.ts',
     status: 'NEW',
-    changeReason: 'Step 5.1e (RAG-001 & RAG-003): PostgreSQL integration tests (3/3 passing) covering ingestion, hybrid search, cross-tenant isolation, and live agent run citations.',
+    changeReason: 'Step 6.1e (WORKFLOW-002 / HITL-001 / AUDIT-001 / USAGE-001): PostgreSQL integration tests (4/4 passing) for immutable workflow snapshots, HITL pause/resume, security audit trail, and mock vs live usage.',
   },
   {
     path: 'src/server/db/client.ts',
     status: 'UPDATED',
-    changeReason: 'Registered knowledgeSchema and MIGRATION_0004_KNOWLEDGE_SQL in applyTenantMigrations().',
-  },
-  {
-    path: 'src/server/modules/runs/run-executor.ts',
-    status: 'UPDATED',
-    changeReason: 'Wired createTenantKnowledgeRetriever(db) as the default knowledgeSearchRetriever in executeAgentRun().',
+    changeReason: 'Registered workflowsSchema and MIGRATION_0005_WORKFLOWS_SQL in applyTenantMigrations().',
   },
   {
     path: 'docs/implementation/STATUS.md',
     status: 'UPDATED',
-    changeReason: 'Updated implementation ledger marking Phase 5 (RAG-001, RAG-002, RAG-003) verified (54/54 tests passing).',
+    changeReason: 'Updated implementation ledger marking Phase 6 (WORKFLOW-001, WORKFLOW-002, HITL-001, AUDIT-001, USAGE-001) verified (64/64 tests passing).',
   },
   {
     path: 'src/App.tsx',
     status: 'UPDATED',
-    changeReason: 'Registered Step 5.1 files and updated CURRENT_STEP_BATCH zip bundle.',
+    changeReason: 'Registered Step 6.1 files and updated CURRENT_STEP_BATCH zip bundle.',
   },
 ];
 
@@ -658,7 +708,7 @@ export default function App() {
             All Files ({COMPLETED_FILES.length})
           </a>
           <a href="#git-helper" className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0">
-            Phase 5 Complete (54/54 Pass)
+            Phase 6 Complete (64/64 Pass)
           </a>
         </nav>
 
@@ -686,7 +736,7 @@ export default function App() {
         <aside className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 p-5 flex flex-col gap-5 shrink-0">
           <div>
             <div className="text-xs font-medium text-emerald-700">
-              Phase 5 Complete · 54/54 Tests Passing
+              Phase 6 Complete · 64/64 Tests Passing
             </div>
             <h1 className="text-base font-bold text-slate-900 mt-1">
               Project Files ({COMPLETED_FILES.length})
@@ -752,7 +802,7 @@ export default function App() {
                   Current Step Download Batch — Preserves Exact Folder Hierarchy (.zip)
                 </div>
                 <h2 className="text-lg font-bold text-slate-900 mt-0.5">
-                  Step 5.1 Batch ({batchFiles.length} Files: New + Updated)
+                  Step 6.1 Batch ({batchFiles.length} Files: New + Updated)
                 </h2>
                 <p className="text-xs text-slate-600 mt-1">
                   Click <span className="font-mono font-semibold text-slate-800">Download Batch .zip (With Folders)</span> and run <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">unzip -o ~/Downloads/aegis-current-step-batch.zip</span> in your repo root — every file extracts directly into its exact subfolder (`src/server/ai/...`, `tests/unit/...`, `docs/...`).

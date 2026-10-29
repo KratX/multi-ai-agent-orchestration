@@ -8,13 +8,17 @@ import * as runsSchema from './schema/runs';
 import { MIGRATION_0003_RUNS_SQL } from './schema/runs';
 import * as knowledgeSchema from './schema/knowledge';
 import { MIGRATION_0004_KNOWLEDGE_SQL } from './schema/knowledge';
+import * as workflowsSchema from './schema/workflows';
+import { MIGRATION_0005_WORKFLOWS_SQL } from './schema/workflows';
 import type { DatabaseReadinessCheck } from '../../app/api/v1/health/route';
 
 /**
- * Ticket REPO-005, AGENT-001, RUN-001 & RAG-001: Drizzle ORM Database Client & Migration Runner
+ * Ticket REPO-005, AGENT-001, RUN-001, RAG-001 & WORKFLOW-001:
+ * Drizzle ORM Database Client & Migration Runner
  *
- * Combines all domain schemas (`tenantSchema` + `agentsSchema` + `runsSchema` + `knowledgeSchema`)
- * and applies sequential versioned SQL migrations (`0001`..`0004`) idempotently.
+ * Combines all domain schemas (`tenantSchema` + `agentsSchema` + `runsSchema` +
+ * `knowledgeSchema` + `workflowsSchema`) and applies sequential versioned SQL
+ * migrations (`0001`..`0005`) idempotently.
  */
 
 export const aegisSchema = {
@@ -22,6 +26,7 @@ export const aegisSchema = {
   ...agentsSchema,
   ...runsSchema,
   ...knowledgeSchema,
+  ...workflowsSchema,
 };
 
 export type AegisDatabase = PgliteDatabase<typeof aegisSchema>;
@@ -33,14 +38,16 @@ export interface DatabaseContext {
 }
 
 /**
- * Applies all sequential SQL migrations (0001 Tenant + 0002 Agents + 0003 Runs/Queue + 0004 Knowledge)
- * to the given PGlite instance. Safe to call multiple times because statements use `IF NOT EXISTS`.
+ * Applies all sequential SQL migrations (0001 Tenant + 0002 Agents + 0003 Runs/Queue +
+ * 0004 Knowledge + 0005 Workflows/HITL/Audit/Usage) to the given PGlite instance.
+ * Safe to call multiple times because statements use `IF NOT EXISTS`.
  */
 export async function applyTenantMigrations(pg: PGlite): Promise<void> {
   await pg.exec(MIGRATION_0001_TENANT_SQL);
   await pg.exec(MIGRATION_0002_AGENTS_SQL);
   await pg.exec(MIGRATION_0003_RUNS_SQL);
   await pg.exec(MIGRATION_0004_KNOWLEDGE_SQL);
+  await pg.exec(MIGRATION_0005_WORKFLOWS_SQL);
 }
 
 /**

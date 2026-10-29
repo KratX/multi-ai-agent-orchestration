@@ -1,11 +1,11 @@
 # Implementation Status
 
-- Current phase: Phase 6 — Directed Acyclic Workflow Engine, Human-in-the-Loop Approvals & Audit/Usage Ledger (Next)
-- Current ticket: WORKFLOW-001 (Next — Workflow Definitions, Immutable Versions, DAG Validator & Approval Gates)
+- Current phase: Phase 7 — Evaluation Harness, SSE Replay Debugger & Operator Console (Next)
+- Current ticket: EVAL-001 (Next — Automated Evaluation Suites, Assertions, SSE Replay & Operator Console)
 - Last updated: 2026-10-29
-- Demo mode: verified (`AI_MODE=demo` unit & integration tests passing, `MockModelProvider` + `ToolGateway` + `RunExecutor` + `KnowledgeService` verified)
-- Local database: Drizzle schema + PGlite PostgreSQL migrations 0001, 0002, 0003 & 0004 active
-- CI status: local unit + integration + security test suites verified (`54/54 tests passing`, `pnpm typecheck` 0 errors)
+- Demo mode: verified (`AI_MODE=demo` unit & integration tests passing, `MockModelProvider` + `ToolGateway` + `RunExecutor` + `KnowledgeService` + `WorkflowEngine` verified)
+- Local database: Drizzle schema + PGlite PostgreSQL migrations 0001, 0002, 0003, 0004 & 0005 active
+- CI status: local unit + integration + security test suites verified (`64/64 tests passing`, `pnpm typecheck` 0 errors)
 
 ## 1. Confirmed MVP Scope & Explicit Non-Goals (`PLAN-001`)
 
@@ -44,15 +44,16 @@
 - `TOOL-001 & TOOL-002`: Implemented `src/server/modules/tools/tool-gateway.ts` (`evaluateSafeArithmetic` recursive-descent parser with zero `eval()`, `ToolGateway` allowlist/Zod/payload/timeout enforcement, and tenant-scoped `knowledge_search` adapter) and verified all 6 unit/security tests in `tests/unit/tool-gateway.test.ts` (`6/6 passing`).
 - `RUN-001, RUN-002, QUEUE-001 & QUEUE-002`: Implemented `src/server/db/schema/runs.ts` (`runs`, `run_steps`, `run_events`, `job_queue` + `MIGRATION_0003_RUNS_SQL`), updated `src/server/db/client.ts`, implemented `src/server/modules/runs/run-executor.ts` (idempotent `enqueueAgentRun`, `FOR UPDATE SKIP LOCKED` `claimNextPendingJob`, `recoverExpiredJobLeases`, and bounded `executeAgentRun`), and verified all 3 PostgreSQL integration tests in `tests/integration/run-executor.test.ts` (`3/3 passing`). Phase 4 complete!
 - `RAG-001, RAG-002 & RAG-003`: Implemented `src/server/db/schema/knowledge.ts` (`knowledge_documents`, `document_chunks` with composite tenant FKs & GIN `tsvector` index + `MIGRATION_0004_KNOWLEDGE_SQL`), `src/server/modules/knowledge/chunker.ts` (deterministic chunker, `T-05` path-traversal sanitizer, `T-03` prompt-injection detector & `<untrusted_knowledge_context>` delimiter wrapper), `src/server/modules/knowledge/knowledge-service.ts` (transactional ingestion, SHA-256 deduplication, hybrid `tsvector` + vector cosine search, and `createTenantKnowledgeRetriever`), and verified `tests/unit/rag-chunker.test.ts` (`6/6 passing`) + `tests/integration/knowledge-rag.test.ts` (`3/3 passing`). Phase 5 complete!
+- `WORKFLOW-001, WORKFLOW-002, HITL-001, AUDIT-001 & USAGE-001`: Implemented `src/server/db/schema/workflows.ts` (`workflows`, `workflow_versions`, `approval_requests`, `audit_events`, `usage_events` + `MIGRATION_0005_WORKFLOWS_SQL`), `src/server/modules/workflows/dag-validator.ts` (3-color DFS cycle detector with exact cyclePath, reachability/dead-end checks, safe condition evaluator, canonical snapshot hashing), `src/server/modules/workflows/workflow-engine.ts` (DAG runner, `waiting_approval` HITL pause/resume/cancel gates, security `audit_events` for allowed/denied actions, and honest `mock` vs `live` `usage_events`), and verified `tests/unit/workflow-dag.test.ts` (`6/6 passing`) + `tests/integration/workflow-hitl-audit.test.ts` (`4/4 passing`). Phase 6 complete!
 
 ## In progress
-- `WORKFLOW-001`: Directed acyclic workflow schema, DAG cycle/reachability validator, human-in-the-loop approval gates (`HITL-001`), and audit/usage ledger.
+- `EVAL-001`: Automated evaluation harness, SSE replay debugger API routes, and operator console views.
 
 ## Blockers and risks
 - None recorded yet.
 
 ## Next task
-- `WORKFLOW-001, WORKFLOW-002 & HITL-001`: Implement workflow DAG engine, approval gates (`waiting_approval` -> `running` / `cancelled`), and immutable security `audit_events` + `usage_events`.
+- `EVAL-001`: Implement deterministic evaluation suite runner, assertion scoring, and SSE event stream routes.
 
 ## Test evidence
 - `npx --yes tsx --test tests/unit/env.test.ts` -> `7 tests, 7 pass, 0 fail`.
@@ -66,8 +67,11 @@
 - `npx --yes tsx --test tests/integration/run-executor.test.ts` -> `3 tests, 3 pass, 0 fail`.
 - `npx --yes tsx --test tests/unit/rag-chunker.test.ts` -> `6 tests, 6 pass, 0 fail`.
 - `npx --yes tsx --test tests/integration/knowledge-rag.test.ts` -> `3 tests, 3 pass, 0 fail`.
+- `npx --yes tsx --test tests/unit/workflow-dag.test.ts` -> `6 tests, 6 pass, 0 fail`.
+- `npx --yes tsx --test tests/integration/workflow-hitl-audit.test.ts` -> `4 tests, 4 pass, 0 fail`.
 
 ## Change log
+- 2026-10-29: Completed `WORKFLOW-001, WORKFLOW-002, HITL-001, AUDIT-001 & USAGE-001` (`src/server/db/schema/workflows.ts`, `src/server/modules/workflows/dag-validator.ts`, `src/server/modules/workflows/workflow-engine.ts`, `tests/unit/workflow-dag.test.ts` 6/6 passing, `tests/integration/workflow-hitl-audit.test.ts` 4/4 passing; 64/64 total tests passing). Phase 6 complete!
 - 2026-10-29: Completed `RAG-001, RAG-002 & RAG-003` (`src/server/db/schema/knowledge.ts`, `src/server/modules/knowledge/chunker.ts`, `src/server/modules/knowledge/knowledge-service.ts`, `tests/unit/rag-chunker.test.ts` 6/6 passing, `tests/integration/knowledge-rag.test.ts` 3/3 passing; 54/54 total tests passing). Phase 5 complete!
 - 2026-10-29: Completed `RUN-001, RUN-002, QUEUE-001 & QUEUE-002` (`src/server/db/schema/runs.ts`, `src/server/modules/runs/run-executor.ts`, `tests/integration/run-executor.test.ts` 3/3 passing; 45/45 total tests passing). Phase 4 complete!
 - 2026-10-29: Completed `TOOL-001 & TOOL-002` (`src/server/modules/tools/tool-gateway.ts` + `tests/unit/tool-gateway.test.ts` 6/6 passing; 42/42 total tests passing).
