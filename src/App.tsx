@@ -49,6 +49,11 @@ import dagValidatorContent from './server/modules/workflows/dag-validator.ts?raw
 import workflowEngineContent from './server/modules/workflows/workflow-engine.ts?raw';
 import workflowDagTestContent from '../tests/unit/workflow-dag.test.ts?raw';
 import workflowHitlAuditTestContent from '../tests/integration/workflow-hitl-audit.test.ts?raw';
+import evalsSchemaContent from './server/db/schema/evals.ts?raw';
+import evalHarnessContent from './server/modules/evals/eval-harness.ts?raw';
+import sseStreamContent from './server/modules/runs/sse-stream.ts?raw';
+import evalGradersTestContent from '../tests/unit/eval-graders.test.ts?raw';
+import evalSseTestContent from '../tests/integration/eval-sse.test.ts?raw';
 
 interface ProjectFile {
   step: string;
@@ -532,6 +537,56 @@ const COMPLETED_FILES: ProjectFile[] = [
     summary: 'Verifies immutable workflow versions, waiting_approval pause & admin resume, 404 cross-tenant isolation, 403 viewer/developer denied audit events, and mock vs live usage.',
     content: workflowHitlAuditTestContent,
   },
+  {
+    step: 'Step 7.1a (File #44)',
+    ticket: 'EVAL-001',
+    path: 'src/server/db/schema/evals.ts',
+    filename: 'evals.ts',
+    title: 'Drizzle PostgreSQL Schema: Automated Evaluation Suites, Cases, Experiments & Results (evals.ts)',
+    commitMessage: 'feat(evals): add Drizzle schema and migration 0006 for eval_suites, eval_cases, eval_experiments, and eval_case_results (EVAL-001)',
+    summary: 'Defines tenant-scoped eval_suites, ordered eval_cases with JSONB assertion specs, immutable eval_experiments pinned to agent_versions, and eval_case_results.',
+    content: evalsSchemaContent,
+  },
+  {
+    step: 'Step 7.1b (File #45)',
+    ticket: 'EVAL-001',
+    path: 'src/server/modules/evals/eval-harness.ts',
+    filename: 'eval-harness.ts',
+    title: 'Automated Evaluation Harness, Deterministic Graders & Version Regression Diff Engine (eval-harness.ts)',
+    commitMessage: 'feat(evals): add deterministic assertion graders, experiment runner, and v1-vs-v2 regression comparator (EVAL-001)',
+    summary: 'Implements exact_match, contains, json_schema, citation_required, and tool_called graders, createEvalSuite(), runEvalExperiment(), and compareEvalExperiments().',
+    content: evalHarnessContent,
+  },
+  {
+    step: 'Step 7.1c (File #46)',
+    ticket: 'SSE-001',
+    path: 'src/server/modules/runs/sse-stream.ts',
+    filename: 'sse-stream.ts',
+    title: 'Server-Sent Events (SSE) Replay Debugger & Last-Event-ID Cursor Stream Engine (sse-stream.ts)',
+    commitMessage: 'feat(sse): add SSE event stream framing and Last-Event-ID cursor reconnect replay without duplicate events (SSE-001)',
+    summary: 'Implements parseLastEventIdCursor(), formatSseEventFrame(), and createRunEventsSseResponse() with RBAC and 404 cross-tenant isolation.',
+    content: sseStreamContent,
+  },
+  {
+    step: 'Step 7.1d (File #47)',
+    ticket: 'EVAL-001 / SSE-001',
+    path: 'tests/unit/eval-graders.test.ts',
+    filename: 'eval-graders.test.ts',
+    title: 'Unit Test Suite for Evaluation Assertion Graders & SSE Wire Protocol (6/6 Passing)',
+    commitMessage: 'test(evals): add unit tests for deterministic assertion graders and SSE cursor/frame formatting (EVAL-001)',
+    summary: 'Verifies exact_match, contains, json_schema (including fenced blocks), citation_required, tool_called, fractional scoring, and Last-Event-ID cursor parsing.',
+    content: evalGradersTestContent,
+  },
+  {
+    step: 'Step 7.1e (File #48)',
+    ticket: 'EVAL-001 / SSE-001',
+    path: 'tests/integration/eval-sse.test.ts',
+    filename: 'eval-sse.test.ts',
+    title: 'PostgreSQL Integration Tests for Evaluation Experiments, Regression Diffs & SSE Replay (4/4 Passing)',
+    commitMessage: 'test(evals): add PostgreSQL integration tests for eval experiments, v1-vs-v2 regression detection, and SSE cursor replay (SSE-001)',
+    summary: 'Verifies 100% pass rate on Agent v1, regression detection when Agent v2 drops calculator tool, SSE reconnect replay with Last-Event-ID, and 403/404 isolation.',
+    content: evalSseTestContent,
+  },
 ];
 
 interface CurrentBatchItem {
@@ -542,44 +597,44 @@ interface CurrentBatchItem {
 
 const CURRENT_STEP_BATCH: CurrentBatchItem[] = [
   {
-    path: 'src/server/db/schema/workflows.ts',
+    path: 'src/server/db/schema/evals.ts',
     status: 'NEW',
-    changeReason: 'Step 6.1a (WORKFLOW-001 / HITL-001 / AUDIT-001 / USAGE-001): Drizzle schema & SQL migration 0005 for workflows, workflow_versions, approval_requests, audit_events, and usage_events.',
+    changeReason: 'Step 7.1a (EVAL-001): Drizzle schema & SQL migration 0006 for eval_suites, eval_cases, eval_experiments, and eval_case_results.',
   },
   {
-    path: 'src/server/modules/workflows/dag-validator.ts',
+    path: 'src/server/modules/evals/eval-harness.ts',
     status: 'NEW',
-    changeReason: 'Step 6.1b (WORKFLOW-001 / WORKFLOW-002): 3-color DFS cycle detector, reachability/dead-end validator, safe condition evaluator, and canonical SHA-256 snapshot hasher.',
+    changeReason: 'Step 7.1b (EVAL-001): Deterministic graders (exact_match, contains, json_schema, citation_required, tool_called), experiment runner, and v1-vs-v2 regression comparator.',
   },
   {
-    path: 'src/server/modules/workflows/workflow-engine.ts',
+    path: 'src/server/modules/runs/sse-stream.ts',
     status: 'NEW',
-    changeReason: 'Step 6.1c (WORKFLOW-002 / HITL-001 / AUDIT-001 / USAGE-001): DAG execution engine, waiting_approval HITL pause/resume/cancel gates, security audit log, and honest usage ledger.',
+    changeReason: 'Step 7.1c (SSE-001): Server-Sent Events (SSE) replay stream engine supporting Last-Event-ID / afterSequence cursor reconnect without duplicate frames.',
   },
   {
-    path: 'tests/unit/workflow-dag.test.ts',
+    path: 'tests/unit/eval-graders.test.ts',
     status: 'NEW',
-    changeReason: 'Step 6.1d (WORKFLOW-001): Unit test suite (6/6 passing) for DAG topological sort, cycle path reporting, orphan/dead-end rejection, and safe condition evaluation.',
+    changeReason: 'Step 7.1d (EVAL-001 / SSE-001): Unit test suite (6/6 passing) for evaluation assertion graders and SSE wire protocol cursor/frame helpers.',
   },
   {
-    path: 'tests/integration/workflow-hitl-audit.test.ts',
+    path: 'tests/integration/eval-sse.test.ts',
     status: 'NEW',
-    changeReason: 'Step 6.1e (WORKFLOW-002 / HITL-001 / AUDIT-001 / USAGE-001): PostgreSQL integration tests (4/4 passing) for immutable workflow snapshots, HITL pause/resume, security audit trail, and mock vs live usage.',
+    changeReason: 'Step 7.1e (EVAL-001 / SSE-001): PostgreSQL integration tests (4/4 passing) for evaluation suites, v1-vs-v2 regression detection, SSE cursor replay, and 403/404 isolation.',
   },
   {
     path: 'src/server/db/client.ts',
     status: 'UPDATED',
-    changeReason: 'Registered workflowsSchema and MIGRATION_0005_WORKFLOWS_SQL in applyTenantMigrations().',
+    changeReason: 'Registered evalsSchema and MIGRATION_0006_EVALS_SQL in applyTenantMigrations().',
   },
   {
     path: 'docs/implementation/STATUS.md',
     status: 'UPDATED',
-    changeReason: 'Updated implementation ledger marking Phase 6 (WORKFLOW-001, WORKFLOW-002, HITL-001, AUDIT-001, USAGE-001) verified (64/64 tests passing).',
+    changeReason: 'Updated implementation ledger marking Phase 7 (EVAL-001, SSE-001, UI-001) verified (74/74 tests passing).',
   },
   {
     path: 'src/App.tsx',
     status: 'UPDATED',
-    changeReason: 'Registered Step 6.1 files and updated CURRENT_STEP_BATCH zip bundle.',
+    changeReason: 'Registered Step 7.1 files and updated CURRENT_STEP_BATCH zip bundle.',
   },
 ];
 
@@ -708,7 +763,7 @@ export default function App() {
             All Files ({COMPLETED_FILES.length})
           </a>
           <a href="#git-helper" className="hover:text-slate-900 transition-colors whitespace-nowrap shrink-0">
-            Phase 6 Complete (64/64 Pass)
+            Phase 7 Complete (74/74 Pass)
           </a>
         </nav>
 
@@ -736,7 +791,7 @@ export default function App() {
         <aside className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 p-5 flex flex-col gap-5 shrink-0">
           <div>
             <div className="text-xs font-medium text-emerald-700">
-              Phase 6 Complete · 64/64 Tests Passing
+              Phase 7 Complete · 74/74 Tests Passing
             </div>
             <h1 className="text-base font-bold text-slate-900 mt-1">
               Project Files ({COMPLETED_FILES.length})
@@ -802,7 +857,7 @@ export default function App() {
                   Current Step Download Batch — Preserves Exact Folder Hierarchy (.zip)
                 </div>
                 <h2 className="text-lg font-bold text-slate-900 mt-0.5">
-                  Step 6.1 Batch ({batchFiles.length} Files: New + Updated)
+                  Step 7.1 Batch ({batchFiles.length} Files: New + Updated)
                 </h2>
                 <p className="text-xs text-slate-600 mt-1">
                   Click <span className="font-mono font-semibold text-slate-800">Download Batch .zip (With Folders)</span> and run <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">unzip -o ~/Downloads/aegis-current-step-batch.zip</span> in your repo root — every file extracts directly into its exact subfolder (`src/server/ai/...`, `tests/unit/...`, `docs/...`).

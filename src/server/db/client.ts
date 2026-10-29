@@ -10,15 +10,17 @@ import * as knowledgeSchema from './schema/knowledge';
 import { MIGRATION_0004_KNOWLEDGE_SQL } from './schema/knowledge';
 import * as workflowsSchema from './schema/workflows';
 import { MIGRATION_0005_WORKFLOWS_SQL } from './schema/workflows';
+import * as evalsSchema from './schema/evals';
+import { MIGRATION_0006_EVALS_SQL } from './schema/evals';
 import type { DatabaseReadinessCheck } from '../../app/api/v1/health/route';
 
 /**
- * Ticket REPO-005, AGENT-001, RUN-001, RAG-001 & WORKFLOW-001:
+ * Ticket REPO-005, AGENT-001, RUN-001, RAG-001, WORKFLOW-001 & EVAL-001:
  * Drizzle ORM Database Client & Migration Runner
  *
  * Combines all domain schemas (`tenantSchema` + `agentsSchema` + `runsSchema` +
- * `knowledgeSchema` + `workflowsSchema`) and applies sequential versioned SQL
- * migrations (`0001`..`0005`) idempotently.
+ * `knowledgeSchema` + `workflowsSchema` + `evalsSchema`) and applies sequential
+ * versioned SQL migrations (`0001`..`0006`) idempotently.
  */
 
 export const aegisSchema = {
@@ -27,6 +29,7 @@ export const aegisSchema = {
   ...runsSchema,
   ...knowledgeSchema,
   ...workflowsSchema,
+  ...evalsSchema,
 };
 
 export type AegisDatabase = PgliteDatabase<typeof aegisSchema>;
@@ -39,7 +42,7 @@ export interface DatabaseContext {
 
 /**
  * Applies all sequential SQL migrations (0001 Tenant + 0002 Agents + 0003 Runs/Queue +
- * 0004 Knowledge + 0005 Workflows/HITL/Audit/Usage) to the given PGlite instance.
+ * 0004 Knowledge + 0005 Workflows/HITL/Audit/Usage + 0006 Evals) to the given PGlite instance.
  * Safe to call multiple times because statements use `IF NOT EXISTS`.
  */
 export async function applyTenantMigrations(pg: PGlite): Promise<void> {
@@ -48,6 +51,7 @@ export async function applyTenantMigrations(pg: PGlite): Promise<void> {
   await pg.exec(MIGRATION_0003_RUNS_SQL);
   await pg.exec(MIGRATION_0004_KNOWLEDGE_SQL);
   await pg.exec(MIGRATION_0005_WORKFLOWS_SQL);
+  await pg.exec(MIGRATION_0006_EVALS_SQL);
 }
 
 /**
