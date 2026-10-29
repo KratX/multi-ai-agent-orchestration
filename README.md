@@ -11,26 +11,34 @@ Built under a strict **Zero-Required-Spend (`ADR-001`)** and **Defense-in-Depth 
 1. **Multi-Tenant Foundation & Central RBAC (`TENANT-001`..`004`)**
    - Composite `(organization_id, id)` foreign keys across every domain table prevent cross-tenant orphan references at the PostgreSQL constraint layer.
    - Central policy engine (`src/server/policies/authorization.ts`) enforces a 4-role matrix (`owner`, `admin`, `developer`, `viewer`), returns `404 Not Found` (`TENANT_MISMATCH`) on cross-tenant access to prevent UUID enumeration (`ADR-002`), and enforces the last-owner safeguard (`409 Conflict`).
+   
 2. **Agent Studio & Immutable Snapshot Versioning (`AGENT-001`..`002`)**
    - Separates mutable draft configurations (`agents`) from immutable published snapshots (`agent_versions`) fingerprinted by canonical SHA-256 `snapshot_hash`. Active runs, workflows, and evaluations always pin to an immutable `agent_version_id`.
+   
 3. **Provider-Neutral AI Runtime & Citation Verification (`AGENT-003`)**
    - `MockModelProvider` (`AI_MODE=demo`) produces 100% deterministic multi-turn tool calls, embeddings, and token telemetry.
    - `verifyModelCitations()` strips any hallucinated chunk or document citations not actually returned by `knowledge_search` during the run.
+
 4. **Bounded Agent Runtime & Safe Tool Gateway (`TOOL-001`..`002`, `RUN-001`..`002`)**
    - Recursive-descent arithmetic parser (`evaluateSafeArithmetic`) evaluates mathematical expressions with **zero `eval()` or `Function()`**.
    - `ToolGateway` enforces per-version tool allowlists (`Threat T-03`), Zod input schemas, byte-size caps, and per-call timeouts.
+
 5. **PostgreSQL Transactional Job Queue (`QUEUE-001`..`002`, `ADR-003`)**
    - Atomic `enqueueAgentRun` inserts the `runs` record, `job_queue` row, and `run.queued` event in a single transaction.
    - Worker claiming uses `FOR UPDATE SKIP LOCKED` row leases with heartbeat expiration recovery (`recoverExpiredJobLeases`).
+
 6. **Tenant-Isolated Knowledge Ingestion & Hybrid RAG (`RAG-001`..`003`)**
    - Sanitizes display filenames against path traversal (`Threat T-05`), generates opaque `<org_id>/<uuid>.bin` storage keys, deduplicates by SHA-256 content hash, and wraps untrusted chunks in `<untrusted_knowledge_context>` delimiters (`Threat T-03`).
    - Ranks chunks using hybrid PostgreSQL `tsvector` (`ts_rank_cd`) + 64-dimension normalized vector cosine similarity.
+
 7. **Directed Acyclic Workflow Engine & HITL Approval Gates (`WORKFLOW-001`..`002`, `HITL-001`)**
    - 3-color DFS cycle detector (`validateWorkflowDag`) reports exact `cyclePath` diagnostics, verifies start/end reachability, and evaluates branching conditions without `eval()`.
    - Pauses runs at `approval` nodes (`waiting_approval`) and resumes or cancels upon authorized `admin`/`owner` decision (`decideApprovalRequest`).
+
 8. **Security Audit Trail & Honest FinOps Usage Ledger (`AUDIT-001`, `USAGE-001`)**
    - Append-only `audit_events` record both `allowed` and `denied` security-sensitive operations (`Threat T-06`).
    - `usage_events` explicitly partition `mock` (`is_estimated = true`) vs `live` token consumption.
+
 9. **Automated Evaluation Harness & SSE Replay Debugger (`EVAL-001`, `SSE-001`)**
    - Deterministic graders (`exact_match`, `contains`, `json_schema`, `citation_required`, `tool_called`) grade agent versions and compute `v1`-vs-`v2` regression diffs (`compareEvalExperiments`).
    - `createRunEventsSseResponse()` streams monotonic `run_events` and supports `Last-Event-ID` / `afterSequence` reconnect cursor replay with zero duplicate frames.
