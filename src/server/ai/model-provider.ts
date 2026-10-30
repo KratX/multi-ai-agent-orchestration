@@ -21,6 +21,11 @@ import {
 
 export type ModelUsageSource = 'mock' | 'provider' | 'local';
 
+export type AiResolutionTier =
+  | 'session_byok'
+  | 'server_env'
+  | 'deterministic_fallback';
+
 export type ModelMessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface ModelToolCallRequest {
@@ -79,6 +84,9 @@ export interface ModelGenerateOutput {
   usage: ModelTokenUsage;
   providerName: string;
   modelName: string;
+  requestedEngine?: string;
+  executedEngine?: string;
+  resolutionTier?: AiResolutionTier;
 }
 
 export interface ModelProvider {
@@ -234,6 +242,7 @@ function extractSearchQuery(prompt: string): string | null {
   const knowledgeKeywords = [
     'policy',
     'runbook',
+    'playbook',
     'incident',
     'sla',
     'onboarding',
@@ -247,6 +256,20 @@ function extractSearchQuery(prompt: string): string | null {
     'what is our',
     'retention',
     'escalation',
+    'cold-chain',
+    'customs',
+    'freight',
+    'shipment',
+    'tariff',
+    'clearance',
+    'temperature',
+    'excursion',
+    'logistics',
+    'manifest',
+    'vaccine',
+    'pallet',
+    'quarantine',
+    'telemetry',
   ];
 
   const hasKeyword = knowledgeKeywords.some((kw) => normalized.includes(kw));
@@ -576,15 +599,17 @@ export function createModelProvider(
 export type LiveAiEngineMode =
   | 'auto'
   | 'gemini-free'
+  | 'openrouter-free'
   | 'chatgpt-free'
   | 'claude-free'
   | 'grok-free'
   | 'mock';
 
 /**
- * Factory for the live interactive runtime server (`server.ts` & `/api/v1/*`).
- * Routes across the 4 official free-tier cloud providers:
+ * Factory for the live interactive Ordaris runtime server (`server.ts` & `/api/v1/*`).
+ * Routes across the 5 official free-tier cloud providers with 3-tier fallback resolution:
  * - Google Gemini Free Tier (`gemini-3-flash-preview` via `@google/genai`)
+ * - OpenRouter Free Router (`openrouter/free`)
  * - OpenAI ChatGPT Free Tier (`gpt-4o-mini`)
  * - Anthropic Claude Free Tier (`claude-3-5-haiku-latest`)
  * - xAI Grok Free Tier (`grok-2-latest`)
@@ -602,6 +627,7 @@ export function createLiveRuntimeModelProvider(
   },
   options?: {
     engine?: LiveAiEngineMode;
+    resolutionTier?: 'session_byok' | 'server_env';
   }
 ): ModelProvider {
   const engine = options?.engine ?? 'auto';
@@ -657,7 +683,8 @@ export function createLiveRuntimeModelProvider(
     engine === 'chatgpt-free' ||
     engine === 'claude-free' ||
     engine === 'grok-free' ||
-    engine === 'gemini-free'
+    engine === 'gemini-free' ||
+    engine === 'openrouter-free'
       ? engine
       : 'auto';
 
@@ -671,7 +698,6 @@ export function createLiveRuntimeModelProvider(
     openrouterApiKey: rawOpenRouterKey,
     defaultModel: geminiModel,
     preferEngine,
+    resolutionTier: options?.resolutionTier,
   });
 }
-
-
