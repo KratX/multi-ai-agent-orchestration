@@ -2,19 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { GenerateContentParameters, GenerateContentResponse } from '@google/genai';
 import { createModelProvider } from '../../src/server/ai/model-provider';
-import { GeminiModelProvider, type GeminiSdkClient } from '../../src/server/ai/gemini-provider';
+import {
+  AnthropicClaudeModelProvider,
+  GeminiModelProvider,
+  OpenAIChatGPTModelProvider,
+  XaiGrokModelProvider,
+  type GeminiSdkClient,
+} from '../../src/server/ai/gemini-provider';
 import { DEFAULT_AGENT_MODEL_CONFIG } from '../../src/server/db/schema/agents';
 
 /**
  * Phase F Unit & Contract Tests:
- * Verifies `GeminiModelProvider` and `createModelProvider({ AI_MODE: 'provider' })`
- * using a mocked `@google/genai` SDK client so CI executes with zero network access.
+ * Verifies `GeminiModelProvider`, `OpenAIChatGPTModelProvider`, `AnthropicClaudeModelProvider`,
+ * `XaiGrokModelProvider`, and `createModelProvider({ AI_MODE: 'provider' })`
+ * using mocked SDK/HTTP clients so CI executes with zero network access.
  */
 
 test('Phase F: createModelProvider returns GeminiModelProvider when AI_MODE="provider" with valid key', () => {
   const provider = createModelProvider({
     AI_MODE: 'provider',
-    AI_PROVIDER_MODEL: 'gemini-3.8-flash',
+    AI_PROVIDER_MODEL: 'gemini-3-flash-preview',
     AI_PROVIDER_API_KEY: 'live-server-side-key-123456',
   });
 
@@ -62,7 +69,7 @@ test('Phase F: GeminiModelProvider parses structured tool calls, strips fabricat
 
   const provider = new GeminiModelProvider({
     apiKey: 'test-gemini-api-key-987654',
-    defaultModel: 'gemini-3.8-flash',
+    defaultModel: 'gemini-3-flash-preview',
     sdkClient: mockSdkClient,
   });
 
@@ -71,7 +78,7 @@ test('Phase F: GeminiModelProvider parses structured tool calls, strips fabricat
     modelConfig: {
       ...DEFAULT_AGENT_MODEL_CONFIG,
       provider: 'google',
-      model: 'gemini-3.8-flash',
+      model: 'gemini-3-flash-preview',
     },
     allowedTools: ['knowledge_search'],
     messages: [
@@ -94,7 +101,7 @@ test('Phase F: GeminiModelProvider parses structured tool calls, strips fabricat
   });
 
   assert.equal(capturedRequests.length, 1);
-  assert.equal(capturedRequests[0]?.model, 'gemini-3.8-flash');
+  assert.equal(capturedRequests[0]?.model, 'gemini-3-flash-preview');
   assert.equal(output.finishReason, 'stop');
   assert.equal(output.providerName, 'google-gemini');
   assert.equal(output.usage.source, 'provider');
@@ -138,3 +145,92 @@ test('Phase F: GeminiModelProvider enforces per-call timeout bounds', async () =
     /Gemini provider request timed out after 25ms/
   );
 });
+
+test('Phase F+: OpenAIChatGPTModelProvider, AnthropicClaudeModelProvider, and XaiGrokModelProvider parse structured responses and usage', async () => {
+  const mockOpenAiFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        model: 'gpt-4o-mini',
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                finishReason: 'stop',
+                reasoningSummary: 'Computed via ChatGPT free tier.',
+                toolCalls: [],
+                answer: 'ChatGPT result is 100.',
+                citations: [],
+              }),
+            },
+          },
+        ],
+        usage: { prompt_tokens: 80, completion_tokens: 20, total_tokens: 100 },
+      }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  const chatgpt = new OpenAIChatGPTModelProvider({
+    apiKey: 'sk-test-openai-key',
+    fetchImpl: mockOpenAiFetch,
+  });
+  const chatgptOut = await chatgpt.generate({
+    systemPrompt: 'You are an SRE assistant.',
+    modelConfig: DEFAULT_AGENT_MODEL_CONFIG,
+    allowedTools: ['calculator'],
+    messages: [{ role: 'user', content: 'Calculate 100' }],
+  });
+  assert.equal(chatgptOut.providerName, 'openai-chatgpt');
+  assert.equal(chatgptOut.modelName, 'gpt-4o-mini');
+  assert.equal(chatgptOut.usage.totalTokens, 100);
+  assert.equal(chatgptOut.usage.source, 'provider');
+
+  const grok = new XaiGrokModelProvider({
+    apiKey: 'xai-test-grok-key',
+    fetchImpl: mockOpenAiFetch,
+  });
+  const grokOut = await grok.generate({
+    systemPrompt: 'You are an SRE assistant.',
+    modelConfig: DEFAULT_AGENT_MODEL_CONFIG,
+    allowedTools: ['calculator'],
+    messages: [{ role: 'user', content: 'Calculate 100' }],
+  });
+  assert.equal(grokOut.providerName, 'xai-grok');
+  assert.equal(grokOut.usage.source, 'provider');
+
+  const mockAnthropicFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        model: 'claude-3-5-haiku-latest',
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              finishReason: 'stop',
+              reasoningSummary: 'Computed via Claude 3.5 Haiku free tier.',
+              toolCalls: [],
+              answer: 'Claude result is 100.',
+              citations: [],
+            }),
+          },
+        ],
+        usage: { input_tokens: 90, output_tokens: 30 },
+      }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  const claude = new AnthropicClaudeModelProvider({
+    apiKey: 'sk-ant-test-claude-key',
+    fetchImpl: mockAnthropicFetch,
+  });
+  const claudeOut = await claude.generate({
+    systemPrompt: 'You are an SRE assistant.',
+    modelConfig: DEFAULT_AGENT_MODEL_CONFIG,
+    allowedTools: ['calculator'],
+    messages: [{ role: 'user', content: 'Calculate 100' }],
+  });
+  assert.equal(claudeOut.providerName, 'anthropic-claude');
+  assert.equal(claudeOut.modelName, 'claude-3-5-haiku-latest');
+  assert.equal(claudeOut.usage.totalTokens, 120);
+  assert.equal(claudeOut.usage.source, 'provider');
+});
+

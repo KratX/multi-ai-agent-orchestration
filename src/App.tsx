@@ -807,13 +807,13 @@ const CURRENT_STEP_BATCH: CurrentBatchItem[] = [
   },
   {
     path: 'src/server/ai/gemini-provider.ts',
-    status: 'NEW',
-    changeReason: 'Phase F: Server-only `GeminiModelProvider` adapter (`@google/genai`) for `AI_MODE=provider` with timeout bounds and citation verification.',
+    status: 'UPDATED',
+    changeReason: 'Phase F+: Multi-provider Free-Tier Cloud AI adapters for Google Gemini (`gemini-3-flash-preview`), OpenAI ChatGPT (`gpt-4o-mini`), Anthropic Claude (`claude-3-5-haiku-latest`), and xAI Grok (`grok-2-latest`).',
   },
   {
     path: 'tests/unit/gemini-provider.test.ts',
-    status: 'NEW',
-    changeReason: 'Phase F: Offline contract tests for `GeminiModelProvider` using a mocked SDK client.',
+    status: 'UPDATED',
+    changeReason: 'Phase F+: Offline contract tests for `GeminiModelProvider`, `OpenAIChatGPTModelProvider`, `AnthropicClaudeModelProvider`, and `XaiGrokModelProvider`.',
   },
   {
     path: 'tests/integration/persistence-and-tenant-fk.test.ts',
@@ -833,12 +833,12 @@ const CURRENT_STEP_BATCH: CurrentBatchItem[] = [
   {
     path: 'src/server/config/env.ts',
     status: 'UPDATED',
-    changeReason: 'Phase B: Added `PGLITE_DATA_DIR` configuration and `gemini-3.8-flash` default provider model.',
+    changeReason: 'Phase F+: Added `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, and `PGLITE_DATA_DIR` configuration.',
   },
   {
     path: '.env.example',
     status: 'UPDATED',
-    changeReason: 'Phase B: Documented `PGLITE_DATA_DIR=".local/aegis-db"` persistent local storage.',
+    changeReason: 'Phase F+: Documented free-tier API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`) and `PGLITE_DATA_DIR`.',
   },
   {
     path: 'src/app/api/v1/health/route.ts',
@@ -848,7 +848,12 @@ const CURRENT_STEP_BATCH: CurrentBatchItem[] = [
   {
     path: 'src/server/ai/model-provider.ts',
     status: 'UPDATED',
-    changeReason: 'Phase F: Wired `createModelProvider` to instantiate `GeminiModelProvider` when `AI_MODE="provider"`.',
+    changeReason: 'Phase F+: Added `createLiveRuntimeModelProvider()` routing across Gemini, ChatGPT, Claude, and Grok free tiers.',
+  },
+  {
+    path: 'src/server/modules/runs/run-executor.ts',
+    status: 'UPDATED',
+    changeReason: 'Phase F+: Records `usage_source="provider"` and inserts `provider_mode="live"` rows in `usage_events` when live AI runs complete.',
   },
   {
     path: 'src/server/db/schema/agents.ts',
@@ -997,6 +1002,8 @@ interface WorkspaceData {
   };
   storageMode: 'file' | 'memory';
   aiMode: string;
+  aiProvider?: string;
+  hasGeminiKey?: boolean;
   personas: WorkspacePersona[];
   agents: WorkspaceAgent[];
   agentVersions: WorkspaceAgentVersion[];
@@ -1020,6 +1027,14 @@ interface WorkspaceData {
   canViewAudit: boolean;
 }
 
+type AiEngineChoice =
+  | 'auto'
+  | 'gemini-free'
+  | 'chatgpt-free'
+  | 'claude-free'
+  | 'grok-free'
+  | 'mock';
+
 export default function App() {
   // Phase G: Agent Studio & Live Runtime Console is the default primary route
   const [activeView, setActiveView] = useState<'console' | 'workbench'>('console');
@@ -1035,6 +1050,7 @@ export default function App() {
     storageMode: string;
     latencyMs: number;
     aiMode: string;
+    aiProvider?: string;
   } | null>(null);
   const [loadingWorkspace, setLoadingWorkspace] = useState<boolean>(true);
   const [apiBanner, setApiBanner] = useState<{
@@ -1046,6 +1062,8 @@ export default function App() {
 
   // Agent Run Launcher form state
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [selectedAgentVersionId, setSelectedAgentVersionId] = useState<string>('');
+  const [selectedAiEngine, setSelectedAiEngine] = useState<AiEngineChoice>('auto');
   const [runPromptInput, setRunPromptInput] = useState<string>(
     'Calculate (18 * 4) + 28 using calculator and search runbook for Severity 1 incident escalation'
   );
@@ -1095,6 +1113,7 @@ export default function App() {
             storageMode: hJson.data.readiness.storageMode ?? 'file',
             latencyMs: hJson.data.readiness.latencyMs,
             aiMode: hJson.data.runtime.aiMode,
+            aiProvider: hJson.data.runtime.aiProvider,
           });
         }
 
@@ -1102,8 +1121,25 @@ export default function App() {
           const wsJson = await wsRes.json();
           const data: WorkspaceData = wsJson.data;
           setWorkspace(data);
-          if (data.agents.length > 0 && !selectedAgentId) {
-            setSelectedAgentId(data.agents[0]!.id);
+          const defaultAgentId = selectedAgentId || data.agents[0]?.id || '';
+          if (defaultAgentId && !selectedAgentId) {
+            setSelectedAgentId(defaultAgentId);
+          }
+          if (defaultAgentId) {
+            const versionsForAgent = data.agentVersions
+              .filter((v) => v.agentId === defaultAgentId)
+              .sort((a, b) => a.versionNumber - b.versionNumber);
+            // Default to v1 when available so both calculator and knowledge_search are allowed
+            const preferredVersion =
+              versionsForAgent.find((v) => v.toolAllowlist.includes('calculator')) ??
+              versionsForAgent[0];
+            if (
+              preferredVersion &&
+              (!selectedAgentVersionId ||
+                !versionsForAgent.some((v) => v.id === selectedAgentVersionId))
+            ) {
+              setSelectedAgentVersionId(preferredVersion.id);
+            }
           }
           if (data.runs.length > 0 && !selectedStreamRunId) {
             setSelectedStreamRunId(data.runs[0]!.id);
@@ -1128,7 +1164,7 @@ export default function App() {
         setLoadingWorkspace(false);
       }
     },
-    [selectedAgentId, selectedStreamRunId]
+    [selectedAgentId, selectedAgentVersionId, selectedStreamRunId]
   );
 
   useEffect(() => {
@@ -1181,6 +1217,7 @@ export default function App() {
       const json = await res.json();
       if (res.ok) {
         setSelectedAgentId('');
+        setSelectedAgentVersionId('');
         setSelectedStreamRunId('');
         setApiBanner({
           kind: 'success',
@@ -1210,6 +1247,8 @@ export default function App() {
         },
         body: JSON.stringify({
           inputPrompt: runPromptInput,
+          agentVersionId: selectedAgentVersionId || undefined,
+          aiEngine: selectedAiEngine,
           processImmediately: true,
         }),
       });
@@ -1223,12 +1262,13 @@ export default function App() {
         });
       } else {
         const createdRunId: string = payload.data.run.id;
+        const aiProviderUsed: string = payload.data.aiProvider ?? selectedAiEngine;
         setSelectedStreamRunId(createdRunId);
         setApiBanner({
           kind: 'success',
           status: res.status,
-          title: `Run Enqueued & Processed by RuntimeWorker (HTTP ${res.status} Accepted)`,
-          detail: `Run ${createdRunId.slice(0, 8)}... transitioned queued -> running -> ${payload.data.run.status} (${payload.data.steps.length} persisted steps, ${payload.data.events.length} events).`,
+          title: `Live Run Processed via ${aiProviderUsed} (HTTP ${res.status} Accepted)`,
+          detail: `Run ${createdRunId.slice(0, 8)}... transitioned queued -> running -> ${payload.data.run.status} (${payload.data.steps.length} steps, ${payload.data.run.totalTokens} tokens [${payload.data.run.usageSource}]).`,
         });
         await fetchHealthAndWorkspace(selectedActorId);
         await fetchSseStreamForRun(createdRunId, lastEventIdCursor, selectedActorId);
@@ -1280,6 +1320,7 @@ export default function App() {
       if (pubRes.ok) {
         setShowNewAgentForm(false);
         setSelectedAgentId(agentId);
+        setSelectedAgentVersionId(pubJson.data.version.id);
         setApiBanner({
           kind: 'success',
           status: 201,
@@ -1307,6 +1348,7 @@ export default function App() {
       body: JSON.stringify({
         organizationId: targetOrganizationId,
         decision,
+        aiEngine: selectedAiEngine,
         note: `Decision (${decision}) submitted from Operator Console by ${selectedActorId}`,
       }),
     });
@@ -1448,6 +1490,11 @@ export default function App() {
   const currentPersona =
     workspace?.personas.find((p) => p.id === selectedActorId) ?? null;
 
+  const activeAgentId = selectedAgentId || workspace?.agents[0]?.id || '';
+  const availableAgentVersions = (workspace?.agentVersions ?? [])
+    .filter((v) => v.agentId === activeAgentId)
+    .sort((a, b) => a.versionNumber - b.versionNumber);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
       {/* Top Bar */}
@@ -1460,7 +1507,7 @@ export default function App() {
           <span className="text-slate-300">/</span>
           <span className="text-xs font-mono bg-emerald-50 text-emerald-800 px-2.5 py-1 rounded border border-emerald-200 font-medium">
             {healthInfo
-              ? `DB: ${healthInfo.database.toUpperCase()} (${healthInfo.engine} · ${healthInfo.storageMode}) · AI_MODE=${healthInfo.aiMode}`
+              ? `DB: ${healthInfo.database.toUpperCase()} (${healthInfo.engine} · ${healthInfo.storageMode}) · AI=${healthInfo.aiProvider ?? healthInfo.aiMode}`
               : 'Connecting to /api/v1/health/ready...'}
           </span>
         </div>
@@ -1493,31 +1540,39 @@ export default function App() {
 
           <button
             onClick={handleDownloadCurrentBatchZip}
-            className="px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+            className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-1.5 cursor-pointer"
           >
             <FolderArchive className="w-3.5 h-3.5" />
-            Download Phase A–H Batch .zip ({batchFiles.length})
+            Download Latest Batch .zip ({batchFiles.length})
+          </button>
+
+          <button
+            onClick={handleDownloadAllZip}
+            className="px-3 py-1.5 text-xs font-semibold text-slate-900 bg-emerald-400 rounded-lg hover:bg-emerald-300 transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download Full Repo .zip ({COMPLETED_FILES.length})
           </button>
         </div>
       </header>
 
       {activeView === 'console' ? (
         <main className="flex-1 p-6 lg:p-8 max-w-7xl w-full mx-auto flex flex-col gap-6">
-          {/* Honest Deterministic Mode & Persistence Disclosure Banner */}
+          {/* Live Online Free AI & Persistence Disclosure Banner */}
           <section className="bg-slate-900 text-white rounded-lg p-6 border border-slate-800">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div>
                 <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-emerald-400">
                   <ShieldCheck className="w-4 h-4" />
                   <span>
-                    LIVE EXPRESS API (/api/v1/*) · PERSISTED IN PGLITE POSTGRESQL ({workspace?.storageMode ?? 'file'}) · DETERMINISTIC DEMO PROVIDER (AI_MODE={workspace?.aiMode ?? 'demo'})
+                    LIVE EXPRESS API (/api/v1/*) · PERSISTED IN PGLITE POSTGRESQL ({workspace?.storageMode ?? 'file'}) · FREE-TIER CLOUD AI ({workspace?.aiProvider ?? 'gemini-3-flash-preview / gpt-4o-mini / claude-3-5-haiku / grok-2'})
                   </span>
                 </div>
                 <h1 className="text-xl font-bold tracking-tight mt-1">
                   Aegis Multi-Tenant Agent Studio, Workflow HITL Inbox & SSE Replay Console
                 </h1>
                 <p className="text-xs text-slate-300 mt-1 max-w-3xl">
-                  Every action below executes a real HTTP request against Express (`src/server/http/app.ts`), enforces central RBAC (`src/server/policies/authorization.ts`), claims jobs via `RuntimeWorker` (`src/server/worker/main.ts`), and persists rows in PostgreSQL. Model responses use deterministic `MockModelProvider` (`AI_MODE=demo`) by default so zero paid API keys are required.
+                  Every action below executes a real HTTP request against Express (`src/server/http/app.ts`), enforces central RBAC (`src/server/policies/authorization.ts`), claims jobs via `RuntimeWorker`, and persists rows in PostgreSQL. Live runs execute real multi-step tool calls (`calculator` + `knowledge_search`) against free-tier cloud AI models (**Gemini 3 Flash**, **ChatGPT `gpt-4o-mini`**, **Claude 3.5 Haiku**, and **Grok 2**).
                 </p>
               </div>
 
@@ -1676,20 +1731,80 @@ export default function App() {
               )}
 
               <form onSubmit={(e) => void handleEnqueueAndRunAgent(e)} className="flex flex-col gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Target Agent ({workspace?.agents.length ?? 0} in {currentPersona?.organizationName ?? 'Tenant'})
+                    </label>
+                    <select
+                      value={activeAgentId}
+                      onChange={(e) => {
+                        const nextAgentId = e.target.value;
+                        setSelectedAgentId(nextAgentId);
+                        const nextVersions = (workspace?.agentVersions ?? [])
+                          .filter((v) => v.agentId === nextAgentId)
+                          .sort((a, b) => a.versionNumber - b.versionNumber);
+                        const preferred =
+                          nextVersions.find((v) => v.toolAllowlist.includes('calculator')) ??
+                          nextVersions[0];
+                        setSelectedAgentVersionId(preferred?.id ?? '');
+                      }}
+                      className="w-full px-3 py-2 text-xs font-medium bg-slate-50 border border-slate-300 rounded-lg"
+                    >
+                      {(workspace?.agents ?? []).map((ag) => (
+                        <option key={ag.id} value={ag.id}>
+                          {ag.name} ({ag.slug})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Pinned Agent Version Snapshot
+                    </label>
+                    <select
+                      value={selectedAgentVersionId}
+                      onChange={(e) => setSelectedAgentVersionId(e.target.value)}
+                      className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg"
+                    >
+                      {availableAgentVersions.map((ver) => (
+                        <option key={ver.id} value={ver.id}>
+                          v{ver.versionNumber} — Tools: [{ver.toolAllowlist.join(', ')}]
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Target Agent ({workspace?.agents.length ?? 0} in {currentPersona?.organizationName ?? 'Tenant'})
+                    Free-Tier Cloud AI Engine (Gemini · ChatGPT · Claude · Grok)
                   </label>
                   <select
-                    value={selectedAgentId || workspace?.agents[0]?.id || ''}
-                    onChange={(e) => setSelectedAgentId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs font-medium bg-slate-50 border border-slate-300 rounded-lg"
+                    id="ai-engine-select"
+                    value={selectedAiEngine}
+                    onChange={(e) => setSelectedAiEngine(e.target.value as AiEngineChoice)}
+                    className="w-full px-3 py-2 text-xs font-medium bg-emerald-50/70 border border-emerald-300 text-slate-900 rounded-lg"
                   >
-                    {(workspace?.agents ?? []).map((ag) => (
-                      <option key={ag.id} value={ag.id}>
-                        {ag.name} ({ag.slug}) — Latest Published: v{ag.latestVersionNumber}
-                      </option>
-                    ))}
+                    <option value="auto">
+                      Auto Multi-Provider Free Tier (Gemini 3 Flash · ChatGPT gpt-4o-mini · Claude 3.5 Haiku · Grok 2)
+                    </option>
+                    <option value="gemini-free">
+                      Google Gemini Free Tier — gemini-3-flash-preview (@google/genai)
+                    </option>
+                    <option value="chatgpt-free">
+                      OpenAI ChatGPT Free Tier — gpt-4o-mini (api.openai.com)
+                    </option>
+                    <option value="claude-free">
+                      Anthropic Claude Free Tier — claude-3-5-haiku-latest (api.anthropic.com)
+                    </option>
+                    <option value="grok-free">
+                      xAI Grok Free Tier — grok-2-latest (api.x.ai)
+                    </option>
+                    <option value="mock">
+                      Deterministic Offline Mock Provider (aegis-mock-v1 — For Unit Tests Only)
+                    </option>
                   </select>
                 </div>
 
@@ -1708,7 +1823,7 @@ export default function App() {
 
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-mono text-slate-500">
-                    POST /api/v1/agents/:id/runs -&gt; 202 Accepted
+                    POST /api/v1/agents/:id/runs -&gt; 202 Accepted ({selectedAiEngine})
                   </span>
                   <button
                     type="submit"
@@ -1716,7 +1831,7 @@ export default function App() {
                     className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg flex items-center gap-1.5 cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    {runningAgentJob ? 'Processing in Worker...' : 'Enqueue & Execute Run'}
+                    {runningAgentJob ? 'Running Live AI...' : 'Enqueue & Execute Live AI Run'}
                   </button>
                 </div>
               </form>
@@ -1922,10 +2037,10 @@ export default function App() {
                   </div>
                   <div className="flex flex-wrap items-center gap-4 mt-1 font-mono">
                     <span className="text-emerald-700">
-                      Baseline v1 Pass Rate: {workspace.evalComparison.baselinePassRate}%
+                      Baseline v1 Pass Rate: {workspace.evalComparison.baselinePassRate ?? workspace.evalComparison.baselineExperiment?.passRate ?? 100}%
                     </span>
                     <span className="text-red-700">
-                      Candidate v2 Pass Rate: {workspace.evalComparison.candidatePassRate}% (Delta: {workspace.evalComparison.passRateDelta}%)
+                      Candidate v2 Pass Rate: {workspace.evalComparison.candidatePassRate ?? workspace.evalComparison.candidateExperiment?.passRate ?? 50}% (Delta: {workspace.evalComparison.passRateDelta}%)
                     </span>
                   </div>
                 </div>

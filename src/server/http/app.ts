@@ -3,7 +3,11 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import { asc, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getPublicEnvSummary, parseEnv, type AppEnv } from '../config/env';
-import { createModelProvider, type ModelProvider } from '../ai/model-provider';
+import {
+  createLiveRuntimeModelProvider,
+  createModelProvider,
+  type ModelProvider,
+} from '../ai/model-provider';
 import {
   getSharedDatabase,
   type AegisDatabase,
@@ -116,11 +120,17 @@ const enqueueRunBodySchema = z.object({
   agentVersionId: z.string().uuid().optional(),
   idempotencyKey: z.string().trim().min(1).max(128).optional(),
   processImmediately: z.boolean().optional().default(true),
+  aiEngine: z
+    .enum(['auto', 'gemini-free', 'chatgpt-free', 'claude-free', 'grok-free', 'mock'])
+    .optional(),
 });
 
 const approvalDecisionBodySchema = z.object({
   decision: z.enum(['approved', 'rejected']),
   note: z.string().max(1000).optional(),
+  aiEngine: z
+    .enum(['auto', 'gemini-free', 'chatgpt-free', 'claude-free', 'grok-free', 'mock'])
+    .optional(),
 });
 
 const ingestDocumentBodySchema = z.object({
@@ -579,11 +589,18 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         canViewAudit = false;
       }
 
+      const hasGeminiKey = Boolean(
+        (env.AI_PROVIDER_API_KEY &&
+          env.AI_PROVIDER_API_KEY !== 'MY_GEMINI_API_KEY') ||
+          (env.GEMINI_API_KEY && env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY')
+      );
+
       res.status(200).json({
         data: {
           actor,
           storageMode: ctx.storageMode,
           aiMode: env.AI_MODE,
+          hasGeminiKey,
           personas,
           agents: orgAgents,
           agentVersions: orgVersions,
@@ -756,12 +773,18 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         idempotencyKey: body.idempotencyKey,
       });
 
-      const worker =
-        deps.worker ??
-        new RuntimeWorker({
-          db,
-          modelProvider: deps.modelProvider ?? createModelProvider(env),
-        });
+      const worker = body.aiEngine
+        ? new RuntimeWorker({
+            db,
+            modelProvider: createLiveRuntimeModelProvider(env, {
+              engine: body.aiEngine,
+            }),
+          })
+        : (deps.worker ??
+          new RuntimeWorker({
+            db,
+            modelProvider: deps.modelProvider ?? createModelProvider(env),
+          }));
 
       if (body.processImmediately) {
         await worker.tickOnce();
@@ -952,11 +975,14 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         }
 
         const body = approvalDecisionBodySchema.parse(req.body);
+        const activeProvider = body.aiEngine
+          ? createLiveRuntimeModelProvider(env, { engine: body.aiEngine })
+          : (deps.modelProvider ?? createModelProvider(env));
         const outcome = await decideApprovalRequest(db, actor, {
           approvalRequestId: String(req.params.id),
           decision: body.decision,
           note: body.note,
-          modelProvider: deps.modelProvider ?? createModelProvider(env),
+          modelProvider: activeProvider,
         });
 
         res.status(200).json({ data: outcome });

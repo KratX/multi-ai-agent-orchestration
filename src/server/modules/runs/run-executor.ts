@@ -16,6 +16,7 @@ import {
   type RunRow,
   type RunStepRow,
 } from '../../db/schema/runs';
+import { usageEvents } from '../../db/schema/workflows';
 import { computeAgentSnapshotHash } from '../../db/repositories/agent-repository';
 import {
   requireAuthorization,
@@ -803,12 +804,28 @@ export async function executeAgentRun(
           completionTokens: totalCompletionTokens,
           totalTokens: totalPromptTokens + totalCompletionTokens,
           estimatedCostUsd: totalEstimatedCostUsd.toFixed(6),
+          usageSource: modelOutput.usage.source,
           latencyMs,
           completedAt,
           updatedAt: completedAt,
         })
         .where(eq(runs.id, initialRun.id))
         .returning();
+
+      if (modelOutput.usage.source === 'provider') {
+        await db.insert(usageEvents).values({
+          organizationId: initialRun.organizationId,
+          runId: initialRun.id,
+          agentVersionId: initialRun.agentVersionId,
+          providerMode: 'live',
+          modelId: modelOutput.modelName,
+          inputTokens: totalPromptTokens,
+          outputTokens: totalCompletionTokens,
+          totalTokens: totalPromptTokens + totalCompletionTokens,
+          toolCallsCount: totalToolCallsExecuted,
+          isEstimated: modelOutput.usage.isSimulated,
+        });
+      }
 
       await appendRunEvent(db, {
         organizationId: initialRun.organizationId,

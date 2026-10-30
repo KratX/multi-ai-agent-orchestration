@@ -38,7 +38,10 @@ export const envSchema = z
     AI_MODE: z.enum(['demo', 'local', 'provider']).default('demo'),
     AI_PROVIDER_API_KEY: z.string().optional().default(''),
     GEMINI_API_KEY: z.string().optional().default(''),
-    AI_PROVIDER_MODEL: z.string().min(1).default('gemini-3.8-flash'),
+    OPENAI_API_KEY: z.string().optional().default(''),
+    ANTHROPIC_API_KEY: z.string().optional().default(''),
+    XAI_API_KEY: z.string().optional().default(''),
+    AI_PROVIDER_MODEL: z.string().min(1).default('gemini-3-flash-preview'),
 
     UPLOAD_DIR: z.string().min(1).default('.local/uploads'),
     MAX_UPLOAD_BYTES: z.coerce

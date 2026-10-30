@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { parseEnv } from './src/server/config/env';
-import { createModelProvider } from './src/server/ai/model-provider';
+import { createLiveRuntimeModelProvider } from './src/server/ai/model-provider';
 import { closeSharedDatabase, getSharedDatabase } from './src/server/db/client';
 import {
   createApiApp,
@@ -18,7 +18,8 @@ import { RuntimeWorker } from './src/server/worker/main';
  * 1. Validates environment configuration (`parseEnv`).
  * 2. Initializes persistent PGlite PostgreSQL (`PGLITE_DATA_DIR`, default `.local/aegis-db`).
  * 3. Seeds the Flagship Multi-Tenant Workspace on first boot if empty.
- * 4. Starts the background `RuntimeWorker` polling loop (`FOR UPDATE SKIP LOCKED`).
+ * 4. Starts the background `RuntimeWorker` polling loop (`FOR UPDATE SKIP LOCKED`) wired to
+ *    live online free AI (`GeminiModelProvider` `gemini-3-flash-preview` + `FreeOnlineModelProvider`).
  * 5. Mounts all `/api/v1/*` routes and serves the Vite React frontend.
  */
 
@@ -29,7 +30,7 @@ export async function startAegisServer(port = 3000) {
   // Seed default workspace on first startup if empty
   await ensureWorkspaceSeededWithPendingHitl(dbContext.db, { forceReset: false });
 
-  const modelProvider = createModelProvider(env);
+  const modelProvider = createLiveRuntimeModelProvider(env, { engine: 'auto' });
   const worker = new RuntimeWorker({
     db: dbContext.db,
     modelProvider,

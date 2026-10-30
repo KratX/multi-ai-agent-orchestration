@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { AgentModelConfig, AllowedToolName } from '../db/schema/agents';
 import type { AppEnv } from '../config/env';
-import { GeminiModelProvider } from './gemini-provider';
+import {
+  GeminiModelProvider,
+  LiveOnlineModelProvider,
+  type PreferredFreeAiEngine,
+} from './gemini-provider';
 
 /**
  * Ticket AGENT-003: Provider-Neutral ModelProvider Interface & Deterministic MockModelProvider
@@ -568,4 +572,85 @@ export function createModelProvider(
     defaultModel: env.AI_PROVIDER_MODEL,
   });
 }
+
+export type LiveAiEngineMode =
+  | 'auto'
+  | 'gemini-free'
+  | 'chatgpt-free'
+  | 'claude-free'
+  | 'grok-free'
+  | 'mock';
+
+/**
+ * Factory for the live interactive runtime server (`server.ts` & `/api/v1/*`).
+ * Routes across the 4 official free-tier cloud providers:
+ * - Google Gemini Free Tier (`gemini-3-flash-preview` via `@google/genai`)
+ * - OpenAI ChatGPT Free Tier (`gpt-4o-mini`)
+ * - Anthropic Claude Free Tier (`claude-3-5-haiku-latest`)
+ * - xAI Grok Free Tier (`grok-2-latest`)
+ */
+export function createLiveRuntimeModelProvider(
+  env: Pick<AppEnv, 'AI_MODE' | 'AI_PROVIDER_MODEL'> & {
+    AI_PROVIDER_API_KEY?: string;
+    GEMINI_API_KEY?: string;
+    OPENAI_API_KEY?: string;
+    ANTHROPIC_API_KEY?: string;
+    XAI_API_KEY?: string;
+  },
+  options?: {
+    engine?: LiveAiEngineMode;
+  }
+): ModelProvider {
+  const engine = options?.engine ?? 'auto';
+
+  if (engine === 'mock') {
+    return new MockModelProvider();
+  }
+
+  const rawGeminiKey = (
+    env.AI_PROVIDER_API_KEY ||
+    env.GEMINI_API_KEY ||
+    process.env.AI_PROVIDER_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    ''
+  ).trim();
+  const rawOpenAiKey = (
+    env.OPENAI_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    ''
+  ).trim();
+  const rawAnthropicKey = (
+    env.ANTHROPIC_API_KEY ||
+    process.env.ANTHROPIC_API_KEY ||
+    ''
+  ).trim();
+  const rawXaiKey = (
+    env.XAI_API_KEY ||
+    process.env.XAI_API_KEY ||
+    ''
+  ).trim();
+
+  const geminiModel =
+    env.AI_PROVIDER_MODEL && env.AI_PROVIDER_MODEL !== 'gemini-3.8-flash'
+      ? env.AI_PROVIDER_MODEL
+      : 'gemini-3-flash-preview';
+
+  const preferEngine: PreferredFreeAiEngine =
+    engine === 'chatgpt-free' ||
+    engine === 'claude-free' ||
+    engine === 'grok-free' ||
+    engine === 'gemini-free'
+      ? engine
+      : 'auto';
+
+  return new LiveOnlineModelProvider({
+    geminiApiKey: rawGeminiKey,
+    openaiApiKey: rawOpenAiKey,
+    anthropicApiKey: rawAnthropicKey,
+    xaiApiKey: rawXaiKey,
+    defaultModel: geminiModel,
+    preferEngine,
+  });
+}
+
 
