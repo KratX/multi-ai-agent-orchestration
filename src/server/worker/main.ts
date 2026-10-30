@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from '../config/env';
 import { createModelProvider, type ModelProvider } from '../ai/model-provider';

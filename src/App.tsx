@@ -953,6 +953,8 @@ interface WorkspaceRun {
   status: string;
   inputPrompt: string;
   finalOutput: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
   stepCount: number;
   toolCallCount: number;
   totalTokens: number;
@@ -994,6 +996,15 @@ interface WorkspaceAuditEvent {
   createdAt: string;
 }
 
+interface WorkspaceRuntimeLog {
+  id: string;
+  timestamp: string;
+  level: 'INFO' | 'WARN' | 'ERROR';
+  component: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
 interface WorkspaceData {
   actor: {
     userId: string;
@@ -1004,6 +1015,16 @@ interface WorkspaceData {
   aiMode: string;
   aiProvider?: string;
   hasGeminiKey?: boolean;
+  providerKeys?: {
+    gemini: boolean;
+    chatgpt: boolean;
+    claude: boolean;
+    grok: boolean;
+    openrouter: boolean;
+    anyConfigured: boolean;
+  };
+  logFilePath?: string;
+  runtimeLogs?: WorkspaceRuntimeLog[];
   personas: WorkspacePersona[];
   agents: WorkspaceAgent[];
   agentVersions: WorkspaceAgentVersion[];
@@ -1039,7 +1060,7 @@ export default function App() {
   // Phase G: Agent Studio & Live Runtime Console is the default primary route
   const [activeView, setActiveView] = useState<'console' | 'workbench'>('console');
   const [selectedIndex, setSelectedIndex] = useState<number>(COMPLETED_FILES.length - 1);
-  const [copiedType, setCopiedType] = useState<'content' | 'git' | 'batch-git' | null>(null);
+  const [copiedType, setCopiedType] = useState<'content' | 'git' | 'batch-git' | 'env' | null>(null);
 
   // Live API-backed state
   const [selectedActorId, setSelectedActorId] = useState<ConsoleActorId>('acme-admin');
@@ -1262,14 +1283,26 @@ export default function App() {
         });
       } else {
         const createdRunId: string = payload.data.run.id;
+        const runStatus: string = payload.data.run.status;
         const aiProviderUsed: string = payload.data.aiProvider ?? selectedAiEngine;
         setSelectedStreamRunId(createdRunId);
-        setApiBanner({
-          kind: 'success',
-          status: res.status,
-          title: `Live Run Processed via ${aiProviderUsed} (HTTP ${res.status} Accepted)`,
-          detail: `Run ${createdRunId.slice(0, 8)}... transitioned queued -> running -> ${payload.data.run.status} (${payload.data.steps.length} steps, ${payload.data.run.totalTokens} tokens [${payload.data.run.usageSource}]).`,
-        });
+        if (runStatus === 'failed' || runStatus === 'timed_out') {
+          setApiBanner({
+            kind: 'error',
+            status: 500,
+            title: `Run ${createdRunId.slice(0, 8)}... ${runStatus.toUpperCase()} (${payload.data.run.errorCode ?? 'RUNTIME_ERROR'})`,
+            detail:
+              payload.data.run.errorMessage ??
+              'Run failed during execution. Inspect Panel 5 (Server Diagnostic Logs) below for full details.',
+          });
+        } else {
+          setApiBanner({
+            kind: 'success',
+            status: res.status,
+            title: `Live Run Processed via ${aiProviderUsed} (HTTP ${res.status} Accepted)`,
+            detail: `Run ${createdRunId.slice(0, 8)}... transitioned queued -> running -> ${runStatus} (${payload.data.steps.length} steps, ${payload.data.run.totalTokens} tokens [${payload.data.run.usageSource}]).`,
+          });
+        }
         await fetchHealthAndWorkspace(selectedActorId);
         await fetchSseStreamForRun(createdRunId, lastEventIdCursor, selectedActorId);
       }
@@ -1481,7 +1514,12 @@ export default function App() {
     return `unzip -o ~/Downloads/aegis-current-step-batch.zip\npnpm typecheck && pnpm test && pnpm build\ngit add ${paths}\ngit commit -m "feat(runtime): wire Express HTTP API, background worker, file-backed PGlite, and composite tenant FKs"`;
   };
 
-  const handleCopy = async (text: string, type: 'content' | 'git' | 'batch-git') => {
+  const handleDownloadEnvFile = () => {
+    const blob = new Blob([envExampleContent], { type: 'text/plain;charset=utf-8' });
+    triggerBlobDownload(blob, '.env');
+  };
+
+  const handleCopy = async (text: string, type: 'content' | 'git' | 'batch-git' | 'env') => {
     await navigator.clipboard.writeText(text);
     setCopiedType(type);
     setTimeout(() => setCopiedType(null), 2000);
@@ -1862,7 +1900,9 @@ export default function App() {
                               ? 'bg-emerald-100 text-emerald-800'
                               : run.status === 'waiting_approval'
                                 ? 'bg-amber-100 text-amber-800'
-                                : 'bg-slate-200 text-slate-800'
+                                : run.status === 'failed'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-slate-200 text-slate-800'
                           }`}
                         >
                           {run.status}
@@ -1874,6 +1914,11 @@ export default function App() {
                       {run.finalOutput && (
                         <div className="text-slate-900 font-medium mt-1 line-clamp-2 bg-white p-1.5 rounded border border-slate-200">
                           Output: {run.finalOutput}
+                        </div>
+                      )}
+                      {run.errorMessage && (
+                        <div className="text-red-800 font-mono text-[11px] mt-1 bg-red-50 p-1.5 rounded border border-red-200">
+                          [{run.errorCode ?? 'ERROR'}]: {run.errorMessage}
                         </div>
                       )}
                       <div className="flex items-center gap-3 mt-1.5 text-[11px] font-mono text-slate-500">
@@ -2101,6 +2146,154 @@ export default function App() {
               </div>
             </section>
           </div>
+
+          {/* Panel 5: Server Diagnostic Logs (.local/logs/aegis-runtime.log) & Local .env Free-Tier API Configurator */}
+          <section className="bg-white border border-slate-200 rounded-lg p-6 flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-blue-600" />
+                <h2 className="text-base font-bold text-slate-900">
+                  5. Server Diagnostic Logs &amp; Local `.env` Free-Tier API Key Configurator
+                </h2>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-mono bg-slate-100 text-slate-700 px-2.5 py-1 rounded border border-slate-200">
+                  Log File: {workspace?.logFilePath ?? '.local/logs/aegis-runtime.log'} · GET /api/v1/logs
+                </span>
+                <button
+                  onClick={() => void handleCopy(envExampleContent, 'env')}
+                  className="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg border border-slate-300 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {copiedType === 'env' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedType === 'env' ? 'Copied .env Template' : 'Copy .env File'}
+                </button>
+                <button
+                  onClick={handleDownloadEnvFile}
+                  className="px-3 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download `.env` File
+                </button>
+              </div>
+            </div>
+
+            {/* Provider Key Detection Badges */}
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-2.5 text-xs">
+              {[
+                {
+                  name: 'Google Gemini Free Tier',
+                  envVar: 'GEMINI_API_KEY',
+                  model: 'gemini-3-flash-preview',
+                  url: 'https://aistudio.google.com/apikey',
+                  active: Boolean(workspace?.providerKeys?.gemini),
+                },
+                {
+                  name: 'ChatGPT / GitHub Models Free',
+                  envVar: 'OPENAI_API_KEY',
+                  model: 'gpt-4o-mini',
+                  url: 'https://github.com/settings/tokens',
+                  active: Boolean(workspace?.providerKeys?.chatgpt),
+                },
+                {
+                  name: 'Anthropic Claude Free Tier',
+                  envVar: 'ANTHROPIC_API_KEY',
+                  model: 'claude-3-5-haiku-latest',
+                  url: 'https://console.anthropic.com/',
+                  active: Boolean(workspace?.providerKeys?.claude),
+                },
+                {
+                  name: 'xAI Grok Free Tier',
+                  envVar: 'XAI_API_KEY',
+                  model: 'grok-2-latest',
+                  url: 'https://console.x.ai/',
+                  active: Boolean(workspace?.providerKeys?.grok),
+                },
+                {
+                  name: 'OpenRouter Unified Free Key',
+                  envVar: 'OPENROUTER_API_KEY',
+                  model: 'gpt-4o-mini / claude / grok',
+                  url: 'https://openrouter.ai/keys',
+                  active: Boolean(workspace?.providerKeys?.openrouter),
+                },
+              ].map((item) => (
+                <div
+                  key={item.envVar}
+                  className={`p-3 rounded-lg border flex flex-col justify-between gap-1.5 ${
+                    item.active
+                      ? 'bg-emerald-50/60 border-emerald-200'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="font-bold text-slate-900 truncate">{item.name}</span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold shrink-0 ${
+                        item.active
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {item.active ? 'KEY SET' : 'NOT IN .ENV'}
+                    </span>
+                  </div>
+                  <div className="font-mono text-[11px] text-slate-600">
+                    {item.envVar} ({item.model})
+                  </div>
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] font-semibold text-blue-600 hover:underline"
+                  >
+                    Get Free Key -&gt;
+                  </a>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Live Server Diagnostic Log Stream */}
+              <div className="flex flex-col gap-1.5">
+                <div className="text-xs font-semibold text-slate-800 flex items-center justify-between">
+                  <span>
+                    Live Server Diagnostic Logs (`GET /api/v1/logs` &amp; `{workspace?.logFilePath ?? '.local/logs/aegis-runtime.log'}`)
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-500">
+                    {(workspace?.runtimeLogs ?? []).length} entries
+                  </span>
+                </div>
+                <pre className="bg-slate-950 text-slate-200 p-4 rounded-lg text-xs font-mono overflow-x-auto max-h-60 overflow-y-auto border border-slate-800 leading-relaxed">
+                  <code>
+                    {(workspace?.runtimeLogs ?? []).length === 0
+                      ? 'No diagnostic log entries recorded yet.'
+                      : (workspace?.runtimeLogs ?? [])
+                          .map(
+                            (l) =>
+                              `[${l.timestamp}] [${l.level}] [${l.component}] ${l.message}${
+                                l.details ? `\n  details: ${JSON.stringify(l.details)}` : ''
+                              }`
+                          )
+                          .join('\n\n')}
+                  </code>
+                </pre>
+              </div>
+
+              {/* Ready-to-Use .env Template Preview */}
+              <div className="flex flex-col gap-1.5">
+                <div className="text-xs font-semibold text-slate-800 flex items-center justify-between">
+                  <span>
+                    Ready-to-Use Local `.env` File (`cp .env.example .env`)
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-500">
+                    Auto-loaded by server.ts via dotenv/config
+                  </span>
+                </div>
+                <pre className="bg-slate-950 text-amber-200 p-4 rounded-lg text-xs font-mono overflow-x-auto max-h-60 overflow-y-auto border border-slate-800 leading-relaxed">
+                  <code>{envExampleContent}</code>
+                </pre>
+              </div>
+            </div>
+          </section>
         </main>
       ) : (
         /* Secondary View: Repository File Inspector & Step Batch .zip Exporter */

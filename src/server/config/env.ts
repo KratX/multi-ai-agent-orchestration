@@ -1,14 +1,82 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 
 /**
- * Ticket REPO-003: Server Environment Schema & Runtime Configuration
+ * Ticket REPO-003: Server Environment Schema, Runtime Configuration & Diagnostic Logger
  *
  * Enforces Blueprint Section 2.5 & Section 6.3:
  * 1. Fails fast at startup if numeric limits or URLs are malformed.
  * 2. Allows AI_MODE="demo" (default) to boot with zero external API keys.
- * 3. Requires AI_PROVIDER_API_KEY (or GEMINI_API_KEY) ONLY when AI_MODE="provider".
+ * 3. Requires AI_PROVIDER_API_KEY (or GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / XAI_API_KEY)
+ *    ONLY when AI_MODE="provider".
  * 4. Blocks unsafe DEMO_MODE authentication bypass in production unless explicitly safe.
+ * 5. Writes structured diagnostic logs to `.local/logs/aegis-runtime.log`, stdout/stderr,
+ *    and an in-memory ring buffer exposed at `GET /api/v1/logs`.
  */
+
+export const LOG_FILE_PATH = '.local/logs/aegis-runtime.log';
+
+export interface RuntimeLogEntry {
+  id: string;
+  timestamp: string;
+  level: 'INFO' | 'WARN' | 'ERROR';
+  component: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+const runtimeLogBuffer: RuntimeLogEntry[] = [];
+const MAX_LOG_BUFFER_SIZE = 200;
+
+export function appendRuntimeLog(entry: {
+  level: 'INFO' | 'WARN' | 'ERROR';
+  component: string;
+  message: string;
+  details?: Record<string, unknown>;
+}): RuntimeLogEntry {
+  const record: RuntimeLogEntry = {
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    timestamp: new Date().toISOString(),
+    level: entry.level,
+    component: entry.component,
+    message: entry.message,
+    details: entry.details,
+  };
+
+  runtimeLogBuffer.unshift(record);
+  if (runtimeLogBuffer.length > MAX_LOG_BUFFER_SIZE) {
+    runtimeLogBuffer.length = MAX_LOG_BUFFER_SIZE;
+  }
+
+  const formattedLine = `[${record.timestamp}] [${record.level}] [${record.component}] ${record.message}${
+    record.details ? ` | ${JSON.stringify(record.details)}` : ''
+  }\n`;
+
+  // Print to terminal stdout/stderr when not running quiet unit tests
+  if (!process.env.NODE_TEST_CONTEXT) {
+    if (record.level === 'ERROR') {
+      process.stderr.write(formattedLine);
+    } else {
+      process.stdout.write(formattedLine);
+    }
+  }
+
+  // Persist to .local/logs/aegis-runtime.log
+  try {
+    const absLogPath = path.resolve(process.cwd(), LOG_FILE_PATH);
+    fs.mkdirSync(path.dirname(absLogPath), { recursive: true });
+    fs.appendFileSync(absLogPath, formattedLine, 'utf8');
+  } catch {
+    // Ignore file write errors in read-only containers
+  }
+
+  return record;
+}
+
+export function getRuntimeLogs(limit = 80): RuntimeLogEntry[] {
+  return runtimeLogBuffer.slice(0, limit);
+}
 
 const booleanStringSchema = z
   .enum(['true', 'false', '1', '0'])
@@ -39,8 +107,19 @@ export const envSchema = z
     AI_PROVIDER_API_KEY: z.string().optional().default(''),
     GEMINI_API_KEY: z.string().optional().default(''),
     OPENAI_API_KEY: z.string().optional().default(''),
+    OPENAI_BASE_URL: z
+      .string()
+      .url()
+      .optional()
+      .default('https://api.openai.com/v1/chat/completions'),
     ANTHROPIC_API_KEY: z.string().optional().default(''),
     XAI_API_KEY: z.string().optional().default(''),
+    XAI_BASE_URL: z
+      .string()
+      .url()
+      .optional()
+      .default('https://api.x.ai/v1/chat/completions'),
+    OPENROUTER_API_KEY: z.string().optional().default(''),
     AI_PROVIDER_MODEL: z.string().min(1).default('gemini-3-flash-preview'),
 
     UPLOAD_DIR: z.string().min(1).default('.local/uploads'),
@@ -94,7 +173,14 @@ export const envSchema = z
   .superRefine((env, ctx) => {
     // Rule 1: If AI_MODE is "provider", a real non-placeholder API key is mandatory.
     if (env.AI_MODE === 'provider') {
-      const effectiveKey = (env.AI_PROVIDER_API_KEY || env.GEMINI_API_KEY).trim();
+      const effectiveKey = (
+        env.AI_PROVIDER_API_KEY ||
+        env.GEMINI_API_KEY ||
+        env.OPENAI_API_KEY ||
+        env.ANTHROPIC_API_KEY ||
+        env.XAI_API_KEY ||
+        env.OPENROUTER_API_KEY
+      ).trim();
       const isPlaceholder =
         !effectiveKey ||
         effectiveKey === 'MY_GEMINI_API_KEY' ||
@@ -126,6 +212,40 @@ export const envSchema = z
 
 export type AppEnv = z.infer<typeof envSchema>;
 
+export function isConfiguredApiKey(val: string | undefined): boolean {
+  const clean = (val ?? '').trim();
+  return Boolean(clean && clean !== 'MY_GEMINI_API_KEY' && clean !== 'replace-me');
+}
+
+export function getProviderKeyStatus(env: Partial<AppEnv> = process.env as unknown as Partial<AppEnv>) {
+  const gemini =
+    isConfiguredApiKey(env.AI_PROVIDER_API_KEY) ||
+    isConfiguredApiKey(env.GEMINI_API_KEY) ||
+    isConfiguredApiKey(process.env.AI_PROVIDER_API_KEY) ||
+    isConfiguredApiKey(process.env.GEMINI_API_KEY);
+  const chatgpt =
+    isConfiguredApiKey(env.OPENAI_API_KEY) ||
+    isConfiguredApiKey(process.env.OPENAI_API_KEY);
+  const claude =
+    isConfiguredApiKey(env.ANTHROPIC_API_KEY) ||
+    isConfiguredApiKey(process.env.ANTHROPIC_API_KEY);
+  const grok =
+    isConfiguredApiKey(env.XAI_API_KEY) ||
+    isConfiguredApiKey(process.env.XAI_API_KEY);
+  const openrouter =
+    isConfiguredApiKey(env.OPENROUTER_API_KEY) ||
+    isConfiguredApiKey(process.env.OPENROUTER_API_KEY);
+
+  return {
+    gemini,
+    chatgpt,
+    claude,
+    grok,
+    openrouter,
+    anyConfigured: gemini || chatgpt || claude || grok || openrouter,
+  };
+}
+
 /**
  * Parses an arbitrary environment record (e.g., process.env or test fixture)
  * and throws a descriptive error if any variable violates runtime guardrails.
@@ -136,6 +256,12 @@ export function parseEnv(rawEnv: Record<string, string | undefined> = process.en
   // Normalize AI Studio placeholder APP_URL="MY_APP_URL" so local dev doesn't fail URL parsing
   if (!normalized.APP_URL || normalized.APP_URL === 'MY_APP_URL') {
     normalized.APP_URL = 'http://localhost:3000';
+  }
+  if (!normalized.OPENAI_BASE_URL) {
+    normalized.OPENAI_BASE_URL = 'https://api.openai.com/v1/chat/completions';
+  }
+  if (!normalized.XAI_BASE_URL) {
+    normalized.XAI_BASE_URL = 'https://api.x.ai/v1/chat/completions';
   }
 
   const result = envSchema.safeParse(normalized);
@@ -154,15 +280,15 @@ export function parseEnv(rawEnv: Record<string, string | undefined> = process.en
  * for health/readiness inspection (never exposes secrets or DATABASE_URL credentials).
  */
 export function getPublicEnvSummary(env: AppEnv = parseEnv()) {
+  const keyStatus = getProviderKeyStatus(env);
   return {
     nodeEnv: env.NODE_ENV,
     aiMode: env.AI_MODE,
     demoMode: env.DEMO_MODE,
     providerModel: env.AI_PROVIDER_MODEL,
-    hasLiveProviderKey: Boolean(
-      (env.AI_PROVIDER_API_KEY && env.AI_PROVIDER_API_KEY !== 'MY_GEMINI_API_KEY') ||
-        (env.GEMINI_API_KEY && env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY')
-    ),
+    hasLiveProviderKey: keyStatus.anyConfigured,
+    providerKeys: keyStatus,
+    logFilePath: LOG_FILE_PATH,
     limits: {
       runMaxSteps: env.RUN_MAX_STEPS,
       runMaxToolCalls: env.RUN_MAX_TOOL_CALLS,

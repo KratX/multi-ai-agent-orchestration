@@ -594,8 +594,11 @@ export function createLiveRuntimeModelProvider(
     AI_PROVIDER_API_KEY?: string;
     GEMINI_API_KEY?: string;
     OPENAI_API_KEY?: string;
+    OPENAI_BASE_URL?: string;
     ANTHROPIC_API_KEY?: string;
     XAI_API_KEY?: string;
+    XAI_BASE_URL?: string;
+    OPENROUTER_API_KEY?: string;
   },
   options?: {
     engine?: LiveAiEngineMode;
@@ -619,6 +622,11 @@ export function createLiveRuntimeModelProvider(
     process.env.OPENAI_API_KEY ||
     ''
   ).trim();
+  const rawOpenAiBaseUrl = (
+    env.OPENAI_BASE_URL ||
+    process.env.OPENAI_BASE_URL ||
+    'https://api.openai.com/v1/chat/completions'
+  ).trim();
   const rawAnthropicKey = (
     env.ANTHROPIC_API_KEY ||
     process.env.ANTHROPIC_API_KEY ||
@@ -627,6 +635,16 @@ export function createLiveRuntimeModelProvider(
   const rawXaiKey = (
     env.XAI_API_KEY ||
     process.env.XAI_API_KEY ||
+    ''
+  ).trim();
+  const rawXaiBaseUrl = (
+    env.XAI_BASE_URL ||
+    process.env.XAI_BASE_URL ||
+    'https://api.x.ai/v1/chat/completions'
+  ).trim();
+  const rawOpenRouterKey = (
+    env.OPENROUTER_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
     ''
   ).trim();
 
@@ -646,8 +664,11 @@ export function createLiveRuntimeModelProvider(
   return new LiveOnlineModelProvider({
     geminiApiKey: rawGeminiKey,
     openaiApiKey: rawOpenAiKey,
+    openaiBaseUrl: rawOpenAiBaseUrl,
     anthropicApiKey: rawAnthropicKey,
     xaiApiKey: rawXaiKey,
+    xaiBaseUrl: rawXaiBaseUrl,
+    openrouterApiKey: rawOpenRouterKey,
     defaultModel: geminiModel,
     preferEngine,
   });

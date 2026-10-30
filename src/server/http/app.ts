@@ -2,7 +2,15 @@ import crypto from 'node:crypto';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { asc, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { getPublicEnvSummary, parseEnv, type AppEnv } from '../config/env';
+import {
+  appendRuntimeLog,
+  getProviderKeyStatus,
+  getPublicEnvSummary,
+  getRuntimeLogs,
+  LOG_FILE_PATH,
+  parseEnv,
+  type AppEnv,
+} from '../config/env';
 import {
   createLiveRuntimeModelProvider,
   createModelProvider,
@@ -589,18 +597,17 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         canViewAudit = false;
       }
 
-      const hasGeminiKey = Boolean(
-        (env.AI_PROVIDER_API_KEY &&
-          env.AI_PROVIDER_API_KEY !== 'MY_GEMINI_API_KEY') ||
-          (env.GEMINI_API_KEY && env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY')
-      );
+      const providerKeys = getProviderKeyStatus(env);
 
       res.status(200).json({
         data: {
           actor,
           storageMode: ctx.storageMode,
           aiMode: env.AI_MODE,
-          hasGeminiKey,
+          hasGeminiKey: providerKeys.gemini,
+          providerKeys,
+          logFilePath: LOG_FILE_PATH,
+          runtimeLogs: getRuntimeLogs(50),
           personas,
           agents: orgAgents,
           agentVersions: orgVersions,
@@ -620,6 +627,18 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     } catch (err) {
       next(err);
     }
+  });
+
+  // 4b. Diagnostic Logs & Provider Key Status (`GET /api/v1/logs`)
+  app.get('/api/v1/logs', async (_req: Request, res: Response) => {
+    const env = parseEnv(deps.rawEnv ?? process.env);
+    res.status(200).json({
+      data: {
+        logFilePath: LOG_FILE_PATH,
+        providerKeys: getProviderKeyStatus(env),
+        logs: getRuntimeLogs(100),
+      },
+    });
   });
 
   function unauthenticatedError(): AuthorizationError {
@@ -1294,6 +1313,17 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
       );
       return;
     }
+
+    appendRuntimeLog({
+      level: 'ERROR',
+      component: 'http-api',
+      message: err instanceof Error ? err.message : 'Unexpected server error',
+      details: {
+        method: req.method,
+        path: req.path,
+        requestId,
+      },
+    });
 
     sendProblemDetails(
       res,

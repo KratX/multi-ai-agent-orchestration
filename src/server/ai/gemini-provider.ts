@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type, type GenerateContentParameters, type GenerateContentResponse } from '@google/genai';
+import { appendRuntimeLog } from '../config/env';
 import {
   extractRetrievedChunksFromMessages,
   MockModelProvider,
@@ -708,8 +709,11 @@ export type PreferredFreeAiEngine =
 export interface LiveOnlineModelProviderOptions {
   geminiApiKey?: string;
   openaiApiKey?: string;
+  openaiBaseUrl?: string;
   anthropicApiKey?: string;
   xaiApiKey?: string;
+  xaiBaseUrl?: string;
+  openrouterApiKey?: string;
   defaultModel?: string;
   preferEngine?: PreferredFreeAiEngine;
 }
@@ -719,15 +723,13 @@ export interface LiveOnlineModelProviderOptions {
  *
  * Routes requests across the 4 official free-tier cloud providers:
  * - Google Gemini Free Tier (`gemini-3-flash-preview`)
- * - OpenAI ChatGPT Free Tier (`gpt-4o-mini`)
- * - Anthropic Claude Free Tier (`claude-3-5-haiku-latest`)
- * - xAI Grok Free Tier (`grok-2-latest`)
+ * - OpenAI ChatGPT Free Tier (`gpt-4o-mini` via OpenAI or GitHub Models Free Tier)
+ * - Anthropic Claude Free Tier (`claude-3-5-haiku-latest` via Anthropic or OpenRouter)
+ * - xAI Grok Free Tier (`grok-2-latest` via xAI or OpenRouter)
  *
- * If the user selects a provider whose API key is configured in `.env`, it calls that
- * provider's native API directly. If that specific key is not yet set in `.env`, it
- * automatically routes through the active configured free-tier provider on the server
- * (such as `GeminiModelProvider` when `GEMINI_API_KEY` is present) so live runs
- * execute real online inference without failing.
+ * If no cloud API key is configured yet in `.env` on a local build, logs a clear
+ * diagnostic warning to `.local/logs/aegis-runtime.log` and `GET /api/v1/logs` and
+ * falls back to `MockModelProvider` so local runs never crash.
  */
 export class LiveOnlineModelProvider implements ModelProvider {
   public readonly providerName: string;
@@ -735,13 +737,17 @@ export class LiveOnlineModelProvider implements ModelProvider {
 
   private readonly geminiProvider: GeminiModelProvider | null = null;
   private readonly chatgptProvider: OpenAIChatGPTModelProvider | null = null;
-  private readonly claudeProvider: AnthropicClaudeModelProvider | null = null;
-  private readonly grokProvider: XaiGrokModelProvider | null = null;
+  private readonly claudeProvider: ModelProvider | null = null;
+  private readonly grokProvider: OpenAIChatGPTModelProvider | null = null;
   private readonly preferEngine: PreferredFreeAiEngine;
   private readonly fallbackEmbedder = new MockModelProvider();
 
   public constructor(options?: LiveOnlineModelProviderOptions) {
     this.preferEngine = options?.preferEngine ?? 'auto';
+    const cleanOpenRouter = (options?.openrouterApiKey ?? '').trim();
+    const hasOpenRouter = Boolean(
+      cleanOpenRouter && cleanOpenRouter !== 'replace-me'
+    );
 
     const cleanGemini = (options?.geminiApiKey ?? '').trim();
     if (
@@ -760,6 +766,15 @@ export class LiveOnlineModelProvider implements ModelProvider {
       this.chatgptProvider = new OpenAIChatGPTModelProvider({
         apiKey: cleanOpenAI,
         defaultModel: DEFAULT_CHATGPT_MODEL,
+        endpointUrl:
+          options?.openaiBaseUrl || 'https://api.openai.com/v1/chat/completions',
+      });
+    } else if (hasOpenRouter) {
+      this.chatgptProvider = new OpenAIChatGPTModelProvider({
+        apiKey: cleanOpenRouter,
+        providerLabel: 'openai-chatgpt (openrouter)',
+        defaultModel: 'openai/gpt-4o-mini',
+        endpointUrl: 'https://openrouter.ai/api/v1/chat/completions',
       });
     }
 
@@ -769,6 +784,13 @@ export class LiveOnlineModelProvider implements ModelProvider {
         apiKey: cleanAnthropic,
         defaultModel: DEFAULT_CLAUDE_MODEL,
       });
+    } else if (hasOpenRouter) {
+      this.claudeProvider = new OpenAIChatGPTModelProvider({
+        apiKey: cleanOpenRouter,
+        providerLabel: 'anthropic-claude (openrouter)',
+        defaultModel: 'anthropic/claude-3.5-haiku',
+        endpointUrl: 'https://openrouter.ai/api/v1/chat/completions',
+      });
     }
 
     const cleanXai = (options?.xaiApiKey ?? '').trim();
@@ -776,6 +798,15 @@ export class LiveOnlineModelProvider implements ModelProvider {
       this.grokProvider = new XaiGrokModelProvider({
         apiKey: cleanXai,
         defaultModel: DEFAULT_GROK_MODEL,
+        endpointUrl:
+          options?.xaiBaseUrl || 'https://api.x.ai/v1/chat/completions',
+      });
+    } else if (hasOpenRouter) {
+      this.grokProvider = new OpenAIChatGPTModelProvider({
+        apiKey: cleanOpenRouter,
+        providerLabel: 'xai-grok (openrouter)',
+        defaultModel: 'x-ai/grok-2-1212',
+        endpointUrl: 'https://openrouter.ai/api/v1/chat/completions',
       });
     }
 
@@ -788,7 +819,7 @@ export class LiveOnlineModelProvider implements ModelProvider {
     this.providerName =
       activeNames.length > 0
         ? activeNames.join('+')
-        : 'multi-provider-free-tier (gemini/chatgpt/claude/grok)';
+        : 'local-fallback (no .env cloud API key set)';
   }
 
   public async generate(input: ModelGenerateInput): Promise<ModelGenerateOutput> {
@@ -816,25 +847,86 @@ export class LiveOnlineModelProvider implements ModelProvider {
       }
     }
 
+    if (
+      this.preferEngine !== 'auto' &&
+      orderedCandidates.length > 0 &&
+      ((this.preferEngine === 'chatgpt-free' && !this.chatgptProvider) ||
+        (this.preferEngine === 'claude-free' && !this.claudeProvider) ||
+        (this.preferEngine === 'grok-free' && !this.grokProvider) ||
+        (this.preferEngine === 'gemini-free' && !this.geminiProvider))
+    ) {
+      appendRuntimeLog({
+        level: 'WARN',
+        component: 'LiveOnlineModelProvider',
+        message: `Requested engine "${this.preferEngine}" key is not set in .env; routing to configured fallback provider "${orderedCandidates[0]!.providerName}".`,
+        details: {
+          requestedEngine: this.preferEngine,
+          fallbackProvider: orderedCandidates[0]!.providerName,
+        },
+      });
+    }
+
     let lastError: unknown;
     for (const provider of orderedCandidates) {
       try {
-        return await provider.generate(input);
+        const result = await provider.generate(input);
+        appendRuntimeLog({
+          level: 'INFO',
+          component: 'LiveOnlineModelProvider',
+          message: `Completed live AI inference via ${result.providerName} (${result.modelName})`,
+          details: {
+            provider: result.providerName,
+            model: result.modelName,
+            finishReason: result.finishReason,
+            toolCallsCount: result.toolCalls.length,
+            totalTokens: result.usage.totalTokens,
+          },
+        });
+        return result;
       } catch (err) {
         lastError = err;
+        appendRuntimeLog({
+          level: 'ERROR',
+          component: 'LiveOnlineModelProvider',
+          message: `Provider "${provider.providerName}" failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          details: {
+            provider: provider.providerName,
+            preferEngine: this.preferEngine,
+          },
+        });
       }
     }
 
-    if (lastError instanceof Error) {
-      throw lastError;
-    }
+    // Zero-key or all-providers-exhausted graceful local fallback so local builds never fail
+    appendRuntimeLog({
+      level: 'WARN',
+      component: 'LiveOnlineModelProvider',
+      message:
+        orderedCandidates.length === 0
+          ? `No cloud API key found in .env for engine "${this.preferEngine}". Falling back to local deterministic MockModelProvider (aegis-mock-v1). Add GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, XAI_API_KEY, or OPENROUTER_API_KEY to .env for live cloud responses.`
+          : `All configured cloud providers failed (${
+              lastError instanceof Error ? lastError.message : 'unknown error'
+            }). Falling back to local MockModelProvider.`,
+      details: {
+        preferEngine: this.preferEngine,
+        configuredProvidersCount: orderedCandidates.length,
+      },
+    });
 
-    throw new Error(
-      'No free-tier AI provider API key is configured. Set GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or XAI_API_KEY in .env.'
-    );
+    const fallbackOutput = await this.fallbackEmbedder.generate(input);
+    if (fallbackOutput.finishReason === 'stop' && fallbackOutput.answer) {
+      return {
+        ...fallbackOutput,
+        answer: `[Local Fallback — No .env Cloud API Key Configured for ${this.preferEngine}] ${fallbackOutput.answer}`,
+      };
+    }
+    return fallbackOutput;
   }
 
   public async embedText(text: string, dimensions = 64): Promise<number[]> {
     return this.fallbackEmbedder.embedText(text, dimensions);
   }
 }
+

@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
+import { appendRuntimeLog } from '../../config/env';
 import type { AegisDatabase } from '../../db/client';
 import {
   agents,
@@ -672,6 +673,20 @@ export async function executeAgentRun(
         updatedAt: completedAt,
       })
       .where(eq(jobQueue.runId, initialRun.id));
+
+    appendRuntimeLog({
+      level: 'ERROR',
+      component: 'run-executor',
+      message: `Run ${initialRun.id.slice(0, 8)}... ${status} (${errorCode}): ${errorMessage}`,
+      details: {
+        runId: initialRun.id,
+        status,
+        errorCode,
+        errorMessage,
+        stepCount: stepIndex,
+        latencyMs,
+      },
+    });
 
     return updatedRun!;
   };

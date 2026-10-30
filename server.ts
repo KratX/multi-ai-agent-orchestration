@@ -1,8 +1,14 @@
+import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { parseEnv } from './src/server/config/env';
+import {
+  appendRuntimeLog,
+  getProviderKeyStatus,
+  LOG_FILE_PATH,
+  parseEnv,
+} from './src/server/config/env';
 import { createLiveRuntimeModelProvider } from './src/server/ai/model-provider';
 import { closeSharedDatabase, getSharedDatabase } from './src/server/db/client';
 import {
@@ -15,12 +21,13 @@ import { RuntimeWorker } from './src/server/worker/main';
  * Full-Stack Aegis Runtime Server (`server.ts`)
  *
  * Starts on port 3000 (`0.0.0.0`):
- * 1. Validates environment configuration (`parseEnv`).
+ * 1. Loads `.env` automatically via `dotenv/config` and validates configuration (`parseEnv`).
  * 2. Initializes persistent PGlite PostgreSQL (`PGLITE_DATA_DIR`, default `.local/aegis-db`).
  * 3. Seeds the Flagship Multi-Tenant Workspace on first boot if empty.
  * 4. Starts the background `RuntimeWorker` polling loop (`FOR UPDATE SKIP LOCKED`) wired to
- *    live online free AI (`GeminiModelProvider` `gemini-3-flash-preview` + `FreeOnlineModelProvider`).
- * 5. Mounts all `/api/v1/*` routes and serves the Vite React frontend.
+ *    free-tier cloud AI (`Gemini 3 Flash`, `ChatGPT gpt-4o-mini`, `Claude 3.5 Haiku`, `Grok 2`)
+ *    with automatic zero-key local fallback.
+ * 5. Mounts all `/api/v1/*` routes (including `/api/v1/logs`) and serves the Vite React UI.
  */
 
 export async function startAegisServer(port = 3000) {
@@ -31,6 +38,21 @@ export async function startAegisServer(port = 3000) {
   await ensureWorkspaceSeededWithPendingHitl(dbContext.db, { forceReset: false });
 
   const modelProvider = createLiveRuntimeModelProvider(env, { engine: 'auto' });
+  const keyStatus = getProviderKeyStatus(env);
+
+  appendRuntimeLog({
+    level: keyStatus.anyConfigured ? 'INFO' : 'WARN',
+    component: 'server.ts',
+    message: keyStatus.anyConfigured
+      ? `Aegis Runtime booted with active cloud AI provider (${modelProvider.providerName}).`
+      : `Aegis Runtime booted with 0 cloud API keys in .env; using local fallback until GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or XAI_API_KEY is added to .env.`,
+    details: {
+      storageMode: dbContext.storageMode,
+      logFilePath: LOG_FILE_PATH,
+      providerKeys: keyStatus,
+    },
+  });
+
   const worker = new RuntimeWorker({
     db: dbContext.db,
     modelProvider,
@@ -61,7 +83,7 @@ export async function startAegisServer(port = 3000) {
 
   const httpServer = app.listen(port, '0.0.0.0', () => {
     process.stdout.write(
-      `Aegis Runtime server listening on http://localhost:${port} (AI_MODE=${env.AI_MODE}, storage=${dbContext.storageMode})\n`
+      `Aegis Runtime server listening on http://localhost:${port} (AI=${modelProvider.providerName}, storage=${dbContext.storageMode}, logs=${LOG_FILE_PATH})\n`
     );
   });
 
