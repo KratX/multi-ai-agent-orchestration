@@ -114,7 +114,11 @@ interface OrdarisWorkflowAndHitlProps {
   selectedEngine: string;
   apiFetch: (url: string, init?: RequestInit) => Promise<Response>;
   onWorkspaceRefresh: () => Promise<void>;
-  onNotify: (message: string, tone?: 'success' | 'error' | 'info') => void;
+  onNotify: (
+    message: string,
+    tone?: 'success' | 'error' | 'info',
+    details?: string
+  ) => void;
   onSelectRunToInspect?: (runId: string) => void;
 }
 
@@ -228,8 +232,9 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
       const json = await res.json();
       if (!res.ok) {
         onNotify(
-          `RBAC / Execution Rejected (${res.status}): ${json?.error?.message || 'Permission denied'}`,
+          `RBAC / Execution Rejected (HTTP ${res.status}): ${json?.error?.message || json?.detail || 'Permission denied'}`,
           'error',
+          `Active Role: ${activeActorRole.toUpperCase()} • Required Permission: workflows:execute • Logged to Security Audit Ledger.`
         );
         await onWorkspaceRefresh();
         return;
@@ -258,14 +263,16 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
         setSelectedNodeId('approval-high-risk');
         setApprovalFilter('pending');
         onNotify(
-          `Workflow paused at HITL Gate (approval-high-risk) — Approval Request created.`,
+          `Workflow Paused at HITL Gate (approval-high-risk)`,
           'info',
+          `Risk expression (${customRiskExpr.trim() || '25 * 6'}) exceeded threshold (>= 100) • Run ID: ${String(data.runId || '').slice(0, 10)} • Awaiting Owner/Admin sign-off.`
         );
       } else {
         setSelectedNodeId('notify-audit');
         onNotify(
-          `Low-risk workflow bypassed HITL gate and completed all nodes automatically!`,
+          `Low-Risk Workflow Completed All 6 DAG Nodes Automatically`,
           'success',
+          `Risk expression (${customRiskExpr.trim() || '20 * 3'}) evaluated below 100 • Bypassed HITL gate and sealed audit event.`
         );
       }
       await onWorkspaceRefresh();
@@ -273,6 +280,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
       onNotify(
         err instanceof Error ? err.message : 'Failed to execute DAG workflow',
         'error',
+        'Check network connectivity or server logs.'
       );
     } finally {
       setExecutingWorkflow(false);
@@ -311,28 +319,32 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
           nodeCount: json.data.nodeCount,
         });
         onNotify(
-          '3-Color DFS Validator: DAG topology verified acyclic with deterministic topological order.',
+          '3-Color DFS Validator: Acyclic DAG Topology Verified',
           'success',
+          `Topological Order (${json.data.nodeCount} nodes): ${(json.data.topologicalOrder || []).join(' ➔ ')}`
         );
       } else {
+        const errDetail =
+          json?.data?.error ||
+          json?.error?.message ||
+          json?.detail ||
+          'Cycle detected in workflow graph';
         setDagValidationResult({
           mode: injectCycle ? 'cycle_test' : 'valid_dag',
           valid: false,
-          error:
-            json?.data?.error ||
-            json?.error?.message ||
-            'Cycle detected in workflow graph',
+          error: errDetail,
           nodeCount: nodesPayload.length,
         });
         onNotify(
-          `3-Color DFS Cycle Detector caught circular dependency: ${json?.data?.error || json?.error?.message}`,
+          `3-Color DFS Cycle Detector Blocked Circular Dependency`,
           'info',
+          `Rejected injected cycle (agent-summary ➔ calc-risk): ${errDetail}`
         );
       }
     } catch (err) {
       onNotify(
         err instanceof Error ? err.message : 'DAG topology validation failed',
-        'error',
+        'error'
       );
     } finally {
       setValidatingDag(false);
@@ -362,8 +374,9 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
       const json = await res.json();
       if (!res.ok) {
         onNotify(
-          `RBAC Enforcement (${res.status}): ${json?.error?.message || 'Role not permitted to decide HITL approvals'}`,
+          `RBAC Guardrail Blocked HITL Decision (HTTP ${res.status})`,
           'error',
+          `Role "${activeActorRole.toUpperCase()}" lacks permission "approvals:decide" (Owner or Admin required). Logged to Audit Ledger.`
         );
         await onWorkspaceRefresh();
         return;
@@ -371,9 +384,10 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
 
       onNotify(
         decision === 'approved'
-          ? 'HITL Approval granted — workflow resumed and completed remaining DAG nodes!'
-          : 'HITL Approval rejected — workflow run terminated and logged to audit ledger.',
+          ? 'HITL Approval Granted — Resumed & Completed Remaining DAG Nodes'
+          : 'HITL Approval Rejected — Workflow Run Terminated Safely',
         decision === 'approved' ? 'success' : 'info',
+        `Signed by ${activeActorRole.toUpperCase()} • Note: "${note.slice(0, 90)}"`
       );
       await onWorkspaceRefresh();
     } catch (err) {
@@ -403,8 +417,9 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
         if (!res.ok) {
           const json = await res.json();
           onNotify(
-            `Batch Approval halted (${res.status}): ${json?.error?.message || 'Forbidden'}`,
+            `Batch Approval Halted (HTTP ${res.status})`,
             'error',
+            `Role "${activeActorRole.toUpperCase()}" is not authorized for approvals:decide (${json?.error?.message || json?.detail || 'Forbidden'}).`
           );
           await onWorkspaceRefresh();
           return;
@@ -412,8 +427,9 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
         approvedCount += 1;
       }
       onNotify(
-        `Batch approved ${approvedCount} pending HITL request(s) and resumed associated workflow runs.`,
+        `Batch Approved ${approvedCount} Pending HITL Request(s)`,
         'success',
+        `Signed off by ${activeActorRole.toUpperCase()} • Resumed and completed all waiting workflow runs.`
       );
       await onWorkspaceRefresh();
     } finally {
@@ -443,41 +459,41 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       {/* Top Banner: Workflow Architecture & RBAC Posture */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-400">
+      <div className="rounded-2xl border border-slate-800/90 bg-slate-900/75 p-5 lg:p-6 flex flex-wrap items-center justify-between gap-4 shadow-xl">
+        <div className="flex items-start gap-3.5">
+          <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-400">
             <GitBranch className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-base font-bold text-white">
-                Deterministic DAG Workflow Engine & HITL Governance Queue
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h2 className="text-base sm:text-lg font-bold text-white">
+                Deterministic DAG Workflow Engine &amp; HITL Governance Queue
               </h2>
-              <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+              <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
                 {activeOrgName}
               </span>
-              <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
+              <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono bg-slate-800 text-slate-200 border border-slate-700">
                 6-Node Production Graph
               </span>
             </div>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs sm:text-sm text-slate-300 mt-1.5 leading-relaxed max-w-4xl">
               Validates acyclic graph topology via 3-color DFS, evaluates quantitative risk thresholds (`risk &gt;= 100`), and enforces role-gated Human-in-the-Loop (`Owner` / `Admin`) sign-off before executing high-impact remediation.
             </p>
           </div>
         </div>
 
         {/* Active Persona Permission Pill */}
-        <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-xs">
-          <Lock className="w-3.5 h-3.5 text-amber-400" />
-          <span className="text-slate-400">Active Role:</span>
+        <div className="flex items-center gap-2.5 bg-slate-950/90 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs">
+          <Lock className="w-4 h-4 text-amber-400" />
+          <span className="text-slate-300">Active Role:</span>
           <span className="font-mono font-bold uppercase text-white">
             {activeActorRole}
           </span>
           <span className="text-slate-600">|</span>
           <span
-            className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+            className={`px-2 py-0.5 rounded-md text-[11px] font-mono ${
               canExecuteWorkflow
                 ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
                 : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
@@ -486,7 +502,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
             workflows:execute {canExecuteWorkflow ? 'ALLOWED' : 'DENIED (403)'}
           </span>
           <span
-            className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+            className={`px-2 py-0.5 rounded-md text-[11px] font-mono ${
               canDecideApproval
                 ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
                 : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
@@ -498,15 +514,15 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
       </div>
 
       {/* Section 1: Clickable 6-Node Visual DAG Pipeline + Step Inspector */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-7">
         {/* Left 8 cols: Interactive 6-Node Pipeline & Launch Controls */}
-        <div className="lg:col-span-8 rounded-xl border border-slate-800 bg-slate-900/60 p-5 space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3.5">
+        <div className="lg:col-span-8 rounded-2xl border border-slate-800/90 bg-slate-900/70 p-5 lg:p-6 space-y-6 shadow-xl">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
             <div>
               <div className="text-xs font-mono uppercase tracking-wider text-indigo-400">
                 Interactive DAG Topology Map (Click Any Node to Inspect)
               </div>
-              <div className="text-sm font-semibold text-white mt-0.5">
+              <div className="text-base font-bold text-white mt-1">
                 {activeWorkflow
                   ? `${activeWorkflow.name} (v${activeWorkflow.latestVersionNumber} • ${activeWorkflow.slug})`
                   : 'Zero-Trust Incident & Cold-Chain Containment DAG (v1)'}
@@ -517,7 +533,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
               <select
                 value={activeWorkflow?.id || ''}
                 onChange={(e) => setSelectedWorkflowId(e.target.value)}
-                className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono"
+                className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 font-mono"
               >
                 {workflows.map((wf) => (
                   <option key={wf.id} value={wf.id}>
@@ -529,7 +545,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
           </div>
 
           {/* 6-Node Visual Pipeline Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {STANDARD_6_NODE_DAG.map((node, idx) => {
               const isSelected = node.id === selectedNodeId;
               const vStatus = getNodeVisualStatus(node.id);
@@ -548,18 +564,18 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
                   key={node.id}
                   type="button"
                   onClick={() => setSelectedNodeId(node.id)}
-                  className={`text-left rounded-xl p-3.5 border transition-all relative ${
+                  className={`text-left rounded-2xl p-4 border transition-all relative ${
                     isSelected
-                      ? 'bg-indigo-950/40 border-indigo-500 ring-1 ring-indigo-500/40 shadow-lg'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                      ? 'bg-indigo-950/45 border-indigo-500 ring-1 ring-indigo-500/40 shadow-lg'
+                      : 'bg-slate-950/80 border-slate-800 hover:border-slate-700'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-800">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="text-[11px] font-mono uppercase px-2 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800">
                       {node.type}
                     </span>
                     <span
-                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${badgeStyle}`}
+                      className={`text-[11px] font-mono px-2 py-0.5 rounded-md border ${badgeStyle}`}
                     >
                       {vStatus === 'waiting'
                         ? 'PAUSED AT HITL'
@@ -571,16 +587,16 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
                     </span>
                   </div>
 
-                  <div className="text-xs font-bold text-white flex items-center justify-between">
+                  <div className="text-sm font-bold text-white flex items-center justify-between">
                     <span>{node.label}</span>
                     {idx < STANDARD_6_NODE_DAG.length - 1 && (
-                      <ArrowRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <ArrowRight className="w-4 h-4 text-slate-500 shrink-0" />
                     )}
                   </div>
-                  <div className="text-[11px] font-mono text-indigo-300/90 mt-0.5">
+                  <div className="text-xs font-mono text-indigo-300/90 mt-1">
                     id: {node.id}
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1.5 line-clamp-2">
+                  <p className="text-xs text-slate-300 mt-2 leading-relaxed">
                     {node.description}
                   </p>
                 </button>

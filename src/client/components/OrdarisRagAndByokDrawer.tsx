@@ -90,6 +90,11 @@ interface SessionByokVaultDrawerProps {
   byokScopeKey?: string;
   providers: ByokProviderStatusItem[];
   onRefreshWorkspace: () => Promise<void>;
+  onNotify?: (
+    message: string,
+    tone?: 'success' | 'error' | 'info',
+    details?: string
+  ) => void;
 }
 
 export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
@@ -100,6 +105,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
   byokScopeKey,
   providers,
   onRefreshWorkspace,
+  onNotify,
 }) => {
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [showKeyMap, setShowKeyMap] = useState<Record<string, boolean>>({});
@@ -132,25 +138,39 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
       });
       const json = await res.json();
       if (!res.ok) {
+        const errMsg = `${res.status} ${json.code || 'ERROR'}: ${json.detail || 'Failed to save key'}`;
         setBanner({
           kind: 'error',
-          text: `${res.status} ${json.code || 'ERROR'}: ${json.detail || 'Failed to save key'}`,
+          text: errMsg,
         });
+        onNotify?.(
+          `BYOK Key Save Rejected (${providerId})`,
+          'error',
+          `${errMsg} • Scope: session:${demoSessionId.slice(0, 12)}`
+        );
         return;
       }
       setKeyInputs((prev) => ({ ...prev, [providerId]: '' }));
+      const okMsg = rawKey.trim()
+        ? `Saved AES-256-GCM encrypted Session BYOK key for "${providerId}".`
+        : `Cleared Session BYOK override for "${providerId}".`;
       setBanner({
         kind: 'success',
-        text: rawKey.trim()
-          ? `Saved AES-256-GCM encrypted Session BYOK key for "${providerId}".`
-          : `Cleared Session BYOK override for "${providerId}".`,
+        text: okMsg,
       });
+      onNotify?.(
+        okMsg,
+        'success',
+        `Cipher: AES-256-GCM + scrypt • Scope: session:${demoSessionId.slice(0, 12)} • Zero disk writes`
+      );
       await onRefreshWorkspace();
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Network error saving key';
       setBanner({
         kind: 'error',
-        text: err instanceof Error ? err.message : 'Network error saving key',
+        text: msg,
       });
+      onNotify?.('BYOK Vault Network Error', 'error', msg);
     } finally {
       setBusyProvider(null);
     }
@@ -167,22 +187,32 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
       });
       const json = await res.json();
       if (!res.ok) {
+        const errMsg = `${res.status}: ${json.detail || 'Verification failed'}`;
         setBanner({
           kind: 'error',
-          text: `${res.status}: ${json.detail || 'Verification failed'}`,
+          text: errMsg,
         });
+        onNotify?.(`Provider Verification Failed (${providerId})`, 'error', errMsg);
         return;
       }
+      const msgText = `${json.data?.message ?? 'Tested'}: "${json.data?.outputPreview ?? ''}"`;
       setBanner({
         kind: json.data?.verified ? 'success' : 'info',
-        text: `${json.data?.message ?? 'Tested'}: "${json.data?.outputPreview ?? ''}"`,
+        text: msgText,
       });
+      onNotify?.(
+        `Verified AI Provider "${providerId}"`,
+        json.data?.verified ? 'success' : 'info',
+        msgText
+      );
       await onRefreshWorkspace();
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Network error testing provider';
       setBanner({
         kind: 'error',
-        text: err instanceof Error ? err.message : 'Network error testing provider',
+        text: msg,
       });
+      onNotify?.('Provider Test Error', 'error', msg);
     } finally {
       setBusyProvider(null);
     }
@@ -198,25 +228,35 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
       });
       const json = await res.json();
       if (!res.ok) {
+        const errMsg = `${res.status}: ${json.detail || 'Failed to wipe session keys'}`;
         setBanner({
           kind: 'error',
-          text: `${res.status}: ${json.detail || 'Failed to wipe session keys'}`,
+          text: errMsg,
         });
+        onNotify?.('Failed to Wipe Session BYOK Keys', 'error', errMsg);
         return;
       }
       setKeyInputs({});
+      const wipeMsg = `Wiped ${json.data?.clearedCount ?? 0} Session BYOK key(s) from scope "${
+        json.data?.scopeKey ?? `session:${demoSessionId}`
+      }".`;
       setBanner({
         kind: 'info',
-        text: `Wiped ${json.data?.clearedCount ?? 0} Session BYOK key(s) from scope "${
-          json.data?.scopeKey ?? `session:${demoSessionId}`
-        }". Reverted to Server .env / Deterministic Simulation fallback.`,
+        text: `${wipeMsg} Reverted to Server .env / Deterministic Simulation fallback.`,
       });
+      onNotify?.(
+        wipeMsg,
+        'info',
+        'Reverted active credential resolution to Tier 2 (Server .env) / Tier 3 (Deterministic Simulation).'
+      );
       await onRefreshWorkspace();
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to wipe session keys';
       setBanner({
         kind: 'error',
-        text: err instanceof Error ? err.message : 'Failed to wipe session keys',
+        text: msg,
       });
+      onNotify?.('Session Vault Wipe Error', 'error', msg);
     } finally {
       setWipingAll(false);
     }
@@ -501,6 +541,11 @@ interface OrdarisRagKnowledgePanelProps {
   documents: KnowledgeDocumentItem[];
   onRefreshWorkspace: () => Promise<void>;
   onSendQueryToAgentStudio: (prompt: string) => void;
+  onNotify?: (
+    message: string,
+    tone?: 'success' | 'error' | 'info',
+    details?: string
+  ) => void;
 }
 
 export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> = ({
@@ -512,6 +557,7 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
   documents,
   onRefreshWorkspace,
   onSendQueryToAgentStudio,
+  onNotify,
 }) => {
   const isBeta = activeOrgSlug === 'beta-logistics';
 
@@ -637,6 +683,11 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
       kind: 'info',
       text: 'Loaded clean domain runbook preset. Click "Ingest & Chunk Document" to index into PostgreSQL.',
     });
+    onNotify?.(
+      'Loaded Clean Domain Runbook Preset',
+      'info',
+      `Target Tenant: ${activeOrgName} (${activeOrgSlug}) • Ready to chunk and index with 64-d SHA-256 vectors.`
+    );
   };
 
   const handleLoadAdversarialInjectionSample = () => {
@@ -655,6 +706,11 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
       kind: 'info',
       text: 'Loaded Threat T-03 Adversarial Prompt-Injection payload. Ingest it to observe automatic injection pattern flagging and <untrusted_knowledge_context> quarantine delimiters!',
     });
+    onNotify?.(
+      'Loaded Adversarial Prompt-Injection Sample (Threat T-03)',
+      'info',
+      'Contains "IGNORE PREVIOUS SYSTEM INSTRUCTIONS" + shell_exec probe. Click "Ingest & Chunk Document" to verify quarantine tagging.'
+    );
   };
 
   const handleFileUpload = async (file: File) => {
@@ -667,10 +723,16 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
         .replace(/\b\w/g, (c) => c.toUpperCase())
     );
     setDocContent(text);
+    const msg = `Loaded file "${file.name}" (${file.size} bytes). Click "Ingest & Chunk Document" to persist.`;
     setFeedback({
       kind: 'info',
-      text: `Loaded file "${file.name}" (${file.size} bytes). Click "Ingest & Chunk Document" to persist.`,
+      text: msg,
     });
+    onNotify?.(
+      `Loaded File "${file.name}"`,
+      'info',
+      `${file.size} bytes • Ready for chunking & SHA-256 checksum indexing.`
+    );
   };
 
   const handleIngestDocument = async (e: React.FormEvent) => {
@@ -696,34 +758,53 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
       });
       const json = await res.json();
       if (!res.ok) {
+        const errText = `RBAC / Validation Rejected (${res.status} ${json.code || ''}): ${
+          json.detail || 'Failed to ingest document'
+        }`;
         setFeedback({
           kind: 'error',
-          text: `RBAC / Validation Rejected (${res.status} ${json.code || ''}): ${
-            json.detail || 'Failed to ingest document'
-          }`,
+          text: errText,
         });
+        onNotify?.(
+          `Document Ingestion Blocked (HTTP ${res.status})`,
+          'error',
+          `Active Role: ${activeActorRole.toUpperCase()} • Required Permission: knowledge:write • ${json.detail || 'Forbidden'}`
+        );
         return;
       }
       const flaggedCount = json.data?.flaggedInjectionChunkCount ?? 0;
+      const chunkCount = json.data?.document?.chunkCount ?? 1;
+      const okText = `Ingested "${json.data?.document?.title}" into ${chunkCount} deterministic chunk(s) with 64-d SHA-256 embeddings${
+        flaggedCount > 0
+          ? ` — ⚠️ ${flaggedCount} chunk(s) flagged & quarantined for Prompt Injection (Threat T-03)!`
+          : '.'
+      }`;
       setFeedback({
         kind: 'success',
-        text: `Ingested "${json.data?.document?.title}" into ${
-          json.data?.document?.chunkCount ?? 1
-        } deterministic chunk(s) with 64-d SHA-256 embeddings${
-          flaggedCount > 0
-            ? ` — ⚠️ ${flaggedCount} chunk(s) flagged & quarantined for Prompt Injection (Threat T-03)!`
-            : '.'
-        }`,
+        text: okText,
       });
+      onNotify?.(
+        flaggedCount > 0
+          ? `Ingested & Quarantined Threat T-03 Payload ("${json.data?.document?.title}")`
+          : `Ingested Document "${json.data?.document?.title}"`,
+        'success',
+        `Indexed ${chunkCount} chunk(s) in ${activeOrgSlug} • SHA-256 Checksum verified${
+          flaggedCount > 0
+            ? ` • ${flaggedCount} chunk(s) wrapped in <untrusted_knowledge_context>`
+            : ''
+        }`
+      );
       setDocTitle('');
       setDocContent('');
       await onRefreshWorkspace();
       await executeSearch(docTitle.trim());
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to ingest document';
       setFeedback({
         kind: 'error',
-        text: err instanceof Error ? err.message : 'Failed to ingest document',
+        text: msg,
       });
+      onNotify?.('Document Ingestion Error', 'error', msg);
     } finally {
       setUploading(false);
     }
@@ -738,29 +819,43 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
       });
       const json = await res.json();
       if (!res.ok) {
+        const errText = `RBAC Guardrail (${res.status} ${json.code || 'FORBIDDEN'}): ${
+          json.detail || 'Role is not permitted to delete knowledge documents.'
+        }`;
         setFeedback({
           kind: 'error',
-          text: `RBAC Guardrail (${res.status} ${json.code || 'FORBIDDEN'}): ${
-            json.detail || 'Role is not permitted to delete knowledge documents.'
-          }`,
+          text: errText,
         });
+        onNotify?.(
+          `RBAC Guardrail Blocked Document Deletion (HTTP ${res.status})`,
+          'error',
+          `Role "${activeActorRole.toUpperCase()}" lacks permission "knowledge:delete" on "${title}". Logged to Audit Ledger.`
+        );
         await onRefreshWorkspace();
         return;
       }
+      const delText = `Deleted document "${title}" and cascaded deletion to its document_chunks.`;
       setFeedback({
         kind: 'info',
-        text: `Deleted document "${title}" and cascaded deletion to its document_chunks.`,
+        text: delText,
       });
+      onNotify?.(
+        `Deleted Document "${title}"`,
+        'info',
+        `Cascaded deletion to associated document_chunks in ${activeOrgSlug} (ID: ${docId.slice(0, 12)}…).`
+      );
       if (inspectedDoc?.document.id === docId) {
         setInspectedDoc(null);
       }
       await onRefreshWorkspace();
       await executeSearch();
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Delete failed';
       setFeedback({
         kind: 'error',
-        text: err instanceof Error ? err.message : 'Delete failed',
+        text: msg,
       });
+      onNotify?.('Document Delete Error', 'error', msg);
     }
   };
 
@@ -775,10 +870,12 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
       if (res.ok && json.data) {
         setInspectedDoc(json.data);
       } else {
+        const errMsg = `${res.status}: ${json.detail || 'Could not load document chunks'}`;
         setFeedback({
           kind: 'error',
-          text: `${res.status}: ${json.detail || 'Could not load document chunks'}`,
+          text: errMsg,
         });
+        onNotify?.('Failed to Load Document Chunks', 'error', errMsg);
       }
     } finally {
       setLoadingDocId(null);
@@ -795,14 +892,22 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
         },
       });
       const json = await res.json();
+      const status = res.status;
+      const code = json.code || 'DOCUMENT_NOT_FOUND';
+      const detail =
+        json.detail ||
+        'Cross-tenant access blocked with HTTP 404 anti-enumeration.';
       setCrossTenantProbeResult({
         attackerPersona: otherTenantPersona,
-        status: res.status,
-        code: json.code || 'DOCUMENT_NOT_FOUND',
-        detail:
-          json.detail ||
-          'Cross-tenant access blocked with HTTP 404 anti-enumeration.',
+        status,
+        code,
+        detail,
       });
+      onNotify?.(
+        `Cross-Tenant 404 Anti-Enumeration Verified (ADR-002)`,
+        'success',
+        `Attacker persona "${otherTenantPersona}" received HTTP ${status} (${code}) when probing document ${docId.slice(0, 12)}…`
+      );
       await onRefreshWorkspace();
     } catch (err) {
       setCrossTenantProbeResult({
@@ -827,10 +932,10 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
       ];
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {feedback && (
         <div
-          className={`px-4 py-3 rounded-xl border text-xs flex items-center justify-between ${
+          className={`px-5 py-3.5 rounded-2xl border text-sm flex items-center justify-between shadow-lg ${
             feedback.kind === 'success'
               ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
               : feedback.kind === 'error'
@@ -838,89 +943,89 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                 : 'bg-sky-950/40 border-sky-500/40 text-sky-200'
           }`}
         >
-          <span className="font-medium">{feedback.text}</span>
+          <span className="font-medium leading-relaxed">{feedback.text}</span>
           <button
             type="button"
             onClick={() => setFeedback(null)}
-            className="text-zinc-400 hover:text-white ml-3"
+            className="text-zinc-400 hover:text-white ml-4"
           >
             ✕
           </button>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-7">
         {/* LEFT COLUMN: Knowledge Corpus + Drag-and-Drop Ingestion Studio (5 cols) */}
-        <div className="lg:col-span-5 space-y-4">
+        <div className="lg:col-span-5 space-y-6">
           {/* Active Tenant Corpus List */}
-          <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4">
-            <div className="flex items-center justify-between mb-3">
+          <div className="bg-zinc-900/70 border border-zinc-800/90 rounded-2xl p-5 lg:p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200 flex items-center gap-2">
-                  <Database className="w-3.5 h-3.5 text-emerald-400" />
+                <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-100 flex items-center gap-2">
+                  <Database className="w-4 h-4 text-emerald-400" />
                   <span>{activeOrgName} — RAG Corpus ({documents.length})</span>
                 </h3>
-                <p className="text-[11px] text-zinc-400 mt-0.5">
-                  Scoped to <code className="text-emerald-300">{activeOrgSlug}</code> via composite PostgreSQL FKs.
+                <p className="text-xs text-zinc-300 mt-1">
+                  Scoped to <code className="text-emerald-300 font-semibold">{activeOrgSlug}</code> via composite PostgreSQL FKs.
                 </p>
               </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
+              <span className="px-2.5 py-1 rounded-lg text-xs font-mono bg-zinc-800 text-zinc-200 border border-zinc-700">
                 64-d SHA-256 Vectors
               </span>
             </div>
 
-            <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
               {documents.map((doc) => (
                 <div
                   key={doc.id}
-                  className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/90 hover:border-zinc-700 transition-colors"
+                  className="p-4 rounded-xl bg-zinc-950/85 border border-zinc-800/90 hover:border-zinc-700 transition-colors"
                 >
-                  <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-xs font-semibold text-white truncate">
+                      <div className="text-sm font-bold text-white truncate">
                         {doc.title}
                       </div>
-                      <div className="text-[10px] text-zinc-400 font-mono mt-0.5 flex flex-wrap items-center gap-2">
+                      <div className="text-xs text-zinc-300 font-mono mt-1 flex flex-wrap items-center gap-2">
                         <span>{doc.sourceFilename}</span>
                         <span>•</span>
-                        <span className="text-emerald-400">
+                        <span className="text-emerald-400 font-semibold">
                           {doc.chunkCount} chunk(s)
                         </span>
                         <span>•</span>
                         <span>{doc.byteSize} B</span>
                       </div>
-                      <div className="text-[10px] text-zinc-500 font-mono truncate mt-0.5">
+                      <div className="text-[11px] text-zinc-400 font-mono truncate mt-1">
                         sha256: {doc.checksumSha256.slice(0, 20)}…
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
                       <button
                         type="button"
                         onClick={() => handleInspectDocument(doc.id)}
                         disabled={loadingDocId === doc.id}
-                        className="px-2 py-1 rounded text-[10px] font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center gap-1"
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 flex items-center gap-1.5"
                       >
-                        <Layers className="w-3 h-3 text-sky-400" />
+                        <Layers className="w-3.5 h-3.5 text-sky-400" />
                         {loadingDocId === doc.id ? '...' : 'Inspect Chunks'}
                       </button>
                       <button
                         type="button"
                         onClick={() => handleDeleteDocument(doc.id, doc.title)}
-                        className="p-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                        className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30"
                         title={
                           activeActorRole === 'viewer'
                             ? 'Click to test RBAC 403 Forbidden for Viewer role'
                             : 'Delete document and cascade chunks'
                         }
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
                 </div>
               ))}
               {documents.length === 0 && (
-                <div className="text-xs text-zinc-500 py-6 text-center">
+                <div className="text-sm text-zinc-400 py-8 text-center">
                   No documents indexed for this organization yet.
                 </div>
               )}
@@ -930,7 +1035,7 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
           {/* Document Ingestion & Adversarial Injection Tester */}
           <form
             onSubmit={handleIngestDocument}
-            className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 space-y-3"
+            className="bg-zinc-900/70 border border-zinc-800/90 rounded-2xl p-5 lg:p-6 space-y-4 shadow-xl"
           >
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200 flex items-center gap-2">
@@ -1041,22 +1146,22 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
         </div>
 
         {/* RIGHT COLUMN: Hybrid FTS + Vector Search & 3-Part Score Breakdown (7 cols) */}
-        <div className="lg:col-span-7 bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 flex flex-col space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="lg:col-span-7 bg-zinc-900/70 border border-zinc-800/90 rounded-2xl p-5 lg:p-6 flex flex-col space-y-5 shadow-xl">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-200 flex items-center gap-2">
-                <Search className="w-3.5 h-3.5 text-emerald-400" />
+              <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-100 flex items-center gap-2">
+                <Search className="w-4 h-4 text-emerald-400" />
                 <span>Hybrid FTS + 64-d Vector Cosine Retrieval Inspector</span>
               </h3>
-              <p className="text-[11px] text-zinc-400 mt-0.5">
-                Formula: <code className="text-emerald-300">0.45 × FTS + 0.40 × Lexical + 0.15 × VectorCosine</code>
+              <p className="text-xs text-zinc-300 mt-1">
+                Formula: <code className="text-emerald-300 font-semibold">0.45 × FTS + 0.40 × Lexical + 0.15 × VectorCosine</code>
               </p>
             </div>
 
             {/* Top-K & Retrieval Mode Controls */}
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1">
-                <span className="text-[10px] text-zinc-400 font-mono">Mode:</span>
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded-xl px-2.5 py-1.5">
+                <span className="text-xs text-zinc-400 font-mono">Mode:</span>
                 {(['hybrid', 'fts', 'vector'] as const).map((m) => (
                   <button
                     key={m}
@@ -1065,7 +1170,7 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                       setRetrievalMode(m);
                       void executeSearch(searchQuery, m, topK);
                     }}
-                    className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase transition-colors ${
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold uppercase transition-colors ${
                       retrievalMode === m
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                         : 'text-zinc-400 hover:text-zinc-200'
@@ -1076,8 +1181,8 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                 ))}
               </div>
 
-              <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1">
-                <span className="text-[10px] text-zinc-400 font-mono">Top-K:</span>
+              <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded-xl px-2.5 py-1.5">
+                <span className="text-xs text-zinc-400 font-mono">Top-K:</span>
                 {[1, 3, 5, 8].map((k) => (
                   <button
                     key={k}
@@ -1086,7 +1191,7 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                       setTopK(k);
                       void executeSearch(searchQuery, retrievalMode, k);
                     }}
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                    className={`px-2 py-1 rounded-lg text-xs font-mono ${
                       topK === k
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                         : 'text-zinc-400 hover:text-zinc-200'
@@ -1100,7 +1205,7 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
           </div>
 
           {/* Search Input Bar */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <input
               type="text"
               value={searchQuery}
@@ -1109,21 +1214,21 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                 if (e.key === 'Enter') void executeSearch();
               }}
               placeholder="Enter hybrid search query..."
-              className="flex-1 px-3.5 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500/60"
+              className="flex-1 px-4 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500/60"
             />
             <button
               type="button"
               onClick={() => void executeSearch()}
               disabled={searching}
-              className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+              className="px-5 py-2.5 rounded-xl text-sm font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-lg shadow-emerald-600/20"
             >
               {searching ? 'Searching...' : 'Search RAG'}
             </button>
           </div>
 
           {/* Preset Query Chips */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] text-zinc-500 font-mono">Presets:</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-zinc-400 font-mono">Presets:</span>
             {presetQueries.map((pq, idx) => (
               <button
                 key={idx}
@@ -1132,7 +1237,7 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                   setSearchQuery(pq);
                   void executeSearch(pq);
                 }}
-                className="px-2 py-0.5 rounded-md text-[10px] bg-zinc-950 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 truncate max-w-xs"
+                className="px-2.5 py-1 rounded-lg text-xs bg-zinc-950 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 truncate max-w-sm"
               >
                 {pq}
               </button>
@@ -1140,7 +1245,7 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
           </div>
 
           {/* Ranked Chunks List */}
-          <div className="flex-1 space-y-3 max-h-[430px] overflow-y-auto pr-1">
+          <div className="flex-1 space-y-4 max-h-[520px] overflow-y-auto pr-1">
             {searchResults.map((chunk, idx) => {
               const combinedPct = Math.min(100, Math.round((chunk.score ?? 0) * 100));
               const ftsPct = Math.min(100, Math.round((chunk.ftsScore ?? 0) * 100));
@@ -1154,34 +1259,34 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
               return (
                 <div
                   key={chunk.chunkId}
-                  className={`p-3.5 rounded-xl border transition-all ${
+                  className={`p-4 lg:p-5 rounded-2xl border transition-all ${
                     chunk.containsInjectionPattern
                       ? 'bg-amber-950/15 border-amber-500/40'
-                      : 'bg-zinc-950/80 border-zinc-800'
+                      : 'bg-zinc-950/85 border-zinc-800'
                   }`}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                         #{idx + 1} • Score {(chunk.score ?? 0).toFixed(3)}
                       </span>
-                      <span className="text-xs font-semibold text-white">
+                      <span className="text-sm font-bold text-white">
                         {chunk.documentTitle}
                       </span>
-                      <span className="text-[10px] font-mono text-zinc-400">
+                      <span className="text-xs font-mono text-zinc-400">
                         [chunk #{chunk.chunkIndex} • {chunk.tokenCount} tok]
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-2">
                       {chunk.containsInjectionPattern ? (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-                          <ShieldAlert className="w-3 h-3" />
+                        <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5">
+                          <ShieldAlert className="w-3.5 h-3.5" />
                           Threat T-03 Quarantined
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                          <ShieldCheck className="w-3 h-3" />
+                        <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
+                          <ShieldCheck className="w-3.5 h-3.5" />
                           Clean Provenance
                         </span>
                       )}
@@ -1192,7 +1297,7 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                             isShowingWrapped ? null : chunk.chunkId
                           )
                         }
-                        className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700"
+                        className="px-2.5 py-1 rounded-lg text-xs font-mono bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700"
                       >
                         {isShowingWrapped
                           ? 'Hide XML Envelope'
@@ -1205,24 +1310,24 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                             `Search knowledge base for ${searchQuery} and summarize with verified citations.`
                           )
                         }
-                        className="px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 flex items-center gap-1"
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 flex items-center gap-1"
                       >
                         <span>Run Agent With Context</span>
-                        <ArrowRight className="w-3 h-3" />
+                        <ArrowRight className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
 
                   {/* 3-Part Score Breakdown Bars */}
-                  <div className="mt-2.5 grid grid-cols-4 gap-2 bg-zinc-900/70 p-2 rounded-lg border border-zinc-800/80 text-[10px] font-mono">
+                  <div className="mt-3 grid grid-cols-4 gap-3 bg-zinc-900/75 p-3 rounded-xl border border-zinc-800/80 text-xs font-mono">
                     <div>
-                      <div className="flex justify-between text-zinc-400">
+                      <div className="flex justify-between text-zinc-300">
                         <span>Hybrid</span>
-                        <span className="text-emerald-300">
+                        <span className="text-emerald-300 font-semibold">
                           {(chunk.score ?? 0).toFixed(3)}
                         </span>
                       </div>
-                      <div className="h-1.5 bg-zinc-800 rounded-full mt-1 overflow-hidden">
+                      <div className="h-2 bg-zinc-800 rounded-full mt-1.5 overflow-hidden">
                         <div
                           className="h-full bg-emerald-400"
                           style={{ width: `${combinedPct}%` }}
@@ -1230,13 +1335,13 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                       </div>
                     </div>
                     <div>
-                      <div className="flex justify-between text-zinc-400">
+                      <div className="flex justify-between text-zinc-300">
                         <span>FTS (45%)</span>
-                        <span className="text-sky-300">
+                        <span className="text-sky-300 font-semibold">
                           {(chunk.ftsScore ?? 0).toFixed(3)}
                         </span>
                       </div>
-                      <div className="h-1.5 bg-zinc-800 rounded-full mt-1 overflow-hidden">
+                      <div className="h-2 bg-zinc-800 rounded-full mt-1.5 overflow-hidden">
                         <div
                           className="h-full bg-sky-400"
                           style={{ width: `${ftsPct}%` }}
@@ -1244,13 +1349,13 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                       </div>
                     </div>
                     <div>
-                      <div className="flex justify-between text-zinc-400">
+                      <div className="flex justify-between text-zinc-300">
                         <span>Lexical (40%)</span>
-                        <span className="text-violet-300">
+                        <span className="text-violet-300 font-semibold">
                           {(chunk.lexicalOverlapScore ?? 0).toFixed(3)}
                         </span>
                       </div>
-                      <div className="h-1.5 bg-zinc-800 rounded-full mt-1 overflow-hidden">
+                      <div className="h-2 bg-zinc-800 rounded-full mt-1.5 overflow-hidden">
                         <div
                           className="h-full bg-violet-400"
                           style={{ width: `${lexPct}%` }}
@@ -1258,13 +1363,13 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                       </div>
                     </div>
                     <div>
-                      <div className="flex justify-between text-zinc-400">
+                      <div className="flex justify-between text-zinc-300">
                         <span>Vector (15%)</span>
-                        <span className="text-amber-300">
+                        <span className="text-amber-300 font-semibold">
                           {(chunk.vectorScore ?? 0).toFixed(3)}
                         </span>
                       </div>
-                      <div className="h-1.5 bg-zinc-800 rounded-full mt-1 overflow-hidden">
+                      <div className="h-2 bg-zinc-800 rounded-full mt-1.5 overflow-hidden">
                         <div
                           className="h-full bg-amber-400"
                           style={{ width: `${vecPct}%` }}
@@ -1274,7 +1379,7 @@ export const OrdarisRagKnowledgePanel: React.FC<OrdarisRagKnowledgePanelProps> =
                   </div>
 
                   {/* Chunk Content or Wrapped Untrusted XML Delimiter */}
-                  <pre className="mt-2.5 p-2.5 rounded-lg bg-zinc-900/90 border border-zinc-800 text-[11px] text-zinc-200 font-mono whitespace-pre-wrap leading-relaxed">
+                  <pre className="mt-3 p-3.5 rounded-xl bg-zinc-900/95 border border-zinc-800 text-xs sm:text-sm text-zinc-100 font-mono whitespace-pre-wrap leading-relaxed">
                     {isShowingWrapped
                       ? chunk.wrappedContent ||
                         `<untrusted_knowledge_context chunk_id="${chunk.chunkId}" document_id="${chunk.documentId}" document_title="${chunk.documentTitle}"${

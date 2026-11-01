@@ -166,7 +166,11 @@ interface OrdarisGovernanceAndFinopsProps {
   selectedEngine: string;
   apiFetch: (url: string, init?: RequestInit) => Promise<Response>;
   onWorkspaceRefresh: () => Promise<void>;
-  onNotify: (message: string, tone?: 'success' | 'error' | 'info') => void;
+  onNotify: (
+    message: string,
+    tone?: 'success' | 'error' | 'info',
+    details?: string
+  ) => void;
   onSelectRunToInspect?: (runId: string) => void;
 }
 
@@ -225,16 +229,20 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
       const json = await res.json();
       if (!res.ok) {
         onNotify(
-          `Eval Run Blocked (${res.status}): ${json?.error?.message || 'Forbidden'}`,
+          `Eval Run Blocked (HTTP ${res.status}): ${json?.error?.message || json?.detail || 'Forbidden'}`,
           'error',
+          `Active Role: ${activeActorRole.toUpperCase()} • Required Permission: evals:run • Logged to Security Audit Ledger.`
         );
         await onWorkspaceRefresh();
         return;
       }
       const passPct = Math.round((json.data?.passRate ?? 1) * 100);
       onNotify(
-        `Eval Suite completed on ${evalEngine}: ${passPct}% pass rate (${json.data?.passedCases}/${json.data?.totalCases} cases).`,
+        `Eval Suite Completed on "${evalEngine}" — ${passPct}% Pass Rate`,
         passPct >= slaThreshold ? 'success' : 'info',
+        `Passed ${json.data?.passedCases}/${json.data?.totalCases} golden cases • SLA Gate (${slaThreshold}%): ${
+          passPct >= slaThreshold ? 'PROMOTED ✓' : 'HALTED ⚠️'
+        }`
       );
       await onWorkspaceRefresh();
     } catch (err) {
@@ -263,15 +271,17 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
       const json = await res.json();
       if (!res.ok) {
         onNotify(
-          `RBAC / Governance Boundary (${res.status}): ${json?.error?.message || 'Operation denied'}`,
+          `RBAC / Governance Safeguard Blocked (HTTP ${res.status})`,
           'error',
+          `${json?.error?.message || json?.detail || 'Operation denied'} • Active Role: ${activeActorRole.toUpperCase()}`
         );
         await onWorkspaceRefresh();
         return;
       }
       onNotify(
-        `Updated member ${payload.email} with role ${payload.role.toUpperCase()}.`,
+        `Updated Member "${payload.email}" ➔ ${payload.role.toUpperCase()}`,
         'success',
+        `Organization: ${activeOrgName} • Role assignment persisted in memberships table.`
       );
       await onWorkspaceRefresh();
     } catch (err) {
@@ -290,13 +300,18 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
       const json = await res.json();
       if (!res.ok) {
         onNotify(
-          `Safeguard / RBAC Blocked (${res.status}): ${json?.error?.message || 'Cannot remove member'}`,
+          `Safeguard / RBAC Blocked Member Removal (HTTP ${res.status})`,
           'error',
+          `${json?.error?.message || json?.detail || 'Cannot remove member'} • Target: ${email}`
         );
         await onWorkspaceRefresh();
         return;
       }
-      onNotify(`Removed ${email} from ${activeOrgName}.`, 'info');
+      onNotify(
+        `Removed Member "${email}"`,
+        'info',
+        `Revoked workspace membership from ${activeOrgName} and recorded audit event.`
+      );
       await onWorkspaceRefresh();
     } catch (err) {
       onNotify(err instanceof Error ? err.message : 'Failed to remove member', 'error');
@@ -314,8 +329,9 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
       if (res.ok && json.data) {
         setIsolationReport(json.data);
         onNotify(
-          `4-Point Cross-Tenant Isolation Verified (${json.data.passedChecks}/${json.data.totalChecks} checks passed).`,
+          `4-Point Cross-Tenant Isolation Verified (${json.data.passedChecks}/${json.data.totalChecks} Passed)`,
           'success',
+          'Verified ADR-002 HTTP 404 anti-enumeration across Agents, Runs, Knowledge Documents, and Audit Ledger.'
         );
       } else {
         onNotify(
@@ -375,7 +391,11 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
     a.download = `ordaris-audit-ledger-${Date.now()}.${format}`;
     a.click();
     URL.revokeObjectURL(url);
-    onNotify(`Exported ${filteredAuditEvents.length} audit events as ${format.toUpperCase()}.`, 'success');
+    onNotify(
+      `Exported ${filteredAuditEvents.length} Audit Events as ${format.toUpperCase()}`,
+      'success',
+      `Included SHA-256 event integrity seals for ${activeOrgName}.`
+    );
   };
 
   // Monthly FinOps Scale projections
@@ -384,59 +404,59 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
   const monthlyMillions = monthlyEffectiveTokens / 1_000_000;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Top Sub-Tab Selector Bar */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="rounded-2xl border border-slate-800/90 bg-slate-900/75 p-4 flex flex-wrap items-center justify-between gap-3.5 shadow-xl">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
             onClick={() => setSubTab('evals')}
-            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
               subTab === 'evals'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
-                : 'bg-slate-950/70 text-slate-300 hover:bg-slate-800 border border-slate-800'
+                : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 border border-slate-800'
             }`}
           >
-            <Award className="w-3.5 h-3.5" />
-            <span>1. Evals & Regression Gate</span>
+            <Award className="w-4 h-4" />
+            <span>1. Evals &amp; Regression Gate</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('finops')}
-            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
               subTab === 'finops'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
-                : 'bg-slate-950/70 text-slate-300 hover:bg-slate-800 border border-slate-800'
+                : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 border border-slate-800'
             }`}
           >
-            <DollarSign className="w-3.5 h-3.5" />
-            <span>2. FinOps Ledger & Scale Calculator</span>
+            <DollarSign className="w-4 h-4" />
+            <span>2. FinOps Ledger &amp; Scale Calculator</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('rbac')}
-            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
               subTab === 'rbac'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
-                : 'bg-slate-950/70 text-slate-300 hover:bg-slate-800 border border-slate-800'
+                : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 border border-slate-800'
             }`}
           >
-            <Users className="w-3.5 h-3.5" />
-            <span>3. Team RBAC & 23-Action Matrix ({members.length})</span>
+            <Users className="w-4 h-4" />
+            <span>3. Team RBAC &amp; 23-Action Matrix ({members.length})</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('audit')}
-            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
               subTab === 'audit'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
-                : 'bg-slate-950/70 text-slate-300 hover:bg-slate-800 border border-slate-800'
+                : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 border border-slate-800'
             }`}
           >
-            <ShieldCheck className="w-3.5 h-3.5" />
+            <ShieldCheck className="w-4 h-4" />
             <span>
               4. Security Audit Ledger ({auditEvents.filter((e) => e.outcome === 'denied').length} Denied)
             </span>
@@ -446,9 +466,9 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         <button
           type="button"
           onClick={handleRunIsolationVerifier}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-bold transition-all"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs sm:text-sm font-bold transition-all"
         >
-          <ShieldCheck className="w-3.5 h-3.5" />
+          <ShieldCheck className="w-4 h-4" />
           <span>Verify 4-Point Tenant Isolation</span>
         </button>
       </div>
@@ -1299,7 +1319,11 @@ interface OrdarisEngineMatrixAndLogsProps {
   onSelectEngine: (engine: string) => void;
   onOpenByokDrawer: () => void;
   apiFetch: (url: string, init?: RequestInit) => Promise<Response>;
-  onNotify: (message: string, tone?: 'success' | 'error' | 'info') => void;
+  onNotify: (
+    message: string,
+    tone?: 'success' | 'error' | 'info',
+    details?: string
+  ) => void;
 }
 
 export const OrdarisEngineMatrixAndLogsPanel: React.FC<OrdarisEngineMatrixAndLogsProps> = ({

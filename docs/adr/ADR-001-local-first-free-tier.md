@@ -1,38 +1,38 @@
-# ADR-001: Local-First and Free-Tier Portfolio Constraints (`PLAN-004`)
+# ADR-001: Local-First, Zero-Required-Spend & 3-Tier BYOK AI Resolution (`PLAN-004`)
 
-- **Status:** Accepted
-- **Date:** 2026-10-25
+- **Status:** Accepted & Implemented (`v1.0.0-demo`)
+- **Date:** 2026-10-31
 - **Ticket:** `PLAN-004`
 
 ---
 
 ## 1. Context
 
-We are building **Aegis Runtime**, a portfolio-grade AI Agent Platform designed to demonstrate senior full-stack and AI systems engineering (multi-tenant isolation, immutable versioning, server-authorized tool execution, durable background job queues, RAG with source citations, and visual workflow validation).
+We are building **Ordaris (`v1.0.0-demo`)**, an enterprise-grade multi-tenant AI Agent, Hybrid RAG, Workflow DAG, HITL Governance & FinOps Platform designed to demonstrate senior full-stack and AI systems engineering (multi-tenant isolation, immutable versioning, server-authorized tool execution, durable background job queues, RAG with verified source citations, and visual workflow validation).
 
 Many AI portfolio projects depend on:
-- Paid LLM API keys (OpenAI, Anthropic, or Gemini paid tiers) for basic execution.
+- Paid LLM API keys (OpenAI, Anthropic, or Gemini paid tiers) just to boot or run tests.
 - Paid or credit-card-gated managed services (Redis Cloud, Temporal Cloud, Pinecone, AWS S3, Datadog).
-- Hosted database free tiers that sleep after inactivity, expire after 30–90 days, or fail when a recruiter clones or visits the project months later.
+- Hosted database free tiers that sleep after inactivity, expire after 30–90 days, or fail when an evaluator clones or visits the project months later.
 
-If a hiring manager or engineer clones the repository—or explores the demo—and hits an expired API key, a sleeping database error, or a required cloud credit card setup, the portfolio demonstration fails immediately.
+At the same time, evaluators who *do* have a free-tier cloud API key (`Gemini`, `ChatGPT`, `Claude`, `Grok`, or `OpenRouter`) want to test real live LLM inference side-by-side with the deterministic engine without modifying code or committing secrets.
 
 ---
 
 ## 2. Decision
 
-We adopt a strict **Zero-Required-Spend, Local-First Architecture**:
+We adopt a strict **Zero-Required-Spend, Local-First Architecture with 3-Tier AI Key Resolution**:
 
-1. **Deterministic Mock AI by Default (`AI_MODE=demo`)**:
-   - The application boots, runs its full test suite, and executes end-to-end multi-step agent and workflow runs using a deterministic `MockModelProvider` with zero network calls and zero API keys required.
-   - Real LLM providers (`AI_MODE=provider`) are implemented strictly as optional server-side adapters behind the `ModelProvider` interface.
+1. **3-Tier AI Key Resolution Hierarchy (`src/server/ai/provider-factory.ts`)**:
+   - **Tier 1 — Session-Scoped AES-256-GCM BYOK Vault (`src/server/security/session-key-vault.ts`)**: Visitors can enter free-tier keys (`gemini`, `chatgpt`, `claude`, `grok`, `openrouter`) in the UI's Session BYOK Drawer. Keys are encrypted in server RAM using `aes-256-gcm` scoped to `x-ordaris-demo-session` with a 2-hour TTL.
+   - **Tier 2 — Server `.env` Fallback**: Optional server-side environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`).
+   - **Tier 3 — Deterministic Simulation Engine (`MockModelProvider`, `AI_MODE=demo` default)**: The application boots, runs its full 104-test suite, and executes end-to-end multi-step agent, RAG, and workflow runs with **zero network calls and zero API keys required**.
 2. **PostgreSQL as the Single Infrastructure Dependency**:
-   - We use PostgreSQL (via local `docker-compose.yml` or embedded `PGlite` for instant zero-daemon local execution and tests) for relational data, transactional job queuing (`FOR UPDATE SKIP LOCKED`), append-only event replay (`run_events`), and full-text document search (`tsvector`).
-   - We do **not** require Redis, Kafka, Temporal, or a commercial vector database for the MVP.
+   - We use PostgreSQL (via embedded file-backed `PGlite` in `.local/ordaris-db` for instant zero-daemon local execution, or `docker-compose.yml` for external Postgres 16) for all 18 relational tables, transactional job queuing (`FOR UPDATE SKIP LOCKED`), append-only event replay (`run_events`), and hybrid `tsvector` + 64-D cosine vector RAG.
 3. **Local Opaque File Storage in Development**:
-   - Uploaded knowledge documents are stored on the local filesystem under `.local/uploads/` using opaque UUID keys (`<orgId>/<uuid>.bin`), avoiding mandatory AWS S3 / cloud object storage accounts.
-4. **Honest Labeling of Simulated vs. Live Telemetry**:
-   - Every run and usage record stores `source: 'mock' | 'provider' | 'local'`. Mock token counts and costs are explicitly labeled as simulated in the UI and API responses.
+   - Uploaded knowledge documents are stored under `.local/uploads/` using opaque UUID keys (`<orgId>/<uuid>.bin`), avoiding mandatory cloud object storage accounts.
+4. **Honest FinOps Labeling of Simulated vs. Live Telemetry**:
+   - Every `usage_events` row explicitly records `provider` and `is_estimated` (`true` for deterministic simulation, `false` for live cloud API calls).
 
 ---
 
@@ -40,32 +40,17 @@ We adopt a strict **Zero-Required-Spend, Local-First Architecture**:
 
 ### Alternative A: Require an External LLM API Key for All Runs
 - **Pros:** Slightly less code than maintaining deterministic mock scenarios.
-- **Cons:** Breaks CI without secret injection, costs money on every test run, makes tests non-deterministic, and prevents recruiters from running the repo locally without spending their own API credits.
+- **Cons:** Breaks CI without secret injection, costs money on every test run, makes tests non-deterministic, and prevents evaluators from running the repo locally with zero setup.
 - **Verdict:** Rejected.
 
-### Alternative B: Use Redis / BullMQ + Pinecone + S3 Free Tiers
-- **Pros:** Familiar distributed-systems stack.
-- **Cons:** Requires 3+ external cloud accounts just to boot locally; free tiers frequently expire or pause; introduces dual-write consistency gaps between PostgreSQL and Redis unless an outbox pattern is added.
-- **Verdict:** Rejected for MVP.
+### Alternative B: Store Visitor BYOK Keys in Browser `localStorage` and Call LLMs from the Client
+- **Pros:** No server key vault needed.
+- **Cons:** Exposes raw API keys to XSS, bypasses server-enforced tool gateways and citation verification, and violates server-authoritative execution boundaries.
+- **Verdict:** Rejected in favor of the server-side AES-256-GCM Session BYOK Vault (`Threat T-08`).
 
 ---
 
-## 4. Consequences & Trade-Offs
+## 4. Consequences & Planned Evolution (`v1.1+`)
 
-### Positive
-- **100% Reproducible Clean Clone**: Anyone can clone the repo and run tests and demo flows immediately with zero cloud accounts or API keys.
-- **Deterministic CI & Fault Testing**: `MockModelProvider` allows deterministic tests for tool rejection, malformed arguments, transient retry recovery, and citation verification.
-- **Transactional Simplicity**: Enqueuing a job and creating a run happen in a single PostgreSQL ACID transaction.
-
-### Negative / Limitations
-- **Bounded Queue Throughput**: A PostgreSQL table queue with `FOR UPDATE SKIP LOCKED` is ideal for portfolio and modest production workloads (`1–10` workers), not tens of thousands of jobs per second.
-- **Lexical vs. Semantic Search Baseline**: PostgreSQL `tsvector` full-text search matches keywords and stems rather than dense vector embeddings unless an optional embedding adapter is enabled.
-
----
-
-## 5. Revisit Criteria
-
-We will revisit this ADR only after the MVP passes all Phase 1–13 gates if:
-1. Measured queue contention in PostgreSQL exceeds acceptable latency under target load.
-2. A specific evaluation dataset demonstrates that `tsvector` full-text retrieval is insufficient and requires `pgvector` embeddings.
-
+- **100% Reproducible Clean Clone**: Anyone can clone the repo and run `pnpm test` and `pnpm dev` immediately with zero cloud accounts or API keys, or optionally test live cloud models via the Session BYOK Drawer.
+- **Planned `v1.1` KMS Extension**: Add optional KMS envelope encryption (`AWS KMS` / `GCP Cloud KMS`) for persistent organization-level keys in production (`DEMO_MODE=false`), and optional `pgvector` HNSW indexes (`v1.2`) when running on external PostgreSQL 16.
