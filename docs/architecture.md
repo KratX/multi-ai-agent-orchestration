@@ -11,14 +11,14 @@ Most portfolio AI projects are thin wrappers around a chat completion endpoint: 
 
 **Ordaris Runtime (`v1.0.0-demo`)** is architected around **observable, bounded, and multi-tenant execution**:
 
-1. **Strict Multi-Tenant Isolation & 8-Persona RBAC**: Every domain record (`agents`, `agent_versions`, `runs`, `job_queue`, `knowledge_documents`, `workflows`, `approval_requests`, `usage_events`, `eval_experiments`) is owned by an `organization_id` and enforced by both composite PostgreSQL foreign keys and a central server-side 23-permission policy engine (`src/server/policies/authorization.ts`). Cross-tenant lookups always return `404 Not Found` (`TENANT_MISMATCH`) to prevent UUID existence enumeration (`ADR-002`).
+1. **Strict Multi-Tenant Isolation & 8-Persona RBAC**: Every domain record (`agents`, `agent_versions`, `runs`, `job_queue`, `knowledge_documents`, `workflows`, `approval_requests`, `usage_events`, `eval_experiments`) is owned by an `organization_id` and enforced by both composite PostgreSQL foreign keys and a central server-side 28-permission policy engine (`src/server/policies/authorization.ts`). Cross-tenant lookups always return `404 Not Found` (`TENANT_MISMATCH`) to prevent UUID existence enumeration (`ADR-002`).
 2. **Immutable Execution Snapshots**: Runs never execute against an editable draft. Publishing an agent or workflow creates an immutable snapshot (`agent_versions` / `workflow_versions`) fingerprinted by a canonical SHA-256 `snapshot_hash`.
 3. **3-Tier AI Provider Resolution & Session-Scoped AES-256-GCM BYOK Vault**:
-   - **Tier 1 (Session BYOK Vault)**: Visitor-supplied cloud API keys (`Gemini`, `ChatGPT`, `Claude`, `Grok`, `OpenRouter`) are encrypted in server RAM using `aes-256-gcm` (`src/server/security/session-key-vault.ts`) under an ephemeral 256-bit CSPRNG master key scoped to `x-ordaris-demo-session` with a 2-hour sliding TTL.
+   - **Tier 1 (Session BYOK Vault)**: Visitor-supplied cloud API keys (`Gemini`, `ChatGPT`, `Claude`, `Grok`, `OpenRouter`) are encrypted in server RAM using `aes-256-gcm` (`src/server/security/session-key-vault.ts`) under an ephemeral 256-bit CSPRNG master key scoped to `x-ordaris-demo-session` (CSPRNG `crypto.getRandomValues`, failing closed when unavailable) with a 2-hour sliding TTL.
    - **Tier 2 (Server `.env`)**: Optional environment-level free-tier keys.
    - **Tier 3 (Deterministic Simulation Engine)**: Zero-key, zero-spend `MockModelProvider` fallback (`ADR-001`).
-4. **Transactional Run + Queue Enqueue**: Accepting a run (`POST /api/v1/agents/:agentId/runs`) inserts the `runs` record, the `job_queue` row, and sequence `1` (`run.queued`) in `run_events` inside a **single PostgreSQL ACID transaction**—eliminating dual-write inconsistencies between the database and the job queue.
-5. **Separate Worker Boundary with Row Leases**: Long-running agent loops never block HTTP route handlers. `RuntimeWorker` (`src/server/worker/main.ts`) claims jobs from PostgreSQL using `FOR UPDATE SKIP LOCKED` with time-bounded leases, heartbeats, and expired-lease recovery (`ADR-003`).
+4. **Transactional Run + Per-Job Execution Config Enqueue**: Accepting a run (`POST /api/v1/agents/:agentId/runs`) inserts the `runs` record, the `job_queue` row with persisted `execution_config` (`aiEngine`, `byokScopeKey`, `resolutionTier`, `maxBudgetUsd`), and sequence `1` (`run.queued`) in `run_events` inside a **single PostgreSQL ACID transaction**—eliminating dual-write inconsistencies and guaranteeing each job executes with its own pinned AI engine configuration.
+5. **Separate Worker Boundary with Row Leases & Heartbeats**: Long-running agent loops never block HTTP route handlers. `RuntimeWorker` (`src/server/worker/main.ts`) claims jobs from PostgreSQL using `FOR UPDATE SKIP LOCKED` (`claimNextPendingJob` and targeted `claimPendingJobById`), renews leases periodically via `startJobLeaseHeartbeat` (`WORKER_HEARTBEAT_INTERVAL_MS < WORKER_LEASE_MS`), enforces a single-worker CAS guard (`WHERE status = 'queued'`) in `executeAgentRun()`, and recovers expired leases (`ADR-003`).
 
 ---
 
@@ -33,12 +33,12 @@ flowchart TB
 
   subgraph API["Express API Layer (src/server/http/app.ts, demo-routes.ts & auth.ts)"]
     ROUTES["/api/v1/workspace, /agents, /runs, /approvals, /workflows, /knowledge, /demo/*"]
-    AUTHZ["23-Permission RBAC & 404 Tenant Masking (authorization.ts)"]
+    AUTHZ["28-Permission RBAC & 404 Tenant Masking (authorization.ts)"]
     VAULT["Session AES-256-GCM BYOK Vault (session-key-vault.ts)"]
   end
 
   subgraph Worker["Background Queue Worker (src/server/worker/main.ts)"]
-    CLAIM["FOR UPDATE SKIP LOCKED Claim + Lease Recovery"]
+    CLAIM["FOR UPDATE SKIP LOCKED Claim + Lease Heartbeats + Recovery"]
   end
 
   subgraph Domain["Bounded Runtime, Engines & 3-Tier Provider Factory"]
@@ -49,7 +49,7 @@ flowchart TB
     FACTORY["3-Tier Provider Factory: Session BYOK -> .env -> Mock (provider-factory.ts)"]
   end
 
-  subgraph Persistence["PostgreSQL / File-Backed PGlite (.local/ordaris-db)"]
+  subgraph Persistence["PostgreSQL 16 (pg.Pool) / File-Backed PGlite (.local/ordaris-db)"]
     PG[("20 Tables • Migrations 0001..0006 with Composite Tenant FKs")]
   end
 
@@ -72,13 +72,13 @@ To prevent architectural drift and security bypasses, dependencies flow strictly
 
 | Layer | Directory / Location | Allowed Responsibilities | Strictly Forbidden |
 |---|---|---|---|
-| **Presentation & Operator Console** | `src/App.tsx`, `src/client/components/*` | Render 5-tab workspace, manage active persona (`x-actor-id`) and session token (`x-ordaris-demo-session`), subscribe to SSE streams, invoke `/api/v1/*` endpoints. | Importing `src/server/*` database clients, trusting UI role flags for security, or holding raw provider secrets after submission. |
+| **Presentation & Operator Console** | `src/App.tsx`, `src/client/components/*` | Render 5-tab workspace, manage active persona (`x-actor-id`) and CSPRNG session token (`x-ordaris-demo-session`), subscribe to SSE streams, invoke `/api/v1/*` endpoints. | Importing `src/server/*` database clients, trusting UI role flags for security, or holding raw provider secrets after submission. |
 | **HTTP API & Demo Governance Routes** | `src/server/http/app.ts`, `src/server/http/demo-routes.ts`, `src/server/http/auth.ts` | Parse HTTP requests, validate payloads with Zod, resolve persona/tenant context, manage Session BYOK Vault entries, return RFC 9457 Problem Details on error. | Running unbounded loops, bypassing `authorize()`, or returning raw API keys or stack traces. |
-| **Central Policy Engine** | `src/server/policies/authorization.ts` | Evaluate `authorize(actor, action, resourceContext)` across 23 permissions and 4 roles (`owner`, `admin`, `developer`, `viewer`), enforce `404` cross-tenant masking and `409` last-owner protection. | Relying on client-passed `organizationId` without verifying membership. |
-| **Session Security Vault** | `src/server/security/session-key-vault.ts` | Encrypt/decrypt session-scoped BYOK keys in memory with `aes-256-gcm`, enforce 2-hour TTL, emit masked key previews. | Writing raw API keys to disk, database tables, or logs. |
-| **AI Runtime, Arena & Tool Gateway** | `src/server/ai/*`, `src/server/modules/runs/*`, `src/server/modules/tools/*` | Resolve 3-tier AI providers, run the bounded step loop, enforce `maxSteps`/`maxToolCalls`/`timeoutSeconds`, validate tool arguments with Zod, strip hallucinated citations. | Executing `eval()`, `Function()`, shell commands, or arbitrary user-supplied URLs. |
+| **Central Policy Engine** | `src/server/policies/authorization.ts` | Evaluate `authorize(actor, action, resourceContext)` across 28 permissions and 4 roles (`owner`, `admin`, `developer`, `viewer`), enforce `404` cross-tenant masking and `409` last-owner protection. | Relying on client-passed `organizationId` without verifying membership. |
+| **Session Security Vault** | `src/server/security/session-key-vault.ts` | Encrypt/decrypt session-scoped BYOK keys in memory with `aes-256-gcm`, reject static/ephemeral fallback session IDs, enforce 2-hour TTL, emit masked key previews. | Writing raw API keys to disk, database tables, or logs. |
+| **AI Runtime, Arena & Tool Gateway** | `src/server/ai/*`, `src/server/modules/runs/*`, `src/server/modules/tools/*` | Resolve 3-tier AI providers from per-job `execution_config`, run the bounded step loop, enforce `maxSteps`/`maxToolCalls`/`timeoutSeconds`, validate tool arguments with Zod, strip hallucinated citations. | Executing `eval()`, `Function()`, shell commands, or arbitrary user-supplied URLs. |
 | **Workflows, RAG & Evaluations** | `src/server/modules/workflows/*`, `src/server/modules/knowledge/*`, `src/server/modules/evals/*` | Validate DAG cycles with 3-color DFS, pause/resume HITL approval gates, chunk and rank RAG documents with `<untrusted_knowledge_context>`, run `v1`-vs-`v2` regression graders. | Trusting model-supplied `organizationId` in `knowledge_search`. |
-| **Persistence & Background Worker** | `src/server/db/*`, `src/server/worker/*` | Execute tenant-scoped Drizzle/SQL queries, poll due jobs with `FOR UPDATE SKIP LOCKED`, maintain lease heartbeats, and recover expired leases. | Holding open DB transactions while awaiting external model or tool calls. |
+| **Persistence & Background Worker** | `src/server/db/*`, `src/server/worker/*` | Connect via `node-postgres` (`pg.Pool`) or `PGlite` (`DB_DRIVER`), execute tenant-scoped Drizzle/SQL queries, poll due jobs with `FOR UPDATE SKIP LOCKED`, maintain lease heartbeats (`renewJobLease`), and recover expired leases. | Holding open DB transactions while awaiting external model or tool calls. |
 
 ---
 
@@ -146,8 +146,9 @@ All execution limits are validated at startup via Zod (`src/server/config/env.ts
 - `RUN_MAX_STEPS`: `8` steps maximum per run.
 - `RUN_MAX_TOOL_CALLS`: `6` tool calls maximum per run.
 - `RUN_TIMEOUT_SECONDS`: `120` seconds maximum wall-clock duration.
-- `MAX_UPLOAD_BYTES`: `10,485,760` bytes (`10 MiB`) per document.
+- `MAX_UPLOAD_BYTES`: `10,485,760` bytes (`10 MiB`) unified across Express JSON body limit, route validation, and `ingestKnowledgeDocument()`.
 - `WORKER_CONCURRENCY`: `2` concurrent jobs per worker process by default.
+- `WORKER_LEASE_MS`: `30,000` ms (`30 seconds`) lease duration with `WORKER_HEARTBEAT_INTERVAL_MS` (`10,000` ms) automatic heartbeat renewal.
 - `BYOK_SESSION_TTL_MS`: `7,200,000` ms (`2 hours`) sliding in-memory session key expiration.
 
 ---

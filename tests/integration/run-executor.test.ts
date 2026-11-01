@@ -19,6 +19,7 @@ import {
   getRunDetailsForActor,
   listRunEventsAfterSequence,
   processNextQueuedJob,
+  processQueuedJobById,
   recoverExpiredJobLeases,
 } from '../../src/server/modules/runs/run-executor';
 import { ToolGateway } from '../../src/server/modules/tools/tool-gateway';
@@ -474,4 +475,85 @@ describe('RUN-001 & RUN-002 & QUEUE-001: Bounded Agent Runtime & PostgreSQL Job 
       await ctx.close();
     }
   });
+
+  it('persists executionConfig per queued job and claims specific jobs by ID without stealing older pending jobs', async () => {
+    const ctx = await createDatabaseClient();
+    try {
+      const user = await ensureUser(ctx.db, {
+        authSubject: 'sub_dispatch_op',
+        email: 'dispatch@ordaris.io',
+        displayName: 'Dispatch Operator',
+      });
+      const { organization, membership } = await createOrganizationWithOwner(
+        ctx.db,
+        {
+          name: 'Acme Dispatch Org',
+          slug: 'acme-dispatch-org',
+          creatorUserId: user.id,
+        }
+      );
+      const actor = {
+        userId: user.id,
+        organizationId: organization.id,
+        role: membership.role,
+      };
+
+      const draft = await createAgentDraft(ctx.db, actor, {
+        organizationId: organization.id,
+        name: 'Targeted Dispatch Agent',
+        slug: 'targeted-dispatch-agent',
+        draftSystemPrompt: 'Dispatch test agent.',
+        draftToolAllowlist: ['calculator'],
+      });
+      await publishAgentVersion(ctx.db, actor, organization.id, draft.id);
+
+      // Enqueue Job 1 (older pending job)
+      const job1 = await enqueueAgentRun(ctx.db, actor, {
+        organizationId: organization.id,
+        agentId: draft.id,
+        inputPrompt: 'Older pending job: calculate 10 + 10',
+        executionConfig: {
+          aiEngine: 'mock',
+          resolutionTier: 'deterministic_fallback',
+        },
+      });
+
+      // Enqueue Job 2 (newer job with explicit executionConfig)
+      const job2 = await enqueueAgentRun(ctx.db, actor, {
+        organizationId: organization.id,
+        agentId: draft.id,
+        inputPrompt: 'Targeted job: calculate 25 * 4',
+        executionConfig: {
+          aiEngine: 'gemini-free',
+          byokScopeKey: 'session:isolated-test',
+          resolutionTier: 'deterministic_fallback',
+        },
+      });
+
+      assert.equal(job1.job.executionConfig.aiEngine, 'mock');
+      assert.equal(job2.job.executionConfig.aiEngine, 'gemini-free');
+
+      // Settling Job 2 by ID must execute ONLY Job 2 and leave Job 1 untouched in 'pending'
+      const settledJob2 = await processQueuedJobById(ctx.db, job2.job.id, {
+        workerId: 'worker-targeted-test',
+      });
+      assert.ok(settledJob2);
+      assert.equal(settledJob2.run.id, job2.run.id);
+      assert.equal(settledJob2.run.status, 'succeeded');
+      assert.equal(settledJob2.job.status, 'completed');
+
+      const [olderJobStillPending] = await ctx.db
+        .select()
+        .from(jobQueue)
+        .where(eq(jobQueue.id, job1.job.id));
+      assert.equal(
+        olderJobStillPending?.status,
+        'pending',
+        'Expected older pending job to remain untouched when settling a newer job by ID'
+      );
+    } finally {
+      await ctx.close();
+    }
+  });
 });
+

@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
-import { appendRuntimeLog } from '../../config/env';
+import { appendRuntimeLog, parseEnv } from '../../config/env';
 import type { OrdarisDatabase } from '../../db/client';
 import {
   agents,
@@ -11,6 +11,7 @@ import {
   runEvents,
   runs,
   runSteps,
+  type JobExecutionConfig,
   type JobQueueRow,
   type RunEventRow,
   type RunEventType,
@@ -31,6 +32,14 @@ import {
   type ModelMessage,
   type ModelProvider,
 } from '../../ai/model-provider';
+import {
+  createLiveRuntimeModelProvider,
+  type LiveAiEngineMode,
+} from '../../ai/provider-factory';
+import {
+  listByokProviderStatuses,
+  resolveEffectiveEnvWithByok,
+} from '../../security/session-key-vault';
 import {
   ToolAuthorizationError,
   ToolExecutionError,
@@ -108,6 +117,7 @@ export interface EnqueueAgentRunInput {
   inputPrompt: string;
   idempotencyKey?: string;
   maxAttempts?: number;
+  executionConfig?: JobExecutionConfig;
 }
 
 export interface EnqueueAgentRunResult {
@@ -132,6 +142,46 @@ export interface ProcessNextJobOptions extends ExecuteAgentRunOptions {
   workerId?: string;
   leaseDurationMs?: number;
   heartbeatIntervalMs?: number;
+  rawEnv?: Record<string, string | undefined>;
+}
+
+/**
+ * Resolves the model provider for a specific claimed `job_queue` row based on its persisted
+ * `execution_config` (`aiEngine`, `byokScopeKey`, `resolutionTier`), falling back to `fallbackProvider`.
+ */
+export function resolveModelProviderForJob(
+  job: Pick<JobQueueRow, 'executionConfig' | 'organizationId'>,
+  fallbackProvider?: ModelProvider,
+  rawEnv?: Record<string, string | undefined>
+): ModelProvider {
+  const execCfg = job.executionConfig;
+  const requestedEngine = execCfg?.aiEngine?.trim();
+  if (!requestedEngine) {
+    return fallbackProvider ?? new MockModelProvider();
+  }
+  if (requestedEngine === 'mock') {
+    return new MockModelProvider();
+  }
+
+  const env = parseEnv(rawEnv ?? process.env);
+  const scopeKey = execCfg?.byokScopeKey || `org:${job.organizationId}`;
+  const effectiveEnv = resolveEffectiveEnvWithByok(env, scopeKey);
+  const byokStatuses = listByokProviderStatuses(env, scopeKey);
+  const hasSessionByok = byokStatuses.some((s) => s.source === 'vault');
+
+  const liveTier: 'session_byok' | 'server_env' =
+    execCfg?.resolutionTier === 'session_byok'
+      ? 'session_byok'
+      : execCfg?.resolutionTier === 'server_env'
+        ? 'server_env'
+        : hasSessionByok
+          ? 'session_byok'
+          : 'server_env';
+
+  return createLiveRuntimeModelProvider(effectiveEnv, {
+    engine: requestedEngine as LiveAiEngineMode,
+    resolutionTier: liveTier,
+  });
 }
 
 export interface RunDetailsResult {
@@ -320,7 +370,7 @@ export async function enqueueAgentRun(
       })
       .returning();
 
-    // 5. Insert `job_queue` row for asynchronous worker claiming
+    // 5. Insert `job_queue` row for asynchronous worker claiming with persisted executionConfig
     const [createdJob] = await tx
       .insert(jobQueue)
       .values({
@@ -328,6 +378,7 @@ export async function enqueueAgentRun(
         runId: createdRun!.id,
         jobType: 'agent_run',
         status: 'pending',
+        executionConfig: input.executionConfig ?? {},
         attempts: 0,
         maxAttempts: input.maxAttempts ?? 3,
       })
@@ -344,6 +395,7 @@ export async function enqueueAgentRun(
         agentVersionId: targetVersion.id,
         versionNumber: targetVersion.versionNumber,
         snapshotHash: targetVersion.snapshotHash,
+        aiEngine: input.executionConfig?.aiEngine ?? 'default',
       },
     });
 
@@ -402,6 +454,57 @@ export async function claimNextPendingJob(
     .select()
     .from(jobQueue)
     .where(eq(jobQueue.id, claimedId))
+    .limit(1);
+
+  return claimedJob ?? null;
+}
+
+/**
+ * Atomically claims a specific `'pending'` job by `jobId` using `FOR UPDATE SKIP LOCKED`.
+ * Used when settling a newly enqueued job without stealing unrelated older jobs in `job_queue`.
+ */
+export async function claimPendingJobById(
+  db: OrdarisDatabase,
+  jobId: string,
+  workerId = 'worker-targeted-1',
+  leaseDurationMs = DEFAULT_JOB_LEASE_MS
+): Promise<JobQueueRow | null> {
+  const result = await db.execute(sql`
+    UPDATE job_queue
+    SET
+      status = 'locked',
+      attempts = attempts + 1,
+      locked_at = now(),
+      locked_by = ${workerId},
+      lease_expires_at = now() + (${leaseDurationMs} * interval '1 millisecond'),
+      updated_at = now()
+    WHERE id = (
+      SELECT id
+      FROM job_queue
+      WHERE id = ${jobId}
+        AND status = 'pending'
+        AND available_at <= now()
+        AND EXISTS (
+          SELECT 1
+          FROM runs r
+          WHERE r.id = job_queue.run_id
+            AND r.status = 'queued'
+        )
+      FOR UPDATE SKIP LOCKED
+      LIMIT 1
+    )
+    RETURNING id
+  `);
+
+  const rows = (result as unknown as { rows?: Array<{ id: string }> }).rows ?? [];
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const [claimedJob] = await db
+    .select()
+    .from(jobQueue)
+    .where(eq(jobQueue.id, jobId))
     .limit(1);
 
   return claimedJob ?? null;
@@ -891,9 +994,11 @@ export async function executeAgentRun(
       appendRuntimeLog({
         level: 'ERROR',
         component: 'run-executor',
+        organizationId: initialRun.organizationId,
         message: `Run ${initialRun.id.slice(0, 8)}... ${status} (${errorCode}): ${errorMessage}`,
         details: {
           runId: initialRun.id,
+          organizationId: initialRun.organizationId,
           status,
           errorCode,
           errorMessage,
@@ -1278,6 +1383,7 @@ export async function executeAgentRun(
 /**
  * Claims the next pending job from `job_queue` via `FOR UPDATE SKIP LOCKED`
  * and executes its associated `runs` record with active lease heartbeat renewal (`QUEUE-002`).
+ * Resolves the model provider from the job's persisted `execution_config` when specified.
  */
 export async function processNextQueuedJob(
   db: OrdarisDatabase,
@@ -1291,8 +1397,15 @@ export async function processNextQueuedJob(
     return null;
   }
 
+  const effectiveModelProvider = resolveModelProviderForJob(
+    claimedJob,
+    options.modelProvider,
+    options.rawEnv
+  );
+
   const completedRun = await executeAgentRun(db, claimedJob.runId, {
     ...options,
+    modelProvider: effectiveModelProvider,
     jobId: claimedJob.id,
     workerId,
     leaseDurationMs,
@@ -1308,6 +1421,98 @@ export async function processNextQueuedJob(
     job: updatedJob ?? claimedJob,
     run: completedRun,
   };
+}
+
+/**
+ * Atomically claims and executes a specific job by `jobId` (or waits if another worker
+ * already claimed that exact job), using the job's persisted `execution_config` so that
+ * concurrent jobs never cross-contaminate AI providers or claim unrelated pending jobs.
+ */
+export async function processQueuedJobById(
+  db: OrdarisDatabase,
+  jobId: string,
+  options: ProcessNextJobOptions = {}
+): Promise<{ job: JobQueueRow; run: RunRow } | null> {
+  const workerId = options.workerId ?? `worker-job-${jobId.slice(0, 8)}`;
+  const leaseDurationMs = options.leaseDurationMs ?? DEFAULT_JOB_LEASE_MS;
+  const claimedJob = await claimPendingJobById(
+    db,
+    jobId,
+    workerId,
+    leaseDurationMs
+  );
+
+  if (claimedJob) {
+    const effectiveModelProvider = resolveModelProviderForJob(
+      claimedJob,
+      options.modelProvider,
+      options.rawEnv
+    );
+
+    const completedRun = await executeAgentRun(db, claimedJob.runId, {
+      ...options,
+      modelProvider: effectiveModelProvider,
+      jobId: claimedJob.id,
+      workerId,
+      leaseDurationMs,
+    });
+
+    const [updatedJob] = await db
+      .select()
+      .from(jobQueue)
+      .where(eq(jobQueue.id, claimedJob.id))
+      .limit(1);
+
+    return {
+      job: updatedJob ?? claimedJob,
+      run: completedRun,
+    };
+  }
+
+  // If the background worker already claimed this job, wait briefly for it to settle
+  const deadline = performance.now() + Math.min(options.timeoutMs ?? 5_000, 10_000);
+  while (performance.now() < deadline) {
+    const [existingJob] = await db
+      .select()
+      .from(jobQueue)
+      .where(eq(jobQueue.id, jobId))
+      .limit(1);
+
+    if (!existingJob) {
+      return null;
+    }
+
+    const [existingRun] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, existingJob.runId))
+      .limit(1);
+
+    if (
+      existingRun &&
+      existingRun.status !== 'queued' &&
+      existingRun.status !== 'running'
+    ) {
+      return { job: existingJob, run: existingRun };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  const [finalJob] = await db
+    .select()
+    .from(jobQueue)
+    .where(eq(jobQueue.id, jobId))
+    .limit(1);
+  if (!finalJob) {
+    return null;
+  }
+  const [finalRun] = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, finalJob.runId))
+    .limit(1);
+  return finalRun ? { job: finalJob, run: finalRun } : null;
 }
 
 /**

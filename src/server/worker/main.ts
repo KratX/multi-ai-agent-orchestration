@@ -9,6 +9,7 @@ import {
 } from '../db/client';
 import {
   processNextQueuedJob,
+  processQueuedJobById,
   recoverExpiredJobLeases,
 } from '../modules/runs/run-executor';
 import type { JobQueueRow, RunRow } from '../db/schema/runs';
@@ -22,7 +23,9 @@ import type { JobQueueRow, RunRow } from '../db/schema/runs';
  *    workers never leave runs stranded in `'locked'` state (`ADR-003`).
  * 3. Polls and claims pending jobs from PostgreSQL `job_queue` using `FOR UPDATE SKIP LOCKED`
  *    with bounded concurrency (`WORKER_CONCURRENCY`) and lease duration (`WORKER_LEASE_MS`).
- * 4. Handles `SIGINT` and `SIGTERM` signals for graceful in-flight job completion.
+ * 4. Resolves each job's persisted `execution_config` (`aiEngine`, `byokScopeKey`, `resolutionTier`)
+ *    so background workers execute every job with its exact requested AI engine.
+ * 5. Handles `SIGINT` and `SIGTERM` signals for graceful in-flight job completion.
  */
 
 export interface RuntimeWorkerOptions {
@@ -107,6 +110,46 @@ export class RuntimeWorker {
     }
 
     return outcome;
+  }
+
+  /**
+   * Atomically claims and processes a specific queued job by ID using its persisted `execution_config`.
+   */
+  public async processJobById(
+    jobId: string
+  ): Promise<{ job: JobQueueRow; run: RunRow } | null> {
+    await recoverExpiredJobLeases(this.db);
+
+    const outcome = await processQueuedJobById(this.db, jobId, {
+      workerId: this.workerId,
+      leaseDurationMs: this.leaseDurationMs,
+      heartbeatIntervalMs: this.heartbeatIntervalMs,
+      modelProvider: this.modelProvider,
+      maxStepsCeiling: this.maxStepsCeiling,
+      maxToolCallsCeiling: this.maxToolCallsCeiling,
+      timeoutMs: this.runTimeoutMs,
+    });
+
+    if (outcome) {
+      this.processedCount += 1;
+    }
+
+    return outcome;
+  }
+
+  /**
+   * Nudges the background polling loop when a new job is enqueued so active background workers
+   * pick it up without waiting for the full poll interval.
+   */
+  public nudge(): void {
+    if (!this.running) {
+      return;
+    }
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.scheduleNextPoll(5);
   }
 
   /**

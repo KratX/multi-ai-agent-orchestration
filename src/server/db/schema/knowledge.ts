@@ -107,7 +107,7 @@ export const knowledgeDocuments = pgTable(
     ),
     check(
       'knowledge_documents_byte_size_bounds',
-      sql`${table.byteSize} > 0 AND ${table.byteSize} <= 10485760`
+      sql`${table.byteSize} > 0 AND ${table.byteSize} <= 52428800`
     ),
     check(
       'knowledge_documents_chunk_count_non_negative',
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   CONSTRAINT knowledge_documents_title_not_blank CHECK (length(btrim(title)) > 0),
   CONSTRAINT knowledge_documents_mime_type_valid CHECK (mime_type IN ('text/plain', 'text/markdown')),
   CONSTRAINT knowledge_documents_status_valid CHECK (status IN ('processing', 'ready', 'failed')),
-  CONSTRAINT knowledge_documents_byte_size_bounds CHECK (byte_size > 0 AND byte_size <= 10485760),
+  CONSTRAINT knowledge_documents_byte_size_bounds CHECK (byte_size > 0 AND byte_size <= 52428800),
   CONSTRAINT knowledge_documents_chunk_count_non_negative CHECK (chunk_count >= 0)
 );
 

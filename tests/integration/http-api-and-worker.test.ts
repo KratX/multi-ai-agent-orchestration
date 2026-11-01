@@ -749,6 +749,42 @@ test('Production-Mode & Cryptographic Authentication Hardening: rejects unauthen
     });
     assert.equal(viewerLogsClear.status, 403);
 
+    // Admin must also be denied on POST /api/v1/logs/clear (requires org.delete / owner)
+    const adminLogsClear = await fetch(`${demoUrl}/api/v1/logs/clear`, {
+      method: 'POST',
+      headers: { 'x-actor-id': 'acme-admin' },
+    });
+    assert.equal(adminLogsClear.status, 403);
+
+    // Developer and Viewer must be denied on GET /api/v1/logs (requires audit.view)
+    const devLogsGet = await fetch(`${demoUrl}/api/v1/logs`, {
+      headers: { 'x-actor-id': 'acme-dev' },
+    });
+    assert.equal(devLogsGet.status, 403);
+
+    const viewerLogsGet = await fetch(`${demoUrl}/api/v1/logs`, {
+      headers: { 'x-actor-id': 'acme-viewer' },
+    });
+    assert.equal(viewerLogsGet.status, 403);
+
+    // Static fallback session token sess_browser_ephemeral_9f8e7d6c5b4a3210 must be rejected with 400
+    const staticFallbackSessionRes = await fetch(
+      `${demoUrl}/api/v1/providers/keys`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-actor-id': 'acme-owner',
+          'x-ordaris-demo-session': 'sess_browser_ephemeral_9f8e7d6c5b4a3210',
+        },
+        body: JSON.stringify({
+          provider: 'gemini',
+          rawKey: 'AIzaSyTestStaticSessionCollisionBlocked',
+        }),
+      }
+    );
+    assert.equal(staticFallbackSessionRes.status, 400);
+
     // E. In Production Mode (NODE_ENV=production, DEMO_MODE=false):
     // Unsigned x-actor-id and x-user-id / x-organization-id headers MUST be rejected with 401
     const prodHeaderSpoof1 = await fetch(`${prodUrl}/api/v1/workspace`, {
@@ -833,4 +869,5 @@ test('Production-Mode & Cryptographic Authentication Hardening: rejects unauthen
     await ctx.close();
   }
 });
+
 

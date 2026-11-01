@@ -11,10 +11,10 @@ Built under a strict **Zero-Required-Spend (`ADR-001`)** and **Defense-in-Depth 
 1. **8-Persona Multi-Tenant RBAC & Composite PostgreSQL Foreign Keys (`TENANT-001`..`004`, `ADR-002`)**
    - Pre-seeds **2 isolated organizations** (`Acme Cyber Defense` and `Beta Global Logistics`) and **8 distinct personas** (`owner`, `admin`, `developer`, `viewer` per tenant).
    - Composite `(organization_id, ...)` foreign keys across `agent_versions`, `runs`, `run_steps`, `run_events`, `job_queue`, `document_chunks`, `workflow_versions`, `approval_requests`, `usage_events`, and `eval_experiments` prevent cross-tenant parent-child references at the database constraint layer.
-   - Central policy engine (`src/server/policies/authorization.ts`) enforces a **23-permission RBAC matrix**, masks cross-tenant resource lookups with `404 Not Found` (`TENANT_MISMATCH`) to prevent UUID enumeration, and enforces the last-owner safeguard (`409 Conflict` `LAST_OWNER_PROTECTED`).
+   - Central policy engine (`src/server/policies/authorization.ts`) enforces a **28-permission RBAC matrix**, masks cross-tenant resource lookups with `404 Not Found` (`TENANT_MISMATCH`) to prevent UUID enumeration, and enforces the last-owner safeguard (`409 Conflict` `LAST_OWNER_PROTECTED`).
 
 2. **Session-Scoped AES-256-GCM BYOK Vault & 3-Tier AI Key Resolution (`src/server/security/session-key-vault.ts`, `src/server/ai/provider-factory.ts`)**
-   - **Tier 1 — Session BYOK Vault**: Browser sessions (`x-ordaris-demo-session`, minimum 16-char high-entropy token) can store API keys encrypted in server RAM with **AES-256-GCM** using an ephemeral 256-bit CSPRNG master key (`crypto.randomBytes(32)`), 96-bit IV, and 128-bit auth tag, with an automatic 2-hour sliding TTL. Raw keys are never persisted to disk, never logged, and never returned to the browser.
+   - **Tier 1 — Session BYOK Vault**: Browser sessions (`x-ordaris-demo-session`, CSPRNG `crypto.getRandomValues` minimum 16-char high-entropy token, failing closed when unavailable) can store API keys encrypted in server RAM with **AES-256-GCM** using an ephemeral 256-bit CSPRNG master key (`crypto.randomBytes(32)`), 96-bit IV, and 128-bit auth tag, with an automatic 2-hour sliding TTL. Raw keys are never persisted to disk, never logged, and never returned to the browser.
    - **Tier 2 — Server `.env` Fallback**: Falls back to `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, or `OPENROUTER_API_KEY` when configured on the server.
    - **Tier 3 — Deterministic Simulation Engine (`MockModelProvider`)**: Guarantees 100% deterministic multi-turn tool calls, citations, embeddings, and workflow execution with zero network access or API keys.
 
@@ -53,14 +53,14 @@ Switch personas instantaneously in the top header (`x-actor-id` header) to verif
 
 | Persona ID | Display Name | Organization | Role | Allowed Permissions | Key Capabilities & Restrictions |
 | :--- | :--- | :--- | :--- | :---: | :--- |
-| `acme-owner` | Elena Vance | Acme Cyber Defense | `owner` | `23 / 23` | Full tenant control, member role management, HITL approvals, audit trail, sandbox reset |
-| `acme-admin` | Marcus Sterling | Acme Cyber Defense | `admin` | `21 / 23` | Agent/RAG/workflow authoring, HITL approvals, audit trail, member management (non-owner) |
-| `acme-dev` | Priya Nair | Acme Cyber Defense | `developer` | `16 / 23` | Create/publish/run agents, ingest RAG docs, run evals; **403** on HITL decisions & audit ledger |
-| `acme-viewer` | Devon Brooks | Acme Cyber Defense | `viewer` | `9 / 23` | Read-only inspection of agents, runs, workflows, and usage; **403** on all mutations & runs |
-| `beta-owner` | Soren Lindqvist | Beta Global Logistics | `owner` | `23 / 23` | Full control inside Beta tenant; **404 `TENANT_MISMATCH`** when probing Acme UUIDs |
-| `beta-admin` | Hana Takahashi | Beta Global Logistics | `admin` | `21 / 23` | Full Beta operations & HITL approvals; isolated from Acme data |
-| `beta-dev` | Lucas Meyer | Beta Global Logistics | `developer` | `16 / 23` | Authoring & execution inside Beta tenant; **403** on Beta HITL approvals & audit ledger |
-| `beta-viewer` | Chloe Dubois | Beta Global Logistics | `viewer` | `9 / 23` | Read-only observer inside Beta tenant |
+| `acme-owner` | Elena Vance | Acme Cyber Defense | `owner` | `28 / 28` | Full tenant control, member role management, HITL approvals, audit trail, log clear, sandbox reset |
+| `acme-admin` | Marcus Sterling | Acme Cyber Defense | `admin` | `26 / 28` | Agent/RAG/workflow authoring, HITL approvals, audit trail, member management (non-owner) |
+| `acme-dev` | Priya Nair | Acme Cyber Defense | `developer` | `18 / 28` | Create/publish/run agents, ingest RAG docs, run evals; **403** on HITL decisions, logs & audit ledger |
+| `acme-viewer` | Devon Brooks | Acme Cyber Defense | `viewer` | `9 / 28` | Read-only inspection of agents, runs, workflows, and usage; **403** on all mutations & runs |
+| `beta-owner` | Soren Lindqvist | Beta Global Logistics | `owner` | `28 / 28` | Full control inside Beta tenant; **404 `TENANT_MISMATCH`** when probing Acme UUIDs |
+| `beta-admin` | Hana Takahashi | Beta Global Logistics | `admin` | `26 / 28` | Full Beta operations & HITL approvals; isolated from Acme data |
+| `beta-dev` | Lucas Meyer | Beta Global Logistics | `developer` | `18 / 28` | Authoring & execution inside Beta tenant; **403** on Beta HITL approvals, logs & audit ledger |
+| `beta-viewer` | Chloe Dubois | Beta Global Logistics | `viewer` | `9 / 28` | Read-only observer inside Beta tenant |
 
 ---
 
@@ -75,12 +75,12 @@ flowchart TB
 
   subgraph Server["Express API Server (src/server/http/app.ts, demo-routes.ts & auth.ts)"]
     ROUTES["/api/v1/workspace, /agents, /runs, /approvals, /workflows, /knowledge, /demo/*"]
-    AUTHZ["23-Permission RBAC & 404 Tenant Masking (authorization.ts)"]
+    AUTHZ["28-Permission RBAC & 404 Tenant Masking (authorization.ts)"]
     VAULT["Session-Scoped AES-256-GCM BYOK Vault (session-key-vault.ts)"]
   end
 
   subgraph Worker["Background Queue Worker (src/server/worker/main.ts)"]
-    LOOP["RuntimeWorker Poll Loop (FOR UPDATE SKIP LOCKED + Lease Recovery)"]
+    LOOP["RuntimeWorker Poll Loop (FOR UPDATE SKIP LOCKED + Lease Heartbeats + Recovery)"]
   end
 
   subgraph Engines["Domain Services & 3-Tier AI Provider Factory"]
@@ -91,7 +91,7 @@ flowchart TB
     AI["3-Tier Provider Factory: Session BYOK -> .env -> Deterministic Mock"]
   end
 
-  subgraph Storage["Persistent PGlite PostgreSQL (.local/ordaris-db)"]
+  subgraph Storage["PostgreSQL 16 (pg.Pool) / Persistent PGlite (.local/ordaris-db)"]
     DB[("20 Tables • Migrations 0001..0006 with Composite Tenant FKs")]
   end
 
@@ -130,8 +130,8 @@ cp .env.example .env
 pnpm typecheck
 ```
 
-### 4. Run the Automated Test Matrix (`104/104` Passing Across `21` Suites)
-Runs all unit, AES-256-GCM vault, 23-permission RBAC, PostgreSQL composite FK constraint, and HTTP API/worker integration tests in-process:
+### 4. Run the Automated Test Matrix (`108/108` Passing Across `21` Suites)
+Runs all unit, AES-256-GCM vault, 28-permission RBAC, PostgreSQL composite FK constraint, worker lease heartbeat, and HTTP API/worker integration tests in-process:
 ```bash
 pnpm test
 ```
@@ -193,22 +193,22 @@ pnpm dev
 | `GET` | `/api/v1/audit-events` | Reads append-only security audit trail (`owner`/`admin` only; `403` for `viewer`/`developer`) |
 | `POST` | `/api/v1/members` | Invites or updates organization member roles (`member.manage`) |
 | `DELETE` | `/api/v1/members/:userId` | Removes a member while enforcing the sole-owner `409 Conflict` (`LAST_OWNER_PROTECTED`) safeguard |
-| `GET` | `/api/v1/logs` | Returns structured runtime diagnostic logs (`401` if unauthenticated) |
-| `POST` | `/api/v1/logs/clear` | Clears in-memory runtime log buffer (`401` if unauthenticated; requires `org.manage`) |
+| `GET` | `/api/v1/logs` | Returns organization-filtered runtime diagnostic logs (`401` if unauthenticated; requires `audit.view`) |
+| `POST` | `/api/v1/logs/clear` | Clears caller organization's runtime log entries (`401` if unauthenticated; requires `org.delete`) |
 
 ---
 
 ## 6. What We Built (`v1.0.0-demo`) vs. Planned Roadmap (`v1.1` – `v2.0`)
 
 Detailed engineering documentation lives in `/docs`:
-- [`docs/implementation/STATUS.md`](docs/implementation/STATUS.md) — Complete checklist of built features, `104/104` test suite breakdown, and `v1.1`–`v2.0` roadmap.
+- [`docs/implementation/STATUS.md`](docs/implementation/STATUS.md) — Complete checklist of built features, `108/108` test suite breakdown, and `v1.1`–`v2.0` roadmap.
 - [`docs/architecture.md`](docs/architecture.md) — Layered architecture, sequence diagrams, run state machine, and runtime guardrails.
 - [`docs/threat-model.md`](docs/threat-model.md) — Threat catalog (`T-01`..`T-08`) covering IDOR, prompt injection, path traversal, and Session AES-256-GCM BYOK Vault isolation.
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (`ADR-001` Zero-Spend & 3-Tier BYOK, `ADR-002` Tenant Isolation & 8-Persona RBAC, `ADR-003` PostgreSQL Job Queue).
 
 | Milestone | Status | Scope Summary |
 | :--- | :---: | :--- |
-| **`v1.0.0-demo` (Current)** | **Built & Verified** | 2-tenant / 8-persona 23-permission RBAC, composite SQL foreign keys, Session AES-256-GCM BYOK Vault, 6-engine 3-tier AI factory, bounded tool gateway (zero `eval()`), hybrid `tsvector` + cosine RAG, 3-color DFS workflow DAG & HITL gates, `v1`-vs-`v2` eval harness, 2-engine Arena, 3-choice sandbox reset, 5-tab React 19 UI (`104/104` tests passing). |
+| **`v1.0.0-demo` (Current)** | **Built & Verified** | 2-tenant / 8-persona 28-permission RBAC, composite SQL foreign keys, dual external PostgreSQL (`pg.Pool`) + PGlite adapter, Session AES-256-GCM BYOK Vault with CSPRNG fail-closed tokens, 6-engine 3-tier AI factory with per-job `execution_config`, worker lease heartbeats & single-worker CAS guard, bounded tool gateway (zero `eval()`), hybrid `tsvector` + cosine RAG (unified 10 MiB `MAX_UPLOAD_BYTES`), 3-color DFS workflow DAG & HITL gates, `v1`-vs-`v2` eval harness, 2-engine Arena, 3-choice sandbox reset, 5-tab React 19 UI (`108/108` tests passing). |
 | **`v1.1` (Planned)** | Planned | OAuth 2.0 / OIDC & SAML SSO session authentication (`DEMO_MODE=false`), persistent KMS envelope-encrypted tenant API key vault (`AWS KMS` / `GCP Cloud KMS`), and prefix-tagged (`ord_live_...`) machine-to-machine bearer tokens. |
 | **`v1.2` (Planned)** | Planned | Native `pgvector` HNSW index migration for external PostgreSQL 16, asynchronous worker-backed PDF/CSV ingestion with SSE chunk progress, and chunk-level sensitivity ACL tags. |
 | **`v1.3` (Planned)** | Planned | OpenTelemetry (`OTLP`) distributed trace propagation across HTTP -> `job_queue` -> worker -> LLM provider, `HMAC-SHA256` signed outbound webhooks (Slack/PagerDuty/Jira), and live token delta streaming over SSE. |

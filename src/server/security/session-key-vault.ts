@@ -160,11 +160,12 @@ const KNOWN_GUESSABLE_PREFIXES = new Set([
   '1234',
   '12345678',
   'password',
+  'sess_browser_ephemeral_9f8e7d6c5b4a3210',
 ]);
 
 /**
- * Validates that a client-supplied session token has high entropy and is not a short
- * or guessable string that could collide with other visitors.
+ * Validates that a client-supplied session token has high entropy and is not a short,
+ * static fallback, or guessable string that could collide with other visitors.
  */
 export function isValidByokSessionToken(rawToken: string | null | undefined): boolean {
   if (!rawToken || typeof rawToken !== 'string') {
@@ -182,7 +183,13 @@ export function isValidByokSessionToken(rawToken: string | null | undefined): bo
   }
 
   const lower = trimmed.toLowerCase();
-  if (KNOWN_GUESSABLE_PREFIXES.has(lower)) {
+  if (
+    KNOWN_GUESSABLE_PREFIXES.has(lower) ||
+    lower.includes('ephemeral') ||
+    lower.includes('fallback') ||
+    lower.includes('static') ||
+    lower.includes('placeholder')
+  ) {
     return false;
   }
 
@@ -243,19 +250,22 @@ export function normalizeByokProviderId(raw: string): ByokProviderId | null {
  * - When `sessionId` is provided, validates that it meets high-entropy requirements
  *   (or throws `ByokSessionValidationError` when `strictSessionValidation` is enabled)
  *   and hashes it with HMAC-SHA256 under the ephemeral master key.
+ * - When `requireSessionToken` is enabled, fails closed with `ByokSessionValidationError`
+ *   if no valid session token is provided.
  */
 export function resolveByokScopeKey(input?: {
   sessionId?: string | null;
   organizationId?: string | null;
   fallbackScope?: string;
   strictSessionValidation?: boolean;
+  requireSessionToken?: boolean;
 }): string {
   const rawSession = (input?.sessionId ?? '').trim();
   if (rawSession) {
     if (!isValidByokSessionToken(rawSession)) {
-      if (input?.strictSessionValidation) {
+      if (input?.strictSessionValidation || input?.requireSessionToken) {
         throw new ByokSessionValidationError(
-          `Session BYOK token must be a high-entropy alphanumeric token of at least ${MIN_SESSION_TOKEN_LENGTH} characters.`
+          `Session BYOK token must be a high-entropy CSPRNG token of at least ${MIN_SESSION_TOKEN_LENGTH} characters (static or ephemeral fallback tokens are rejected).`
         );
       }
     } else {
@@ -266,6 +276,10 @@ export function resolveByokScopeKey(input?: {
         .slice(0, 32);
       return `session:${digest}`;
     }
+  } else if (input?.requireSessionToken) {
+    throw new ByokSessionValidationError(
+      'Missing required x-ordaris-demo-session header. Session BYOK mutations require a cryptographically secure session token.'
+    );
   }
 
   const rawOrg = (input?.organizationId ?? '').trim();

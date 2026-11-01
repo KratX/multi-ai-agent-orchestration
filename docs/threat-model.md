@@ -26,7 +26,7 @@ In an enterprise AI Agent Platform, **three inputs must always be treated as unt
                                      │ HTTP / JSON + Zod Validation
                                      ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ Trust Zone 1: Authenticated API, 23-Permission RBAC & Session BYOK Vault   │
+│ Trust Zone 1: Authenticated API, 28-Permission RBAC & Session BYOK Vault   │
 │ • Persona Membership -> authorize(actor, action) -> 404 Cross-Tenant Mask  │
 │ • SessionKeyVault (AES-256-GCM in-RAM encryption, 96-bit IV, 2h TTL)       │
 └────────────────────────────────────┬───────────────────────────────────────┘
@@ -60,11 +60,12 @@ In an enterprise AI Agent Platform, **three inputs must always be treated as unt
 ---
 
 ### T-02: Privilege Escalation & Last-Owner Lockout
-- **Attack Vector**: A `viewer` attempts to create/publish an agent, a `developer` attempts to approve a production HITL gate or read the security audit trail, or an `owner` removes the final `owner` of an organization.
+- **Attack Vector**: A `viewer` attempts to create/publish an agent, a `developer` attempts to approve a production HITL gate or read the security audit trail / runtime diagnostic logs, or an `owner` removes the final `owner` of an organization.
 - **Server-Side Mitigation**:
-  1. Central policy function `authorize(actor, action, resourceContext)` enforces the **23-permission matrix** across `owner` (`23/23`), `admin` (`21/23`), `developer` (`16/23`), and `viewer` (`9/23`).
-  2. `assertNotRemovingLastOwner()` rejects removing or demoting the final `owner` of an organization with `409 Conflict` (`LAST_OWNER_PROTECTED`).
-  3. Denied actions are recorded in the append-only `audit_events` ledger.
+  1. Central policy function `authorize(actor, action, resourceContext)` enforces the **28-permission matrix** across `owner` (`28/28`), `admin` (`26/28`), `developer` (`18/28`), and `viewer` (`9/28`).
+  2. `GET /api/v1/logs` requires `audit.view` (`owner`/`admin` only) and filters logs to `actor.organizationId`; `POST /api/v1/logs/clear` requires `org.delete` (`owner` only) and clears only the caller organization's logs.
+  3. `assertNotRemovingLastOwner()` rejects removing or demoting the final `owner` of an organization with `409 Conflict` (`LAST_OWNER_PROTECTED`).
+  4. Denied actions are recorded in the append-only `audit_events` ledger.
 - **Verification**: `tests/unit/authorization.test.ts` and `tests/integration/http-api-and-worker.test.ts`.
 
 ---
@@ -101,28 +102,29 @@ In an enterprise AI Agent Platform, **three inputs must always be treated as unt
 ---
 
 ### T-06: Duplicate Side Effects During Retries & Replays
-- **Attack Vector**: A client double-submits `POST /api/v1/agents/:id/runs` on a flaky connection, or a worker crashes mid-run.
+- **Attack Vector**: A client double-submits `POST /api/v1/agents/:id/runs` on a flaky connection, or a worker lease expires while a run is still in progress.
 - **Server-Side Mitigation**:
   1. `POST /api/v1/agents/:id/runs` supports `X-Idempotency-Key` / `idempotencyKey` scoped to `(organization_id, idempotency_key)` and returns the existing run (`idempotentReplay: true`) instead of creating a duplicate run.
-  2. Worker jobs use `FOR UPDATE SKIP LOCKED` leases with `lease_expires_at` and `recoverExpiredJobLeases`.
-- **Verification**: `tests/integration/http-api-and-worker.test.ts`.
+  2. Worker jobs persist per-job `execution_config` in `job_queue`, use `FOR UPDATE SKIP LOCKED` leases with periodic heartbeat renewal (`renewJobLease` / `startJobLeaseHeartbeat`), enforce an atomic single-worker CAS guard (`WHERE status = 'queued'`) in `executeAgentRun()`, and safely recover expired leases via `recoverExpiredJobLeases`.
+- **Verification**: `tests/integration/run-executor.test.ts` and `tests/integration/http-api-and-worker.test.ts`.
 
 ---
 
-### T-07: Secret Leakage in Logs, Client Bundles & Error Responses
-- **Attack Vector**: Database credentials or `.env` API keys leak into browser bundles, SSE payloads, or HTTP 500 responses.
+### T-07: Secret & Cross-Tenant Diagnostic Leakage in Logs, Client Bundles & Error Responses
+- **Attack Vector**: Database credentials, `.env` API keys, or another tenant's operational logs leak into browser bundles, `/api/v1/logs`, or HTTP 500 responses.
 - **Server-Side Mitigation**:
   1. Server configuration (`src/server/config/env.ts`) and AI adapters (`src/server/ai/*`) are strictly server-only.
-  2. All API errors return standardized RFC 9457 Problem Details JSON envelopes.
-- **Verification**: `tests/unit/env.test.ts`.
+  2. Runtime diagnostic logs tag entries with `organizationId`, require `audit.view` on `GET /api/v1/logs` with strict tenant filtering (`getRuntimeLogs(limit, { organizationId })`), and require `org.delete` on `POST /api/v1/logs/clear` (`clearRuntimeLogs({ organizationId })`).
+  3. All API errors return standardized RFC 9457 Problem Details JSON envelopes.
+- **Verification**: `tests/unit/env.test.ts` and `tests/integration/http-api-and-worker.test.ts`.
 
 ---
 
 ### T-08: Session BYOK API Key Theft or Cross-Session Leakage (`v1.0.0-demo`)
-- **Attack Vector**: Visitors testing live cloud providers (`Gemini`, `ChatGPT`, `Claude`, `Grok`, `OpenRouter`) in a shared demo environment risk having their API key read by another browser session, persisted to disk, or echoed back in API responses.
+- **Attack Vector**: Visitors testing live cloud providers (`Gemini`, `ChatGPT`, `Claude`, `Grok`, `OpenRouter`) in a shared demo environment risk having their API key read by another browser session (e.g., if `localStorage` fails and falls back to a shared static session ID), persisted to disk, or echoed back in API responses.
 - **Server-Side Mitigation**:
   1. **Ephemeral AES-256-GCM In-Memory Vault (`src/server/security/session-key-vault.ts`)**: Keys are encrypted immediately upon receipt using an ephemeral 256-bit master key generated via `crypto.randomBytes(32)` in RAM, a unique 96-bit IV per write, and a 128-bit GCM authentication tag. Zero keys are ever written to disk.
-  2. **High-Entropy Session Partitioning**: Keys are keyed by the caller's `x-ordaris-demo-session` header token (requiring `>= 16` characters of high-entropy non-guessable token material; `?sessionId=` query parameters are rejected).
+  2. **CSPRNG Fail-Closed Session Partitioning**: Browser session tokens are generated exclusively via `crypto.getRandomValues` (never `Math.random()` or a static fallback) and fail closed when CSPRNG is unavailable. The server rejects static/ephemeral fallback strings (`isValidByokSessionToken`) and requires `>= 16` characters of high-entropy non-guessable token material (`?sessionId=` query parameters are rejected).
   3. **One-Way Masked Previews**: `GET /api/v1/demo/byok` and `GET /api/v1/providers/keys` only return masked metadata (`configured: true`, `maskedPreview: "AIza...9xQp"`), never the plaintext key.
   4. **Automatic 2-Hour Sliding TTL & Instant Purge**: Keys automatically expire after 2 hours of inactivity in RAM (sliding forward by 2 hours on active read) or can be wiped immediately via `DELETE /api/v1/demo/byok/:provider` or the `keys_only` / `factory_reset` sandbox reset modes.
 - **Verification**: `tests/unit/session-key-vault.test.ts` and `tests/integration/http-api-and-worker.test.ts`.

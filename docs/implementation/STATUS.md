@@ -4,9 +4,9 @@
 - **Current Phase**: Phases `A`–`H` (Core Runtime) + Phase `I` / Checkpoints `1`–`12` (`Ordaris Runtime v1.0.0-demo` Interactive Multi-Tenant Sandbox & Security Hardening) (**COMPLETE**)
 - **Last Updated**: 2026-10-31
 - **AI Execution Mode**: 3-Tier AI Resolution (`Tier 1`: Session AES-256-GCM BYOK Vault -> `Tier 2`: Server `.env` -> `Tier 3`: Deterministic `MockModelProvider` across `mock`, `gemini`, `chatgpt`, `claude`, `grok`, `openrouter`)
-- **Local Database**: File-backed PGlite PostgreSQL (`PGLITE_DATA_DIR=".local/ordaris-db"`) with `20` tables, migrations `0001`..`0006`, and composite `(organization_id, ...)` foreign keys enforced at the SQL constraint layer
-- **Runtime Processes**: Full-stack Express API + Vite UI (`pnpm dev` / `server.ts`) and standalone background queue worker (`pnpm dev:worker` / `src/server/worker/main.ts`)
-- **Automated Verification**: `21` test suites (`104/104` tests passing across unit, security, and full-stack PostgreSQL/HTTP integration), `pnpm typecheck` (`0` errors), `pnpm seed`, and `pnpm build` verified
+- **Database Engine (`DB_DRIVER=auto|postgres|pglite`)**: Dual PostgreSQL adapter supporting external PostgreSQL 16+ via `pg.Pool` (`drizzle-orm/node-postgres`) when `DATABASE_URL` is configured, and file-backed PGlite (`PGLITE_DATA_DIR=".local/ordaris-db"`) for local zero-daemon execution, with `20` tables, migrations `0001`..`0006`, and composite `(organization_id, ...)` foreign keys enforced at the SQL constraint layer
+- **Runtime Processes**: Full-stack Express API + Vite UI (`pnpm dev` / `server.ts`, compiled to `server.js` via `pnpm build`) and standalone background queue worker (`pnpm dev:worker` / `src/server/worker/main.ts`)
+- **Automated Verification**: `21` test suites (`108/108` tests passing across unit, security, and full-stack PostgreSQL/HTTP integration), `pnpm typecheck` (`0` errors), `pnpm seed`, and `pnpm build` verified
 
 ---
 
@@ -21,10 +21,10 @@
    - Strict step (`8`), tool-call (`6`), timeout (`120s`), and payload byte budgets.
    - Server-validated `ToolGateway` (`src/server/modules/tools/tool-gateway.ts`) enforcing per-version tool allowlists, `calculator` (recursive-descent arithmetic parser with **zero `eval()` or `Function()`**), organization-scoped `knowledge_search`, and `verifyModelCitations()` to strip hallucinated citations.
 4. **PostgreSQL Transactional Job Queue & Background Worker (`QUEUE-001`..`002`, `ADR-003`)**:
-   - Atomic transaction inserting `runs`, `job_queue`, and `run_events (seq=1)`.
-   - `RuntimeWorker` (`src/server/worker/main.ts`) claiming jobs via `FOR UPDATE SKIP LOCKED` leases, heartbeats, `recoverExpiredJobLeases`, and graceful `SIGINT`/`SIGTERM` shutdown.
+   - Atomic transaction inserting `runs`, `job_queue` (with per-job `execution_config` JSONB), and `run_events (seq=1)`.
+   - `RuntimeWorker` (`src/server/worker/main.ts`) claiming jobs via `FOR UPDATE SKIP LOCKED` leases (`claimNextPendingJob` and `claimPendingJobById`), periodic lease heartbeats (`renewJobLease` / `startJobLeaseHeartbeat`), single-worker CAS guard (`WHERE status = 'queued'`), `recoverExpiredJobLeases`, and graceful `SIGINT`/`SIGTERM` shutdown.
 5. **Tenant-Isolated Knowledge Ingestion & Hybrid RAG (`RAG-001`..`003`)**:
-   - Path-traversal filename sanitization (`Threat T-05`), opaque `<org_id>/<uuid>.bin` storage keys, SHA-256 deduplication, `<untrusted_knowledge_context>` prompt-injection delimiters (`Threat T-03`), and hybrid PostgreSQL `tsvector` + 64-D cosine vector ranking.
+   - Path-traversal filename sanitization (`Threat T-05`), unified `MAX_UPLOAD_BYTES` (`10 MiB`) across HTTP JSON middleware, route validation, and service layer, opaque `<org_id>/<uuid>.bin` storage keys, SHA-256 deduplication, `<untrusted_knowledge_context>` prompt-injection delimiters (`Threat T-03`), and hybrid PostgreSQL `tsvector` + 64-D cosine vector ranking.
 6. **Directed Acyclic Workflow Engine & HITL Approval Gates (`WORKFLOW-001`..`002`, `HITL-001`)**:
    - 3-color DFS cycle detector (`validateWorkflowDag` in `src/server/modules/workflows/dag-validator.ts`) reporting exact `cyclePath` arrays, safe branching evaluation without `eval()`, durable `approval_requests` (`waiting_approval`), and server-authorized `owner`/`admin` approval/rejection (`POST /api/v1/approvals/:id/decision`).
 7. **Automated Evaluation Harness, Honest FinOps Ledger & SSE Cursor Replay (`EVAL-001`, `USAGE-001`, `AUDIT-001`, `SSE-001`)**:
@@ -38,9 +38,9 @@
 ### B. Ordaris Runtime `v1.0.0-demo` Interactive Enterprise Sandbox (Checkpoints `1`–`12`)
 1. **Checkpoint 1 — Session-Scoped AES-256-GCM BYOK Vault (`src/server/security/session-key-vault.ts`)**:
    - Encrypts visitor-supplied cloud API keys in server RAM using `aes-256-gcm` with an ephemeral 256-bit CSPRNG master key (`crypto.randomBytes(32)`), 96-bit random IV, and 128-bit authentication tag.
-   - Enforces a 2-hour sliding TTL per `x-ordaris-demo-session` (minimum 16-char high-entropy token), returns only masked previews (`AIza...9xQp`), and never writes raw keys to disk or logs (`Threat T-08`).
-2. **Checkpoint 2 — 23-Permission RBAC Policy Matrix (`src/server/policies/authorization.ts`)**:
-   - Expanded fine-grained RBAC across `owner` (`23/23`), `admin` (`21/23`), `developer` (`16/23`), and `viewer` (`9/23`), plus `assertNotRemovingLastOwner()` (`409 Conflict` `LAST_OWNER_PROTECTED`).
+   - Enforces a 2-hour sliding TTL per `x-ordaris-demo-session` (CSPRNG `crypto.getRandomValues` minimum 16-char high-entropy token, failing closed when unavailable and rejecting static/ephemeral fallback strings), returns only masked previews (`AIza...9xQp`), and never writes raw keys to disk or logs (`Threat T-08`).
+2. **Checkpoint 2 — 28-Permission RBAC Policy Matrix (`src/server/policies/authorization.ts`)**:
+   - Fine-grained RBAC across `owner` (`28/28`), `admin` (`26/28`), `developer` (`18/28`), and `viewer` (`9/28`), plus `assertNotRemovingLastOwner()` (`409 Conflict` `LAST_OWNER_PROTECTED`).
 3. **Checkpoint 3 — 3-Tier Multi-Provider AI Factory (`src/server/ai/provider-factory.ts`)**:
    - Unified resolution across `mock`, `gemini`, `chatgpt`, `claude`, `grok`, and `openrouter` using `Session BYOK -> Server .env -> Deterministic Mock` fallback and live connectivity testing (`testProviderConnection`).
 4. **Checkpoint 4 — 8-Persona Multi-Tenant Seed & 3-Mode Reset (`src/server/seed.ts`)**:
@@ -55,13 +55,13 @@
 
 ---
 
-## 2. Test Evidence (`104/104` Passing Across `21` Suites)
+## 2. Test Evidence (`108/108` Passing Across `21` Suites)
 
-### Unit & Security Suites (`72/72` Passing Across `12` Suites)
+### Unit & Security Suites (`74/74` Passing Across `12` Suites)
 - `tests/unit/session-key-vault.test.ts` -> `9 pass, 0 fail` (In-RAM AES-256-GCM encryption with ephemeral CSPRNG master key, master key rotation, zero disk writes, 2-hour sliding TTL expiry & extension, high-entropy session token validation, session isolation, masked preview, and scope clearing)
 - `tests/unit/provider-factory.test.ts` -> `6 pass, 0 fail` (3-tier key resolution: Session BYOK -> `.env` -> Deterministic Mock, TTL expiry fallback, multi-engine routing, and live connection verification)
-- `tests/unit/authorization.test.ts` -> `6 pass, 0 fail` (23-permission matrix, 404 cross-tenant masking, 409 last-owner guard)
-- `tests/unit/env.test.ts` -> `9 pass, 0 fail` (Env validation, secret redaction, production `DEMO_MODE` lockout)
+- `tests/unit/authorization.test.ts` -> `6 pass, 0 fail` (28-permission matrix, 404 cross-tenant masking, 409 last-owner guard)
+- `tests/unit/env.test.ts` -> `11 pass, 0 fail` (Env validation, `WORKER_HEARTBEAT_INTERVAL_MS < WORKER_LEASE_MS`, `DB_DRIVER`, secret redaction, production `DEMO_MODE` lockout)
 - `tests/unit/health-route.test.ts` -> `4 pass, 0 fail`
 - `tests/unit/mock-model-provider.test.ts` -> `6 pass, 0 fail`
 - `tests/unit/gemini-provider.test.ts` -> `4 pass, 0 fail`
@@ -71,13 +71,13 @@
 - `tests/unit/eval-graders.test.ts` -> `6 pass, 0 fail`
 - `tests/security/tenant-isolation.test.ts` -> `4 pass, 0 fail`
 
-### PostgreSQL & Full-Stack HTTP Integration Suites (`32/32` Passing Across `9` Suites)
-- `tests/integration/http-api-and-worker.test.ts` -> `3 pass, 0 fail` (Full `v1.0.0-demo` HTTP API, worker queue, SSE replay, 8-persona RBAC, production JWT auth lockout, in-RAM BYOK vault with high-entropy session enforcement, DAG validator, 4-point isolation verifier, and 3-mode reset)
+### PostgreSQL & Full-Stack HTTP Integration Suites (`34/34` Passing Across `9` Suites)
+- `tests/integration/http-api-and-worker.test.ts` -> `4 pass, 0 fail` (Full `v1.0.0-demo` HTTP API, worker queue, SSE replay, 8-persona RBAC, production JWT auth lockout, in-RAM BYOK vault with static fallback rejection, tenant-isolated `/api/v1/logs` RBAC, targeted job dispatch, DAG validator, 4-point isolation verifier, and 3-mode reset)
 - `tests/integration/persistence-and-tenant-fk.test.ts` -> `2 pass, 0 fail` (Restart durability & composite FK violation rejection)
 - `tests/integration/flagship-e2e.test.ts` -> `4 pass, 0 fail`
 - `tests/integration/tenant-schema.test.ts` -> `6 pass, 0 fail`
 - `tests/integration/agent-versions.test.ts` -> `3 pass, 0 fail`
-- `tests/integration/run-executor.test.ts` -> `3 pass, 0 fail`
+- `tests/integration/run-executor.test.ts` -> `4 pass, 0 fail` (Bounded run execution, lease heartbeat renewal, single-worker CAS guard, and targeted `processQueuedJobById` execution)
 - `tests/integration/knowledge-rag.test.ts` -> `3 pass, 0 fail`
 - `tests/integration/workflow-hitl-audit.test.ts` -> `4 pass, 0 fail`
 - `tests/integration/eval-sse.test.ts` -> `4 pass, 0 fail`

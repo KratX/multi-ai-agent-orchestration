@@ -48,6 +48,7 @@ import {
   getRunDetailsForActor,
   listOrganizationRuns,
   listRunEventsAfterSequence,
+  processQueuedJobById,
   RunConstraintError,
 } from '../modules/runs/run-executor';
 import { createRunEventsSseResponse } from '../modules/runs/sse-stream';
@@ -179,7 +180,7 @@ const ingestDocumentBodySchema = z.object({
   mimeType: z
     .enum(['text/plain', 'text/markdown', 'application/json'])
     .default('text/markdown'),
-  content: z.string().min(1).max(500_000),
+  content: z.string().min(1),
 });
 
 const startWorkflowRunBodySchema = z.object({
@@ -416,7 +417,18 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
   const app = express();
   const contextProvider = deps.contextProvider ?? getSharedDatabase;
 
-  app.use(express.json({ limit: '1mb' }));
+  let jsonBodyLimitBytes = 10_485_760 + 262_144; // MAX_UPLOAD_BYTES (10 MiB default) + JSON envelope overhead
+  try {
+    const initialEnv = parseEnv(deps.rawEnv ?? process.env);
+    jsonBodyLimitBytes = Math.max(
+      1_048_576,
+      initialEnv.MAX_UPLOAD_BYTES + 262_144
+    );
+  } catch {
+    // Keep default 10 MiB + envelope overhead if rawEnv is intentionally invalid for health test
+  }
+
+  app.use(express.json({ limit: jsonBodyLimitBytes }));
 
   // Attach correlation requestId on every request
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -788,38 +800,46 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           });
         }
 
+        const byokScopeKey = getRequestByokScope(req, targetOrgId);
+        const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
+        const byokStatuses = listByokProviderStatuses(env, byokScopeKey);
+        const hasSessionByok = byokStatuses.some((s) => s.source === 'vault');
+        const resolutionTier =
+          body.aiEngine === 'mock' || !body.aiEngine
+            ? ('deterministic_fallback' as const)
+            : hasSessionByok
+              ? ('session_byok' as const)
+              : getProviderKeyStatus(effectiveEnv).anyConfigured
+                ? ('server_env' as const)
+                : ('deterministic_fallback' as const);
+
         const enqueued = await enqueueAgentRun(db, actor, {
           organizationId: targetOrgId,
           agentId: String(req.params.id),
           agentVersionId: body.agentVersionId,
           inputPrompt: redaction.scrubbedPrompt,
           idempotencyKey: body.idempotencyKey,
+          executionConfig: {
+            aiEngine: body.aiEngine,
+            byokScopeKey,
+            resolutionTier,
+            maxBudgetUsd: body.maxBudgetUsd,
+          },
         });
 
-        const byokScopeKey = getRequestByokScope(req, targetOrgId);
-        const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
-        const byokStatuses = listByokProviderStatuses(env, byokScopeKey);
-        const hasSessionByok = byokStatuses.some((s) => s.source === 'vault');
-
-        const worker = body.aiEngine
-          ? new RuntimeWorker({
-              db,
-              modelProvider: createLiveRuntimeModelProvider(effectiveEnv, {
-                engine: body.aiEngine as LiveAiEngineMode,
-                resolutionTier: hasSessionByok ? 'session_byok' : 'server_env',
-              }),
-            })
-          : deps.worker ??
-            new RuntimeWorker({
-              db,
-              modelProvider:
-                deps.modelProvider ?? createModelProvider(effectiveEnv),
-            });
-
         if (body.processImmediately) {
-          await worker.tickOnce();
+          await processQueuedJobById(db, enqueued.job.id, {
+            workerId: deps.worker?.workerId ?? 'worker-inline-targeted',
+            modelProvider: deps.modelProvider,
+            rawEnv: deps.rawEnv,
+            maxStepsCeiling: env.RUN_MAX_STEPS,
+            maxToolCallsCeiling: env.RUN_MAX_TOOL_CALLS,
+            timeoutMs: env.RUN_TIMEOUT_SECONDS * 1000,
+            leaseDurationMs: env.WORKER_LEASE_MS,
+            heartbeatIntervalMs: env.WORKER_HEARTBEAT_INTERVAL_MS,
+          });
         } else {
-          void worker.tickOnce();
+          deps.worker?.nudge();
         }
 
         const details = await getRunDetailsForActor(
@@ -844,14 +864,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
             },
             executionProvenance: {
               requestedEngine: body.aiEngine ?? 'mock',
-              resolutionTier:
-                body.aiEngine === 'mock' || !body.aiEngine
-                  ? 'deterministic_fallback'
-                  : hasSessionByok
-                    ? 'session_byok'
-                    : getProviderKeyStatus(effectiveEnv).anyConfigured
-                      ? 'server_env'
-                      : 'deterministic_fallback',
+              resolutionTier,
             },
           },
         });
@@ -1136,13 +1149,20 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         }
 
         const body = ingestDocumentBodySchema.parse(req.body);
-        const result = await ingestKnowledgeDocument(db, actor, {
-          organizationId: actor.organizationId,
-          title: body.title,
-          sourceFilename: body.sourceFilename,
-          mimeType: body.mimeType,
-          content: body.content,
-        });
+        const result = await ingestKnowledgeDocument(
+          db,
+          actor,
+          {
+            organizationId: actor.organizationId,
+            title: body.title,
+            sourceFilename: body.sourceFilename,
+            mimeType: body.mimeType,
+            content: body.content,
+          },
+          {
+            maxUploadBytes: env.MAX_UPLOAD_BYTES,
+          }
+        );
 
         res.status(201).json({ data: result });
       } catch (err) {
@@ -1686,12 +1706,14 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
       appendRuntimeLog({
         level: 'ERROR',
         component: 'http-api',
+        organizationId: resolvedActor?.organizationId ?? null,
         message:
           err instanceof Error ? err.message : 'Unexpected server error',
         details: {
           method: req.method,
           path: req.path,
           requestId,
+          organizationId: resolvedActor?.organizationId ?? null,
         },
       });
 

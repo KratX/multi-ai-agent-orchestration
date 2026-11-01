@@ -22,12 +22,13 @@ Introducing Redis + BullMQ, RabbitMQ, or Temporal Cloud adds mandatory external 
 We implement a **PostgreSQL-Backed Job Queue (`job_queue` table)** claimed by `RuntimeWorker` (`src/server/worker/main.ts`) using **row-level locking (`FOR UPDATE SKIP LOCKED`) and time-bounded leases**:
 
 1. **Atomic Enqueue Transaction (`enqueueAgentRun`)**:
-   - Inserts the `runs` record, the `job_queue` row (`status = 'pending'`), and sequence `1` (`run.queued`) in `run_events` inside **one PostgreSQL ACID transaction**, with composite `(organization_id, run_id)` foreign keys.
-2. **Non-Blocking Worker Claim (`FOR UPDATE SKIP LOCKED`)**:
-   - Workers claim due jobs in a short transaction, setting `status = 'claimed'`, `locked_by = workerId`, and `lease_expires_at = now() + leaseDurationMs`, and commit immediately before invoking any model or tool call.
+   - Inserts the `runs` record, the `job_queue` row (`status = 'pending'`, plus `execution_config` JSONB storing `aiEngine`, `byokScopeKey`, `resolutionTier`, and `maxBudgetUsd`), and sequence `1` (`run.queued`) in `run_events` inside **one PostgreSQL ACID transaction**, with composite `(organization_id, run_id)` foreign keys.
+2. **Non-Blocking Worker Claim & Targeted Job Ownership (`FOR UPDATE SKIP LOCKED`)**:
+   - Workers claim due jobs (`claimNextPendingJob` or targeted `claimPendingJobById`) in a short transaction, setting `status = 'claimed'`, `locked_by = workerId`, and `lease_expires_at = now() + leaseDurationMs`, and commit immediately before invoking any model or tool call.
+   - `executeAgentRun()` enforces a single-worker compare-and-swap guard (`WHERE status = 'queued'`) and periodic lease heartbeats (`renewJobLease` / `startJobLeaseHeartbeat` at `WORKER_HEARTBEAT_INTERVAL_MS`).
 3. **Expired-Lease Recovery & Bounded Retries (`recoverExpiredJobLeases`)**:
    - Sweeps `status = 'claimed' AND lease_expires_at <= now()`.
-   - If `attempts < max_attempts`, transitions the job back to `status = 'pending'` for retry; otherwise marks the job and run as `failed`.
+   - If `attempts < max_attempts` and the run has not already reached a terminal state, resets the job and run for retry; otherwise marks the job and run as `failed`.
 4. **Graceful Shutdown (`SIGINT` / `SIGTERM`)**:
    - `RuntimeWorker` stops polling on termination signals and awaits in-flight step completion before closing database handles.
 

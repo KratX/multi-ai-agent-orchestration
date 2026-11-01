@@ -113,7 +113,7 @@ interface IsolationCheckResult {
   evidence: string;
 }
 
-const RBAC_23_ACTIONS: Array<{
+const RBAC_28_ACTIONS: Array<{
   action: string;
   category: string;
   owner: boolean;
@@ -126,22 +126,29 @@ const RBAC_23_ACTIONS: Array<{
   { action: 'org.delete', category: 'Organization', owner: true, admin: false, developer: false, viewer: false },
   { action: 'member.view', category: 'RBAC & Team', owner: true, admin: true, developer: true, viewer: true },
   { action: 'member.manage', category: 'RBAC & Team', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'member.manage_owners', category: 'RBAC & Team', owner: true, admin: false, developer: false, viewer: false },
   { action: 'agent.view', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'agent.create', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: false },
   { action: 'agent.edit', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: false },
   { action: 'agent.publish', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: false },
   { action: 'agent.delete', category: 'Agent Studio', owner: true, admin: true, developer: false, viewer: false },
-  { action: 'run.view', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'run.execute', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'run.cancel', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'knowledge.view', category: 'Hybrid RAG', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'knowledge.manage', category: 'Hybrid RAG', owner: true, admin: true, developer: true, viewer: false },
   { action: 'workflow.view', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'workflow.manage', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'workflow.execute', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'workflow.approve', category: 'DAG & HITL', owner: true, admin: true, developer: false, viewer: false },
-  { action: 'audit.view', category: 'Governance & Evals', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'workflow.edit', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'workflow.publish', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'workflow.delete', category: 'DAG & HITL', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'run.view', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'run.start', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'run.cancel', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'run.retry', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'document.view', category: 'Hybrid RAG', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'document.upload', category: 'Hybrid RAG', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'document.delete', category: 'Hybrid RAG', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'approval.view', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'approval.decide', category: 'DAG & HITL', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'eval.view', category: 'Governance & Evals', owner: true, admin: true, developer: true, viewer: true },
   { action: 'eval.manage', category: 'Governance & Evals', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'eval.execute', category: 'Governance & Evals', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'audit.view', category: 'Governance & Evals', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'usage.view', category: 'Governance & Evals', owner: true, admin: true, developer: true, viewer: true },
 ];
 
 function computeAuditSeal(evt: AuditLedgerEvent): string {
@@ -886,7 +893,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         </div>
       )}
 
-      {/* SUB-TAB 4C: TEAM & RBAC MEMBERSHIP + 21-ACTION POLICY MATRIX */}
+      {/* SUB-TAB 4C: TEAM & RBAC MEMBERSHIP + 28-ACTION POLICY MATRIX */}
       {subTab === 'rbac' && (
         <div className="space-y-5">
           <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
@@ -908,7 +915,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-indigo-300 text-xs font-bold transition-all"
                 >
                   <Eye className="w-3.5 h-3.5" />
-                  <span>Inspect 21-Action RBAC Policy Matrix</span>
+                  <span>Inspect 28-Action RBAC Policy Matrix</span>
                 </button>
               </div>
             </div>
@@ -1007,10 +1014,10 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   }
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono"
                 >
-                  <option value="developer">developer (14/21 perms)</option>
-                  <option value="viewer">viewer (8/21 perms)</option>
-                  <option value="admin">admin (19/21 perms)</option>
-                  <option value="owner">owner (21/21 perms)</option>
+                  <option value="developer">developer (18/28 perms)</option>
+                  <option value="viewer">viewer (9/28 perms)</option>
+                  <option value="admin">admin (26/28 perms)</option>
+                  <option value="owner">owner (28/28 perms)</option>
                 </select>
               </div>
               <button
@@ -1201,14 +1208,14 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         </div>
       )}
 
-      {/* MODAL 1: 21-Action RBAC Policy Matrix */}
+      {/* MODAL 1: 28-Action RBAC Policy Matrix */}
       {showPolicyMatrixModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl">
             <div className="p-4 border-b border-slate-800 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-white">
-                  Ordaris 21-Action Enterprise RBAC Policy Matrix
+                  Ordaris 28-Action Enterprise RBAC Policy Matrix
                 </h3>
                 <p className="text-xs text-slate-400">
                   Enforced centrally by `src/server/policies/authorization.ts` across all HTTP routes.
@@ -1228,14 +1235,14 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   <tr className="border-b border-slate-800 text-slate-400">
                     <th className="py-2">Permission Action</th>
                     <th className="py-2">Domain</th>
-                    <th className="py-2 text-center">Owner (21/21)</th>
-                    <th className="py-2 text-center">Admin (19/21)</th>
-                    <th className="py-2 text-center">Developer (14/21)</th>
-                    <th className="py-2 text-center">Viewer (8/21)</th>
+                    <th className="py-2 text-center">Owner (28/28)</th>
+                    <th className="py-2 text-center">Admin (26/28)</th>
+                    <th className="py-2 text-center">Developer (18/28)</th>
+                    <th className="py-2 text-center">Viewer (9/28)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {RBAC_23_ACTIONS.map((row) => (
+                  {RBAC_28_ACTIONS.map((row) => (
                     <tr key={row.action} className="text-slate-200">
                       <td className="py-1.5 font-bold text-indigo-300">{row.action}</td>
                       <td className="py-1.5 text-slate-400">{row.category}</td>

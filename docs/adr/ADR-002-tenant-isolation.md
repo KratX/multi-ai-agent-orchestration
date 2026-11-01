@@ -24,10 +24,11 @@ We enforce a **four-layer defense-in-depth tenant isolation and RBAC architectur
 
 1. **Schema-Level `organization_id` Partition Key & Composite Foreign Keys**:
    - Every tenant-owned table (`agents`, `agent_versions`, `runs`, `run_steps`, `run_events`, `job_queue`, `knowledge_documents`, `document_chunks`, `workflows`, `workflow_versions`, `approval_requests`, `usage_events`, `eval_suites`, `eval_cases`, `eval_experiments`, `eval_case_results`, `audit_events`) carries a non-null `organization_id` and composite `(organization_id, ...)` foreign keys so cross-tenant parent-child links are rejected by PostgreSQL itself.
-2. **Central 23-Permission Policy Engine (`src/server/policies/authorization.ts`) with 404 Cross-Tenant Masking**:
-   - Evaluates `authorize(actor, action, resource)` across 4 roles (`owner`: `23/23`, `admin`: `21/23`, `developer`: `16/23`, `viewer`: `9/23`).
+2. **Central 28-Permission Policy Engine (`src/server/policies/authorization.ts`) with 404 Cross-Tenant Masking**:
+   - Evaluates `authorize(actor, action, resource)` across 4 roles (`owner`: `28/28`, `admin`: `26/28`, `developer`: `18/28`, `viewer`: `9/28`).
    - If `actor.organizationId !== resource.organizationId`, `authorize()` denies the request with code `'TENANT_MISMATCH'` and HTTP status **`404 Not Found`** (never `403 Forbidden`).
    - `assertNotRemovingLastOwner()` rejects removing or demoting the final `owner` of an organization with **`409 Conflict` (`LAST_OWNER_PROTECTED`)**.
+   - Runtime diagnostic logs (`GET /api/v1/logs` and `POST /api/v1/logs/clear`) enforce `audit.view` / `org.delete` RBAC and strict `organizationId` scoping.
 3. **Server-Injected Tool Context (`src/server/modules/tools/tool-gateway.ts`)**:
    - Tool argument schemas strip/ignore any model-supplied `organizationId`; `ToolGateway` always injects the server-verified `runs.organization_id`.
 4. **Live 4-Point Cross-Tenant Verification Endpoint (`GET /api/v1/demo/verify-isolation`)**:

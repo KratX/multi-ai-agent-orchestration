@@ -70,7 +70,7 @@ const PERSONA_OPTIONS: PersonaOption[] = [
     orgName: 'Acme Cyber Defense',
     orgSlug: 'acme-cyber-defense',
     role: 'owner',
-    permissionsCount: 21,
+    permissionsCount: 28,
   },
   {
     id: 'acme-admin',
@@ -78,7 +78,7 @@ const PERSONA_OPTIONS: PersonaOption[] = [
     orgName: 'Acme Cyber Defense',
     orgSlug: 'acme-cyber-defense',
     role: 'admin',
-    permissionsCount: 19,
+    permissionsCount: 26,
   },
   {
     id: 'acme-dev',
@@ -86,7 +86,7 @@ const PERSONA_OPTIONS: PersonaOption[] = [
     orgName: 'Acme Cyber Defense',
     orgSlug: 'acme-cyber-defense',
     role: 'developer',
-    permissionsCount: 14,
+    permissionsCount: 18,
   },
   {
     id: 'acme-viewer',
@@ -94,7 +94,7 @@ const PERSONA_OPTIONS: PersonaOption[] = [
     orgName: 'Acme Cyber Defense',
     orgSlug: 'acme-cyber-defense',
     role: 'viewer',
-    permissionsCount: 8,
+    permissionsCount: 9,
   },
   {
     id: 'beta-owner',
@@ -102,7 +102,7 @@ const PERSONA_OPTIONS: PersonaOption[] = [
     orgName: 'Beta Global Logistics',
     orgSlug: 'beta-logistics',
     role: 'owner',
-    permissionsCount: 21,
+    permissionsCount: 28,
   },
   {
     id: 'beta-admin',
@@ -110,7 +110,7 @@ const PERSONA_OPTIONS: PersonaOption[] = [
     orgName: 'Beta Global Logistics',
     orgSlug: 'beta-logistics',
     role: 'admin',
-    permissionsCount: 19,
+    permissionsCount: 26,
   },
   {
     id: 'beta-dev',
@@ -118,7 +118,7 @@ const PERSONA_OPTIONS: PersonaOption[] = [
     orgName: 'Beta Global Logistics',
     orgSlug: 'beta-logistics',
     role: 'developer',
-    permissionsCount: 14,
+    permissionsCount: 18,
   },
   {
     id: 'beta-viewer',
@@ -126,7 +126,7 @@ const PERSONA_OPTIONS: PersonaOption[] = [
     orgName: 'Beta Global Logistics',
     orgSlug: 'beta-logistics',
     role: 'viewer',
-    permissionsCount: 8,
+    permissionsCount: 9,
   },
 ];
 
@@ -199,30 +199,58 @@ interface SystemDiagnosticsData {
   };
 }
 
+let inMemorySessionId: string | null = null;
+
+function generateCryptographicSessionToken(): string {
+  const cryptoObj =
+    typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
+  if (!cryptoObj || typeof cryptoObj.getRandomValues !== 'function') {
+    return '';
+  }
+  const randomBytes = new Uint8Array(16);
+  cryptoObj.getRandomValues(randomBytes);
+  const hex = Array.from(randomBytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `sess_${hex}`;
+}
+
 function getOrCreateDemoSessionId(): string {
   const key = 'ordaris_demo_session_id';
   try {
-    const existing = window.localStorage.getItem(key);
-    if (existing && existing.trim().length >= 16) {
-      return existing.trim();
-    }
-    const randomBytes = new Uint8Array(16);
-    if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
-      window.crypto.getRandomValues(randomBytes);
-    } else {
-      for (let i = 0; i < randomBytes.length; i += 1) {
-        randomBytes[i] = Math.floor(Math.random() * 256);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const existing = window.localStorage.getItem(key);
+      if (
+        existing &&
+        existing.trim().length >= 16 &&
+        !existing.includes('ephemeral')
+      ) {
+        return existing.trim();
       }
     }
-    const hex = Array.from(randomBytes)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    const created = `sess_${hex}`;
-    window.localStorage.setItem(key, created);
-    return created;
   } catch {
-    return 'sess_browser_ephemeral_9f8e7d6c5b4a3210';
+    // Ignore storage read error and fall through to CSPRNG token generation
   }
+
+  if (inMemorySessionId) {
+    return inMemorySessionId;
+  }
+
+  const created = generateCryptographicSessionToken();
+  if (!created) {
+    // Fail closed when cryptographically secure random generation is unavailable
+    return '';
+  }
+
+  inMemorySessionId = created;
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, created);
+    }
+  } catch {
+    // Keep unique CSPRNG token in memory for this visitor without falling back to a shared static ID
+  }
+  return created;
 }
 
 export function App() {
@@ -303,10 +331,10 @@ export function App() {
       const autoDetails =
         customDetails?.trim() ||
         (tone === 'error'
-          ? `Enforced by Zero-Trust RBAC & Tenant Boundary (${activePersona.orgName} • Role: ${activePersona.role.toUpperCase()} • ${activePersona.permissionsCount}/21 permissions)`
+          ? `Enforced by Zero-Trust RBAC & Tenant Boundary (${activePersona.orgName} • Role: ${activePersona.role.toUpperCase()} • ${activePersona.permissionsCount}/28 permissions)`
           : tone === 'success'
             ? `Verified in ${activePersona.orgName} (${activePersona.orgSlug}) • Actor: ${activePersona.label} • Engine: ${selectedEngine}`
-            : `Active Workspace: ${activePersona.orgName} • Persona: ${activePersona.role.toUpperCase()} (${activePersona.permissionsCount}/21) • Engine: ${selectedEngine}`);
+            : `Active Workspace: ${activePersona.orgName} • Persona: ${activePersona.role.toUpperCase()} (${activePersona.permissionsCount}/28) • Engine: ${selectedEngine}`);
 
       const entry = {
         id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -314,7 +342,7 @@ export function App() {
         tone,
         details: autoDetails,
         orgName: activePersona.orgName,
-        role: `${activePersona.role.toUpperCase()} (${activePersona.permissionsCount}/21)`,
+        role: `${activePersona.role.toUpperCase()} (${activePersona.permissionsCount}/28)`,
         engine: selectedEngine,
         timestamp: nowStr,
       };
@@ -827,7 +855,7 @@ export function App() {
           notify(
             `Execution Rejected (HTTP ${res.status} ${body?.code || 'POLICY_DENIED'})`,
             'error',
-            `${body?.detail || 'Execution rejected by RBAC or guardrail policy'} • Active Role: ${activePersona.role.toUpperCase()} (${activePersona.permissionsCount}/21) • Logged to Security Audit Ledger.`
+            `${body?.detail || 'Execution rejected by RBAC or guardrail policy'} • Active Role: ${activePersona.role.toUpperCase()} (${activePersona.permissionsCount}/28) • Logged to Security Audit Ledger.`
           );
           await fetchWorkspace();
           return;
@@ -1313,7 +1341,7 @@ export function App() {
                   notify(
                     `Switched Active Persona to ${nextP.label}`,
                     'info',
-                    `Tenant: ${nextP.orgName} (${nextP.orgSlug}) • Role: ${nextP.role.toUpperCase()} (${nextP.permissionsCount}/21 granular permissions)`
+                    `Tenant: ${nextP.orgName} (${nextP.orgSlug}) • Role: ${nextP.role.toUpperCase()} (${nextP.permissionsCount}/28 granular permissions)`
                   );
                 }}
                 className="bg-transparent text-xs font-semibold text-white focus:outline-none cursor-pointer max-w-[180px] truncate"
@@ -1330,7 +1358,7 @@ export function App() {
                       value={p.id}
                       className="bg-slate-900 text-slate-100"
                     >
-                      {p.label} [{p.role.toUpperCase()} • {p.permissionsCount}/21]
+                      {p.label} [{p.role.toUpperCase()} • {p.permissionsCount}/28]
                     </option>
                   ))}
                 </optgroup>
@@ -1346,7 +1374,7 @@ export function App() {
                       value={p.id}
                       className="bg-slate-900 text-slate-100"
                     >
-                      {p.label} [{p.role.toUpperCase()} • {p.permissionsCount}/21]
+                      {p.label} [{p.role.toUpperCase()} • {p.permissionsCount}/28]
                     </option>
                   ))}
                 </optgroup>
@@ -1360,7 +1388,7 @@ export function App() {
                       : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
                 }`}
               >
-                {activePersona.role} ({activePersona.permissionsCount}/21)
+                {activePersona.role} ({activePersona.permissionsCount}/28)
               </span>
             </div>
 

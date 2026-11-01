@@ -23,6 +23,7 @@ export interface RuntimeLogEntry {
   level: 'INFO' | 'WARN' | 'ERROR';
   component: string;
   message: string;
+  organizationId?: string | null;
   details?: Record<string, unknown>;
 }
 
@@ -33,14 +34,23 @@ export function appendRuntimeLog(entry: {
   level: 'INFO' | 'WARN' | 'ERROR';
   component: string;
   message: string;
+  organizationId?: string | null;
   details?: Record<string, unknown>;
 }): RuntimeLogEntry {
+  const resolvedOrgId =
+    entry.organizationId ??
+    (typeof entry.details?.organizationId === 'string' &&
+    entry.details.organizationId.trim().length > 0
+      ? entry.details.organizationId.trim()
+      : null);
+
   const record: RuntimeLogEntry = {
     id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     timestamp: new Date().toISOString(),
     level: entry.level,
     component: entry.component,
     message: entry.message,
+    organizationId: resolvedOrgId,
     details: entry.details,
   };
 
@@ -74,12 +84,70 @@ export function appendRuntimeLog(entry: {
   return record;
 }
 
-export function getRuntimeLogs(limit = 80): RuntimeLogEntry[] {
-  return runtimeLogBuffer.slice(0, limit);
+export interface GetRuntimeLogsOptions {
+  organizationId?: string;
+  includeSystemLogs?: boolean;
 }
 
-export function clearRuntimeLogs(): void {
-  runtimeLogBuffer.length = 0;
+export function getRuntimeLogs(
+  limit = 80,
+  options?: GetRuntimeLogsOptions
+): RuntimeLogEntry[] {
+  const targetOrgId = options?.organizationId?.trim();
+  if (!targetOrgId) {
+    return runtimeLogBuffer.slice(0, limit);
+  }
+
+  const includeSystemLogs = options?.includeSystemLogs !== false;
+  const filtered = runtimeLogBuffer.filter((entry) => {
+    const entryOrgId =
+      entry.organizationId ??
+      (typeof entry.details?.organizationId === 'string'
+        ? entry.details.organizationId
+        : null);
+
+    if (entryOrgId) {
+      return entryOrgId === targetOrgId;
+    }
+
+    // Never leak untagged operational logs that carry session/user/run identifiers
+    const details = entry.details ?? {};
+    if (
+      details.byokScopeKey !== undefined ||
+      details.actorUserId !== undefined ||
+      details.runId !== undefined
+    ) {
+      return false;
+    }
+
+    return includeSystemLogs;
+  });
+
+  return filtered.slice(0, limit);
+}
+
+export function clearRuntimeLogs(options?: { organizationId?: string }): number {
+  const targetOrgId = options?.organizationId?.trim();
+  if (!targetOrgId) {
+    const count = runtimeLogBuffer.length;
+    runtimeLogBuffer.length = 0;
+    return count;
+  }
+
+  let removedCount = 0;
+  for (let i = runtimeLogBuffer.length - 1; i >= 0; i -= 1) {
+    const entry = runtimeLogBuffer[i]!;
+    const entryOrgId =
+      entry.organizationId ??
+      (typeof entry.details?.organizationId === 'string'
+        ? entry.details.organizationId
+        : null);
+    if (entryOrgId === targetOrgId) {
+      runtimeLogBuffer.splice(i, 1);
+      removedCount += 1;
+    }
+  }
+  return removedCount;
 }
 
 const booleanStringSchema = z
@@ -91,6 +159,7 @@ export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     APP_URL: z.string().url().default('http://localhost:3000'),
+    DB_DRIVER: z.enum(['auto', 'postgres', 'pglite']).default('auto'),
     DATABASE_URL: z
       .string()
       .min(1, 'DATABASE_URL must not be empty')

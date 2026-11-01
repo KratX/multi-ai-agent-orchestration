@@ -32,9 +32,18 @@ export async function evaluateDatabaseReadiness(
 ): Promise<ReadinessCheckResult> {
   const probe = createDrizzleReadinessProbe(contextProvider);
   const res = await probe.ping();
+  let engine: 'postgres' | 'pglite' = 'pglite';
+  try {
+    const ctx = await contextProvider();
+    if (ctx.engine === 'postgres') {
+      engine = 'postgres';
+    }
+  } catch {
+    // Keep default engine label when context fails to initialize
+  }
   return {
     databaseReady: res.reachable,
     latencyMs: res.latencyMs,
-    engine: 'pglite',
+    engine,
   };
 }

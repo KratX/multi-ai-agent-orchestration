@@ -26,9 +26,9 @@ We adopt a strict **Zero-Required-Spend, Local-First Architecture with 3-Tier AI
 1. **3-Tier AI Key Resolution Hierarchy (`src/server/ai/provider-factory.ts`)**:
    - **Tier 1 — Session-Scoped AES-256-GCM BYOK Vault (`src/server/security/session-key-vault.ts`)**: Visitors can enter free-tier keys (`gemini`, `chatgpt`, `claude`, `grok`, `openrouter`) in the UI's Session BYOK Drawer. Keys are encrypted in server RAM using `aes-256-gcm` under an ephemeral 256-bit CSPRNG master key scoped to `x-ordaris-demo-session` with a 2-hour sliding TTL.
    - **Tier 2 — Server `.env` Fallback**: Optional server-side environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`).
-   - **Tier 3 — Deterministic Simulation Engine (`MockModelProvider`, `AI_MODE=demo` default)**: The application boots, runs its full 104-test suite, and executes end-to-end multi-step agent, RAG, and workflow runs with **zero network calls and zero API keys required**.
-2. **PostgreSQL as the Single Infrastructure Dependency**:
-   - We use PostgreSQL (via embedded file-backed `PGlite` in `.local/ordaris-db` for instant zero-daemon local execution, or `docker-compose.yml` for external Postgres 16) for all 20 relational tables, transactional job queuing (`FOR UPDATE SKIP LOCKED`), append-only event replay (`run_events`), and hybrid `tsvector` + 64-D cosine vector RAG.
+   - **Tier 3 — Deterministic Simulation Engine (`MockModelProvider`, `AI_MODE=demo` default)**: The application boots, runs its full 108-test suite, and executes end-to-end multi-step agent, RAG, and workflow runs with **zero network calls and zero API keys required**.
+2. **PostgreSQL as the Single Infrastructure Dependency (`DB_DRIVER=auto|postgres|pglite`)**:
+   - We use PostgreSQL (via `pg.Pool` + `drizzle-orm/node-postgres` when connected to external PostgreSQL 16 in `docker-compose.yml` or managed Postgres, and embedded file-backed `PGlite` in `.local/ordaris-db` for instant zero-daemon local execution) for all 20 relational tables, transactional job queuing (`FOR UPDATE SKIP LOCKED`), append-only event replay (`run_events`), and hybrid `tsvector` + 64-D cosine vector RAG.
 3. **Local Opaque File Storage in Development**:
    - Uploaded knowledge documents are stored under `.local/uploads/` using opaque UUID keys (`<orgId>/<uuid>.bin`), avoiding mandatory cloud object storage accounts.
 4. **Honest FinOps Labeling of Simulated vs. Live Telemetry**:

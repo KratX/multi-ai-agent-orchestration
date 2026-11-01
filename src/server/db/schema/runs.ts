@@ -74,6 +74,13 @@ export const JOB_STATUSES = [
 ] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
+export interface JobExecutionConfig {
+  aiEngine?: string;
+  byokScopeKey?: string;
+  resolutionTier?: 'session_byok' | 'server_env' | 'deterministic_fallback';
+  maxBudgetUsd?: number;
+}
+
 export const runs = pgTable(
   'runs',
   {
@@ -235,6 +242,10 @@ export const jobQueue = pgTable(
       .references(() => runs.id, { onDelete: 'cascade' }),
     jobType: text('job_type').notNull().default('agent_run'),
     status: text('status').$type<JobStatus>().notNull().default('pending'),
+    executionConfig: jsonb('execution_config')
+      .$type<JobExecutionConfig>()
+      .notNull()
+      .default({}),
     attempts: integer('attempts').notNull().default(0),
     maxAttempts: integer('max_attempts').notNull().default(3),
     availableAt: timestamp('available_at', { withTimezone: true })
@@ -368,6 +379,7 @@ CREATE TABLE IF NOT EXISTS job_queue (
   run_id UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
   job_type TEXT NOT NULL DEFAULT 'agent_run',
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'locked', 'completed', 'dead_letter')),
+  execution_config JSONB NOT NULL DEFAULT '{}'::jsonb,
   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts >= 1),
   available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -383,6 +395,8 @@ CREATE TABLE IF NOT EXISTS job_queue (
     ON DELETE CASCADE,
   CONSTRAINT job_queue_run_id_unique UNIQUE (run_id)
 );
+
+ALTER TABLE job_queue ADD COLUMN IF NOT EXISTS execution_config JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS job_queue_claim_idx
   ON job_queue (status, available_at ASC);

@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { parseEnv } from '../../config/env';
 import type { OrdarisDatabase } from '../../db/client';
 import {
   ALLOWED_DOCUMENT_MIME_TYPES,
@@ -219,7 +220,13 @@ export async function ingestKnowledgeDocument(
   }
 
   const byteSize = Buffer.byteLength(normalizedContent, 'utf8');
-  const maxUploadBytes = options.maxUploadBytes ?? MAX_DOCUMENT_UPLOAD_BYTES;
+  let defaultEnvMaxBytes = MAX_DOCUMENT_UPLOAD_BYTES;
+  try {
+    defaultEnvMaxBytes = parseEnv(process.env).MAX_UPLOAD_BYTES;
+  } catch {
+    defaultEnvMaxBytes = MAX_DOCUMENT_UPLOAD_BYTES;
+  }
+  const maxUploadBytes = options.maxUploadBytes ?? defaultEnvMaxBytes;
   if (byteSize > maxUploadBytes) {
     throw new KnowledgeConstraintError(
       'DOCUMENT_TOO_LARGE',

@@ -35,6 +35,7 @@ import {
   enqueueAgentRun,
   getRunDetailsForActor,
   listOrganizationRuns,
+  processQueuedJobById,
 } from '../modules/runs/run-executor';
 import { RuntimeWorker } from '../worker/main';
 import {
@@ -573,7 +574,9 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
           byokProviders,
           byokScopeKey,
           logFilePath: LOG_FILE_PATH,
-          runtimeLogs: getRuntimeLogs(80),
+          runtimeLogs: canViewAudit
+            ? getRuntimeLogs(80, { organizationId: requestedOrgId })
+            : [],
           personas,
           agents: orgAgents,
           agentVersions: orgVersions,
@@ -655,8 +658,10 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
       appendRuntimeLog({
         level: 'INFO',
         component: 'workspace-reset',
+        organizationId: actor.organizationId,
         message: `Executed demo workspace reset (mode=${resetMode}, clearedKeys=${result.clearedByokKeysCount})`,
         details: {
+          organizationId: actor.organizationId,
           resetMode,
           clearedByokKeysCount: result.clearedByokKeysCount,
           byokScopeKey,
@@ -695,9 +700,16 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
         if (!actor) {
           throw unauthenticatedError();
         }
+        requireAuthorization(actor, 'audit.view', {
+          organizationId: actor.organizationId,
+          resourceType: 'runtime_logs',
+        });
+
         const byokScopeKey = getRequestByokScope(req, actor.organizationId);
         const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
-        const rawLogs = getRuntimeLogs(120);
+        const rawLogs = getRuntimeLogs(120, {
+          organizationId: actor.organizationId,
+        });
         const entries = rawLogs.map((l) => ({
           timestamp: l.timestamp,
           level: String(l.level || 'info').toLowerCase(),
@@ -729,22 +741,26 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
         if (!actor) {
           throw unauthenticatedError();
         }
-        requireAuthorization(actor, 'org.manage', {
+        requireAuthorization(actor, 'org.delete', {
           organizationId: actor.organizationId,
           resourceType: 'runtime_logs',
         });
 
-        clearRuntimeLogs();
+        clearRuntimeLogs({ organizationId: actor.organizationId });
         appendRuntimeLog({
           level: 'INFO',
           component: 'diagnostic-logger',
-          message: 'Cleared in-memory runtime log buffer via Ordaris Log Explorer.',
+          organizationId: actor.organizationId,
+          message: 'Cleared organization-scoped runtime log buffer via Ordaris Log Explorer.',
           details: {
+            organizationId: actor.organizationId,
             actorUserId: actor.userId,
             actorRole: actor.role,
           },
         });
-        const rawLogs = getRuntimeLogs(50);
+        const rawLogs = getRuntimeLogs(50, {
+          organizationId: actor.organizationId,
+        });
         res.status(200).json({
           data: {
             cleared: true,
@@ -953,23 +969,36 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
         const hasSessionByok = byokStatuses.some((s) => s.source === 'vault');
 
         const executeEngineRun = async (engine: string) => {
+          const resolutionTier =
+            engine === 'mock'
+              ? ('deterministic_fallback' as const)
+              : hasSessionByok
+                ? ('session_byok' as const)
+                : ('server_env' as const);
           const enqueued = await enqueueAgentRun(db, actor, {
             organizationId: actor.organizationId,
             agentId,
             agentVersionId: body.agentVersionId,
             inputPrompt: body.inputPrompt,
+            executionConfig: {
+              aiEngine: engine,
+              byokScopeKey,
+              resolutionTier,
+            },
           });
-          const worker = new RuntimeWorker({
-            db,
+          await processQueuedJobById(db, enqueued.job.id, {
+            workerId: `worker-arena-${engine}`,
+            rawEnv,
             modelProvider:
               engine === 'mock'
                 ? createModelProvider(effectiveEnv)
                 : createLiveRuntimeModelProvider(effectiveEnv, {
                     engine: engine as LiveAiEngineMode,
-                    resolutionTier: hasSessionByok ? 'session_byok' : 'server_env',
+                    resolutionTier: hasSessionByok
+                      ? 'session_byok'
+                      : 'server_env',
                   }),
           });
-          await worker.tickOnce();
           return getRunDetailsForActor(
             db,
             actor,
@@ -1059,10 +1088,12 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
       appendRuntimeLog({
         level: 'INFO',
         component: 'session-key-vault',
+        organizationId: actor.organizationId,
         message: keyValue.trim()
           ? `Saved AES-256-GCM encrypted Session BYOK key in RAM for ${providerId}`
           : `Removed Session BYOK override for ${providerId}`,
         details: {
+          organizationId: actor.organizationId,
           byokScopeKey,
           provider: providerId,
           actorUserId: actor.userId,
@@ -1114,8 +1145,10 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
       appendRuntimeLog({
         level: 'INFO',
         component: 'session-key-vault',
+        organizationId: actor.organizationId,
         message: `Wiped ${clearedCount} Session BYOK key(s) from RAM scope ${byokScopeKey}`,
         details: {
+          organizationId: actor.organizationId,
           byokScopeKey,
           clearedCount,
           actorUserId: actor.userId,
