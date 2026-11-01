@@ -165,7 +165,28 @@ test('REPO-003: getPublicEnvSummary redacts raw secret values and exposes only s
   assert.equal(summary.aiMode, 'provider');
   assert.equal(summary.hasLiveProviderKey, true);
   assert.equal(summary.limits.runMaxSteps, 8);
+  assert.equal(summary.limits.workerLeaseMs, 30_000);
+  assert.equal(summary.limits.workerHeartbeatIntervalMs, 10_000);
   assert.equal(serialized.includes('super-secret-provider-key'), false);
   assert.equal(serialized.includes('custom-secret-with-at-least-16-chars'), false);
   assert.equal(serialized.includes('secret_pass'), false);
+});
+
+test('REPO-003: parseEnv rejects WORKER_HEARTBEAT_INTERVAL_MS >= WORKER_LEASE_MS and scales default heartbeat when WORKER_LEASE_MS is customized', () => {
+  assert.throws(
+    () =>
+      parseEnv({
+        AI_MODE: 'demo',
+        WORKER_LEASE_MS: '10000',
+        WORKER_HEARTBEAT_INTERVAL_MS: '10000',
+      }),
+    /WORKER_HEARTBEAT_INTERVAL_MS must be strictly less than WORKER_LEASE_MS/
+  );
+
+  const scaledEnv = parseEnv({
+    AI_MODE: 'demo',
+    WORKER_LEASE_MS: '6000',
+  });
+  assert.equal(scaledEnv.WORKER_LEASE_MS, 6000);
+  assert.equal(scaledEnv.WORKER_HEARTBEAT_INTERVAL_MS, 2000);
 });

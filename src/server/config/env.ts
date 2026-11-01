@@ -171,10 +171,26 @@ export const envSchema = z
       .min(5_000)
       .max(300_000)
       .default(30_000),
+    WORKER_HEARTBEAT_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(100)
+      .max(60_000)
+      .default(10_000),
 
     DEMO_MODE: booleanStringSchema,
   })
   .superRefine((env, ctx) => {
+    // Rule 0: Worker lease heartbeat interval must be strictly less than the worker lease duration.
+    if (env.WORKER_HEARTBEAT_INTERVAL_MS >= env.WORKER_LEASE_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['WORKER_HEARTBEAT_INTERVAL_MS'],
+        message:
+          'WORKER_HEARTBEAT_INTERVAL_MS must be strictly less than WORKER_LEASE_MS so active runs renew leases before expiration.',
+      });
+    }
+
     // Rule 1: If AI_MODE is "provider", a real non-placeholder API key is mandatory.
     if (env.AI_MODE === 'provider') {
       const effectiveKey = (
@@ -281,6 +297,18 @@ export function parseEnv(rawEnv: Record<string, string | undefined> = process.en
   if (normalized.NODE_ENV === 'production' && normalized.DEMO_MODE === undefined) {
     normalized.DEMO_MODE = 'false';
   }
+  // If WORKER_LEASE_MS is explicitly set without WORKER_HEARTBEAT_INTERVAL_MS, scale the default heartbeat to 1/3 of lease
+  if (
+    normalized.WORKER_LEASE_MS !== undefined &&
+    normalized.WORKER_HEARTBEAT_INTERVAL_MS === undefined
+  ) {
+    const parsedLease = Number(normalized.WORKER_LEASE_MS);
+    if (Number.isFinite(parsedLease) && parsedLease >= 5_000) {
+      normalized.WORKER_HEARTBEAT_INTERVAL_MS = String(
+        Math.max(100, Math.min(10_000, Math.floor(parsedLease / 3)))
+      );
+    }
+  }
 
   const result = envSchema.safeParse(normalized);
   if (!result.success) {
@@ -317,6 +345,7 @@ export function getPublicEnvSummary(env: AppEnv = parseEnv()) {
       maxUploadBytes: env.MAX_UPLOAD_BYTES,
       workerConcurrency: env.WORKER_CONCURRENCY,
       workerLeaseMs: env.WORKER_LEASE_MS,
+      workerHeartbeatIntervalMs: env.WORKER_HEARTBEAT_INTERVAL_MS,
     },
   };
 }

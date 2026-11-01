@@ -99,8 +99,6 @@ export async function startOrdarisServer(port = 3000) {
   return { app, httpServer, worker, dbContext, shutdown };
 }
 
-export const startAegisServer = startOrdarisServer;
-
 const isDirectExecution =
   process.argv[1] &&
   fileURLToPath(import.meta.url).endsWith(process.argv[1].replace(/^file:\/\//, ''));

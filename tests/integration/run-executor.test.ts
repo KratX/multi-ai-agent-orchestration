@@ -350,4 +350,128 @@ describe('RUN-001 & RUN-002 & QUEUE-001: Bounded Agent Runtime & PostgreSQL Job 
       await ctx.close();
     }
   });
+
+  it('renews job lease via heartbeat when run duration exceeds leaseDurationMs and blocks duplicate concurrent executeAgentRun calls', async () => {
+    const ctx = await createDatabaseClient();
+    try {
+      const user = await ensureUser(ctx.db, {
+        authSubject: 'sub_concurrency_op',
+        email: 'concurrency@ordaris.io',
+        displayName: 'Concurrency Operator',
+      });
+      const { organization, membership } = await createOrganizationWithOwner(
+        ctx.db,
+        {
+          name: 'Acme Concurrency Org',
+          slug: 'acme-concurrency-org',
+          creatorUserId: user.id,
+        }
+      );
+      const actor = {
+        userId: user.id,
+        organizationId: organization.id,
+        role: membership.role,
+      };
+
+      const draft = await createAgentDraft(ctx.db, actor, {
+        organizationId: organization.id,
+        name: 'Long Running Agent',
+        slug: 'long-running-agent',
+        draftSystemPrompt: 'Long running agent with lease heartbeat.',
+        draftToolAllowlist: ['calculator'],
+      });
+      await publishAgentVersion(ctx.db, actor, organization.id, draft.id);
+
+      const enqueued = await enqueueAgentRun(ctx.db, actor, {
+        organizationId: organization.id,
+        agentId: draft.id,
+        inputPrompt: 'Calculate 21 * 2 with slow model turn',
+      });
+
+      let modelInvocations = 0;
+      let recoveriesAttemptedDuringRun = 0;
+      let requeuedDuringActiveRun = 0;
+
+      const slowProvider = {
+        providerName: 'slow-mock-provider',
+        source: 'provider' as const,
+        async generate() {
+          modelInvocations += 1;
+          // Sleep 260ms across 4 intervals while leaseDurationMs is only 120ms and heartbeatIntervalMs is 30ms.
+          // Without heartbeat renewal, lease_expires_at would expire after 120ms and recoverExpiredJobLeases() would requeue it!
+          for (let i = 0; i < 4; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 65));
+            const recovery = await recoverExpiredJobLeases(ctx.db);
+            recoveriesAttemptedDuringRun += 1;
+            requeuedDuringActiveRun += recovery.requeuedCount;
+          }
+          return {
+            providerName: 'slow-mock-provider',
+            modelName: 'slow-mock-v1',
+            finishReason: 'stop' as const,
+            reasoningSummary: 'Completed slow turn with active lease heartbeats.',
+            answer: 'The answer is 42.',
+            toolCalls: [],
+            citations: [],
+            usage: {
+              inputTokens: 25,
+              outputTokens: 15,
+              totalTokens: 40,
+              estimatedCostUsd: 0.0001,
+              source: 'provider' as const,
+              isSimulated: false,
+            },
+          };
+        },
+        async embedText() {
+          return new Array(64).fill(0);
+        },
+      };
+
+      // Launch Worker 1 (via processNextQueuedJob with 120ms lease & 30ms heartbeat)
+      // AND a concurrent duplicate executeAgentRun call on the same runId
+      const worker1Promise = processNextQueuedJob(ctx.db, {
+        workerId: 'worker-heartbeat-1',
+        leaseDurationMs: 120,
+        heartbeatIntervalMs: 30,
+        modelProvider: slowProvider,
+      });
+
+      // Wait 40ms so Worker 1 has claimed and started the run, then attempt a competing executeAgentRun
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const competingRunResult = await executeAgentRun(ctx.db, enqueued.run.id, {
+        workerId: 'worker-competing-2',
+        modelProvider: slowProvider,
+      });
+
+      // Competing worker must be blocked from executing the already-running run
+      assert.ok(
+        competingRunResult.status === 'running' ||
+          competingRunResult.status === 'succeeded'
+      );
+
+      // Also attempt to claim a job with Worker 2 while Worker 1 is still mid-flight past the initial 120ms lease window
+      await new Promise((resolve) => setTimeout(resolve, 110));
+      const competingClaim = await claimNextPendingJob(
+        ctx.db,
+        'worker-competing-2',
+        120
+      );
+      assert.equal(competingClaim, null);
+
+      const worker1Outcome = await worker1Promise;
+      assert.ok(worker1Outcome);
+      assert.equal(worker1Outcome.run.status, 'succeeded');
+      assert.equal(worker1Outcome.job.status, 'completed');
+
+      // Crucial assertions:
+      // 1. recoverExpiredJobLeases() ran 4 times after the original 120ms lease window, and requeued 0 jobs because heartbeats extended lease_expires_at
+      assert.equal(recoveriesAttemptedDuringRun, 4);
+      assert.equal(requeuedDuringActiveRun, 0);
+      // 2. The AI model provider was invoked EXACTLY ONCE (no duplicate execution or double billing)
+      assert.equal(modelInvocations, 1);
+    } finally {
+      await ctx.close();
+    }
+  });
 });

@@ -37,10 +37,6 @@ export const ordarisSchema = {
 
 export type OrdarisDatabase = PgliteDatabase<typeof ordarisSchema>;
 
-// Backward-compatible schema and database type aliases
-export const aegisSchema = ordarisSchema;
-export type AegisDatabase = OrdarisDatabase;
-
 export interface DatabaseContext {
   pg: PGlite;
   db: OrdarisDatabase;

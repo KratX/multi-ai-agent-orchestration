@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
-import { startOrdarisServer, startAegisServer } from '../../../server';
+import { startOrdarisServer } from '../../../server';
 
-export { startOrdarisServer, startAegisServer };
+export { startOrdarisServer };
 
 const isDirectExecution =
   process.argv[1] &&

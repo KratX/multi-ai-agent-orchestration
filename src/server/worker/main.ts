@@ -30,6 +30,7 @@ export interface RuntimeWorkerOptions {
   workerId?: string;
   pollIntervalMs?: number;
   leaseDurationMs?: number;
+  heartbeatIntervalMs?: number;
   concurrency?: number;
   maxStepsCeiling?: number;
   maxToolCallsCeiling?: number;
@@ -42,6 +43,7 @@ export class RuntimeWorker {
   private readonly db: OrdarisDatabase;
   private readonly pollIntervalMs: number;
   private readonly leaseDurationMs: number;
+  private readonly heartbeatIntervalMs: number;
   private readonly concurrency: number;
   private readonly maxStepsCeiling: number;
   private readonly maxToolCallsCeiling: number;
@@ -59,6 +61,15 @@ export class RuntimeWorker {
     this.workerId = options.workerId ?? `worker-${process.pid}`;
     this.pollIntervalMs = options.pollIntervalMs ?? env.WORKER_POLL_INTERVAL_MS;
     this.leaseDurationMs = options.leaseDurationMs ?? env.WORKER_LEASE_MS;
+    this.heartbeatIntervalMs =
+      options.heartbeatIntervalMs ??
+      Math.max(
+        50,
+        Math.min(
+          env.WORKER_HEARTBEAT_INTERVAL_MS,
+          Math.floor(this.leaseDurationMs / 3)
+        )
+      );
     this.concurrency = options.concurrency ?? env.WORKER_CONCURRENCY;
     this.maxStepsCeiling = options.maxStepsCeiling ?? env.RUN_MAX_STEPS;
     this.maxToolCallsCeiling = options.maxToolCallsCeiling ?? env.RUN_MAX_TOOL_CALLS;
@@ -75,7 +86,8 @@ export class RuntimeWorker {
   }
 
   /**
-   * Recovers expired leases and claims/executes one pending job if available.
+   * Recovers expired leases and claims/executes one pending job if available,
+   * maintaining an active lease heartbeat for the duration of execution.
    */
   public async tickOnce(): Promise<{ job: JobQueueRow; run: RunRow } | null> {
     await recoverExpiredJobLeases(this.db);
@@ -83,6 +95,7 @@ export class RuntimeWorker {
     const outcome = await processNextQueuedJob(this.db, {
       workerId: this.workerId,
       leaseDurationMs: this.leaseDurationMs,
+      heartbeatIntervalMs: this.heartbeatIntervalMs,
       modelProvider: this.modelProvider,
       maxStepsCeiling: this.maxStepsCeiling,
       maxToolCallsCeiling: this.maxToolCallsCeiling,
