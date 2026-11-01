@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
-import type { AegisDatabase } from '../../db/client';
+import type { OrdarisDatabase } from '../../db/client';
 import {
   ensureUser,
   listOrganizationMembers,
@@ -47,7 +47,7 @@ import { clearByokScope } from '../../ai/byok-vault';
 import { getPublicEnvSummary, parseEnv } from '../../config/env';
 
 /**
- * Aegis Runtime (v1.0.0-demo) — Interactive Demo Workspace, Isolation Verifier & Diagnostics Service
+ * Ordaris Runtime (v1.0.0-demo) — Interactive Demo Workspace, Isolation Verifier & Diagnostics Service
  * (`src/server/modules/workspace/demo-workspace-service.ts`)
  *
  * Replaces `saas-workspace-service.ts` with a 100% pure Demo Sandbox service supporting:
@@ -76,7 +76,7 @@ export interface DemoResetResult {
 }
 
 export interface WorkspaceQuotaStatus {
-  planName: 'Aegis Enterprise Sandbox';
+  planName: 'Ordaris Enterprise Sandbox';
   limits: {
     maxAgents: number;
     maxDocuments: number;
@@ -144,7 +144,7 @@ export interface SystemDiagnosticsReport {
  * - `keys_only`: Wipes Session BYOK keys only while keeping all current workspace runs, documents, and approvals untouched.
  */
 export async function resetDemoSandboxOnly(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   options?: DemoResetOptions
 ): Promise<DemoResetResult> {
   const mode: DemoResetMode = options?.mode ?? 'workspace_only';
@@ -183,7 +183,7 @@ export async function resetDemoSandboxOnly(
  * `Acme Cyber Defense` and `Beta Logistics` directly against PostgreSQL.
  */
 export async function verifyMultiTenantIsolation(
-  db: AegisDatabase
+  db: OrdarisDatabase
 ): Promise<MultiTenantIsolationReport> {
   const [acmeOrg] = await db
     .select()
@@ -394,7 +394,7 @@ export async function verifyMultiTenantIsolation(
  * for the Footer DB Diagnostics Modal.
  */
 export async function getSystemDiagnostics(
-  db: AegisDatabase
+  db: OrdarisDatabase
 ): Promise<SystemDiagnosticsReport> {
   const env = parseEnv();
   const runtimeSummary = getPublicEnvSummary(env);
@@ -468,7 +468,7 @@ export async function getSystemDiagnostics(
  * Invites or updates a member in a Demo Workspace (`POST /api/v1/members`).
  */
 export async function inviteOrUpdateWorkspaceMember(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   input: {
     organizationId: string;
@@ -510,7 +510,7 @@ export async function inviteOrUpdateWorkspaceMember(
  * Removes a member from a Workspace with Last-Owner protection (`DELETE /api/v1/members/:userId`).
  */
 export async function removeWorkspaceMemberForActor(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   organizationId: string,
   targetUserId: string
@@ -532,7 +532,7 @@ export async function removeWorkspaceMemberForActor(
  * Deletes a knowledge document and cascades to its chunks (`DELETE /api/v1/knowledge/documents/:id`).
  */
 export async function deleteKnowledgeDocumentForActor(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   organizationId: string,
   documentId: string
@@ -589,7 +589,7 @@ export async function deleteKnowledgeDocumentForActor(
  * Computes workspace resource utilization for the active demo tenant.
  */
 export async function getWorkspaceQuotaStatus(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   organizationId: string
 ): Promise<WorkspaceQuotaStatus> {
   const orgAgents = await db
@@ -612,7 +612,7 @@ export async function getWorkspaceQuotaStatus(
   );
 
   return {
-    planName: 'Aegis Enterprise Sandbox',
+    planName: 'Ordaris Enterprise Sandbox',
     limits: {
       maxAgents: 25,
       maxDocuments: 50,
@@ -632,7 +632,7 @@ export async function getWorkspaceQuotaStatus(
  * Exports all tenant-owned records as a sanitized JSON bundle (`GET /api/v1/workspace/export`).
  */
 export async function exportWorkspaceDataBundle(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   organizationId: string
 ) {
@@ -706,7 +706,7 @@ export async function exportWorkspaceDataBundle(
   return {
     exportedAt: new Date().toISOString(),
     schemaVersion: '1.0.0-demo',
-    platform: 'Aegis Enterprise Agent Sandbox',
+    platform: 'Ordaris Enterprise Agent Sandbox',
     organization: org,
     members,
     agents: orgAgents,
@@ -729,7 +729,7 @@ export async function exportWorkspaceDataBundle(
  * (`POST /api/v1/workspace/import`).
  */
 export async function importWorkspaceDataBundle(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   organizationId: string,
   bundle: {
@@ -777,7 +777,7 @@ export async function importWorkspaceDataBundle(
         name: item.name.slice(0, 120),
         slug: uniqueSlug,
         description:
-          item.description ?? 'Imported via Aegis Workspace Bundle.',
+          item.description ?? 'Imported via Ordaris Workspace Bundle.',
         draftSystemPrompt: item.draftSystemPrompt,
         draftToolAllowlist: Array.isArray(item.draftToolAllowlist)
           ? item.draftToolAllowlist

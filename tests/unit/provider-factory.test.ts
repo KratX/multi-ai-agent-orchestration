@@ -92,13 +92,13 @@ test('Provider Factory: falls back to Tier 3 (deterministic_fallback) MockModelP
   });
 
   assert.equal(resolution.resolutionTier, 'deterministic_fallback');
-  assert.equal(resolution.provider.providerName, 'aegis-mock');
+  assert.equal(resolution.provider.providerName, 'ordaris-mock');
 
   const output = await resolution.provider.generate({
     systemPrompt: 'Summarize tenant audit posture.',
     modelConfig: {
       provider: 'mock',
-      model: 'aegis-mock-v1',
+      model: 'ordaris-mock-v1',
       temperature: 0,
       maxSteps: 2,
       maxToolCalls: 0,

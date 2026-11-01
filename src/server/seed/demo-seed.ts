@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import {
   createDatabaseClient,
-  type AegisDatabase,
+  type OrdarisDatabase,
 } from '../db/client';
 import {
   createOrganizationWithOwner,
@@ -219,14 +219,14 @@ export const BETA_LOGISTICS_HITL_WORKFLOW_GRAPH: WorkflowGraphSpec = {
 };
 
 /**
- * Ticket SEED-001: Aegis Runtime (v1.0.0-demo) Deterministic Flagship Workspace Seed & Verification Runner.
+ * Ticket SEED-001: Ordaris Runtime (v1.0.0-demo) Deterministic Flagship Workspace Seed & Verification Runner.
  * Provisions two isolated organizations (`Acme Cyber Defense` & `Beta Logistics`),
  * all 8 RBAC personas (4 roles per tenant), simple plain-English RAG guides, immutable Agent v1/v2 snapshots,
  * 6-node HITL workflows (with both completed and active pending approval gates),
  * v1-vs-v2 evaluation regression experiments, and SSE cursor replay verification.
  */
 export async function seedFlagshipWorkspace(
-  db: AegisDatabase
+  db: OrdarisDatabase
 ): Promise<FlagshipSeedReport> {
   // 1. Provision All 8 RBAC Personas Across Two Isolated Organizations
   const acmeOwner = await ensureUser(db, {

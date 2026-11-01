@@ -308,12 +308,12 @@ function extractSearchQuery(prompt: string): string | null {
 }
 
 export class MockModelProvider implements ModelProvider {
-  public readonly providerName = 'aegis-mock';
+  public readonly providerName = 'ordaris-mock';
   public readonly source: ModelUsageSource = 'mock';
 
   public async generate(input: ModelGenerateInput): Promise<ModelGenerateOutput> {
     const stepIndex = input.stepIndex ?? 1;
-    const modelName = input.modelConfig.model || 'aegis-mock-v1';
+    const modelName = input.modelConfig.model || 'ordaris-mock-v1';
 
     const latestUserMessage =
       [...input.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
@@ -630,7 +630,7 @@ export type LiveAiEngineMode =
   | 'mock';
 
 /**
- * Factory for the live interactive Aegis Runtime server (`server.ts` & `/api/v1/*`).
+ * Factory for the live interactive Ordaris Runtime server (`server.ts` & `/api/v1/*`).
  * Routes across the 5 official free-tier cloud providers with 3-tier fallback resolution:
  * - Google Gemini Free Tier (`gemini-3-flash-preview` via `@google/genai`)
  * - OpenRouter Free Router (`openrouter/free`)

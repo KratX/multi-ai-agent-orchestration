@@ -1,15 +1,25 @@
 import crypto from 'node:crypto';
-import type { Request } from 'express';
+import type { Express, NextFunction, Request, Response } from 'express';
+import { parseEnv, type AppEnv } from '../config/env';
+import type { DatabaseContext, OrdarisDatabase } from '../db/client';
+import {
+  createOrganizationWithOwner,
+  ensureUser,
+  listUserOrganizations,
+  resolveActorContext,
+} from '../db/repositories/tenant-repository';
 import type { TenantRole } from '../db/schema/tenant';
+import type { AuthenticatedActor } from '../policies/authorization';
+import type { DemoPersonaId } from './demo-routes';
 
 /**
- * Aegis Cryptographic Authentication & Session Token Verification (`src/server/http/auth.ts`)
+ * Ordaris Cryptographic Authentication & Session Token Verification (`src/server/http/auth.ts`)
  *
  * Implements:
  * 1. RFC 7519 / HS256 JWT signing and constant-time verification using `AUTH_SECRET`.
- * 2. Request token extraction from `Authorization: Bearer <token>`, `x-aegis-auth-token`,
- *    or `Cookie: aegis_session=<token>`.
- * 3. Signed CSRF `state` tokens for GitHub OAuth 2.0 (`AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET`).
+ * 2. Request token extraction from `Authorization: Bearer <token>`, `x-ordaris-auth-token`,
+ *    or `Cookie: ordaris_session=<token>`.
+ * 3. Signed CSRF `state` tokens and HTTP endpoints for GitHub OAuth 2.0 (`AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET`).
  */
 
 export interface AuthTokenClaims {
@@ -19,7 +29,7 @@ export interface AuthTokenClaims {
   personaId?: string;
   iat: number;
   exp: number;
-  iss: 'aegis-auth';
+  iss: 'ordaris-auth';
 }
 
 export interface SignAuthTokenInput {
@@ -78,7 +88,7 @@ export function signAuthToken(
     ...(input.personaId ? { personaId: input.personaId } : {}),
     iat: nowSeconds,
     exp: nowSeconds + ttl,
-    iss: 'aegis-auth',
+    iss: 'ordaris-auth',
   };
 
   const payloadB64 = Buffer.from(JSON.stringify(claims), 'utf8').toString(
@@ -129,7 +139,7 @@ export function verifyAuthToken(
       !claims.org ||
       typeof claims.role !== 'string' ||
       typeof claims.exp !== 'number' ||
-      claims.iss !== 'aegis-auth'
+      claims.iss !== 'ordaris-auth'
     ) {
       return null;
     }
@@ -235,7 +245,7 @@ export interface ExtractedRequestToken {
 
 /**
  * Extracts a session token from `Authorization: Bearer <token>`,
- * `x-aegis-auth-token`, or `Cookie: aegis_session=<token>`.
+ * `x-ordaris-auth-token`, or `Cookie: ordaris_session=<token>`.
  */
 export function extractTokenFromRequest(req: Request): ExtractedRequestToken {
   const authHeader = req.header('authorization')?.trim();
@@ -255,7 +265,7 @@ export function extractTokenFromRequest(req: Request): ExtractedRequestToken {
     };
   }
 
-  const customTokenHeader = req.header('x-aegis-auth-token')?.trim();
+  const customTokenHeader = req.header('x-ordaris-auth-token')?.trim();
   if (customTokenHeader) {
     return {
       token: customTokenHeader,
@@ -265,9 +275,9 @@ export function extractTokenFromRequest(req: Request): ExtractedRequestToken {
   }
 
   const cookies = parseCookies(req.header('cookie'));
-  if (cookies.aegis_session) {
+  if (cookies.ordaris_session) {
     return {
-      token: cookies.aegis_session,
+      token: cookies.ordaris_session,
       source: 'cookie',
       hadExplicitAuthAttempt: true,
     };
@@ -278,4 +288,406 @@ export function extractTokenFromRequest(req: Request): ExtractedRequestToken {
     source: 'none',
     hadExplicitAuthAttempt: false,
   };
+}
+
+export interface AuthRoutesDeps {
+  contextProvider: () => Promise<DatabaseContext>;
+  rawEnv?: Record<string, string | undefined>;
+  getReqId: (req: Request) => string;
+  sendProblemDetails: (
+    res: Response,
+    requestId: string,
+    status: number,
+    code: string,
+    title: string,
+    detail: string
+  ) => void;
+  resolveActorFromRequest: (
+    req: Request,
+    db: OrdarisDatabase,
+    env: AppEnv
+  ) => Promise<AuthenticatedActor | null>;
+  resolvePersonaActor: (
+    db: OrdarisDatabase,
+    personaId: DemoPersonaId
+  ) => Promise<AuthenticatedActor | null>;
+  ensureWorkspaceSeededWithPendingHitl: (
+    db: OrdarisDatabase,
+    options?: { forceReset?: boolean }
+  ) => Promise<unknown>;
+}
+
+export function registerAuthRoutes(app: Express, deps: AuthRoutesDeps): void {
+  const {
+    contextProvider,
+    rawEnv,
+    getReqId,
+    sendProblemDetails,
+    resolveActorFromRequest,
+    resolvePersonaActor,
+    ensureWorkspaceSeededWithPendingHitl,
+  } = deps;
+
+  app.get(
+    '/api/v1/auth/status',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const env = parseEnv(rawEnv ?? process.env);
+        const { db } = await contextProvider();
+        const actor = await resolveActorFromRequest(req, db, env);
+        const authMethod =
+          (req as Request & { authMethod?: string }).authMethod ?? 'none';
+
+        res.status(200).json({
+          data: {
+            authenticated: Boolean(actor),
+            actor,
+            authMethod: actor ? authMethod : 'none',
+            demoMode: env.DEMO_MODE && env.NODE_ENV !== 'production',
+            githubOAuthConfigured: Boolean(
+              env.AUTH_GITHUB_ID?.trim() && env.AUTH_GITHUB_SECRET?.trim()
+            ),
+          },
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/auth/token',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const env = parseEnv(rawEnv ?? process.env);
+        const { db } = await contextProvider();
+
+        const providedSecret =
+          req.header('x-auth-secret') ??
+          (typeof req.body?.authSecret === 'string' ? req.body.authSecret : undefined);
+        const hasValidPreSharedSecret = verifyAuthSecretHeader(
+          providedSecret,
+          env.AUTH_SECRET
+        );
+
+        if (
+          (env.NODE_ENV === 'production' || !env.DEMO_MODE) &&
+          !hasValidPreSharedSecret
+        ) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            403,
+            'DEMO_AUTH_DISABLED',
+            'Demo authentication disabled in production',
+            'Unauthenticated demo persona token issuance is disabled when DEMO_MODE=false or NODE_ENV=production. Authenticate via GitHub OAuth (/api/v1/auth/github/login) or supply a valid x-auth-secret header.'
+          );
+          return;
+        }
+
+        await ensureWorkspaceSeededWithPendingHitl(db, { forceReset: false });
+
+        const rawPersonaId =
+          typeof req.body?.personaId === 'string' && req.body.personaId.trim()
+            ? (req.body.personaId.trim() as DemoPersonaId)
+            : undefined;
+        const rawUserId =
+          typeof req.body?.userId === 'string' && req.body.userId.trim()
+            ? req.body.userId.trim()
+            : undefined;
+        const rawOrgId =
+          typeof req.body?.organizationId === 'string' &&
+          req.body.organizationId.trim()
+            ? req.body.organizationId.trim()
+            : undefined;
+
+        let actor: AuthenticatedActor | null = null;
+        if (rawUserId && rawOrgId) {
+          actor = await resolveActorContext(db, rawUserId, rawOrgId);
+        } else if (rawPersonaId) {
+          actor = await resolvePersonaActor(db, rawPersonaId);
+        }
+
+        if (!actor) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            401,
+            'INVALID_AUTH_SUBJECT',
+            'Invalid authentication subject',
+            'Provide a valid personaId or verified (userId, organizationId) membership pair.'
+          );
+          return;
+        }
+
+        const expiresIn = 8 * 3600;
+        const token = signAuthToken(
+          {
+            userId: actor.userId,
+            organizationId: actor.organizationId,
+            role: actor.role,
+            personaId: rawPersonaId,
+            expiresInSeconds: expiresIn,
+          },
+          env.AUTH_SECRET
+        );
+
+        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
+        res.setHeader(
+          'Set-Cookie',
+          `ordaris_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
+        );
+
+        res.status(200).json({
+          data: {
+            token,
+            tokenType: 'Bearer',
+            expiresIn,
+            actor,
+            personaId: rawPersonaId ?? null,
+          },
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.post('/api/v1/auth/logout', (_req: Request, res: Response) => {
+    res.setHeader(
+      'Set-Cookie',
+      'ordaris_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'
+    );
+    res.status(200).json({ data: { loggedOut: true } });
+  });
+
+  app.get(
+    '/api/v1/auth/github/login',
+    (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const env = parseEnv(rawEnv ?? process.env);
+        const clientId = env.AUTH_GITHUB_ID?.trim();
+        const clientSecret = env.AUTH_GITHUB_SECRET?.trim();
+
+        if (!clientId || !clientSecret) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            501,
+            'GITHUB_OAUTH_NOT_CONFIGURED',
+            'GitHub OAuth is not configured',
+            'Set AUTH_GITHUB_ID and AUTH_GITHUB_SECRET in the server environment to enable GitHub OAuth 2.0 login.'
+          );
+          return;
+        }
+
+        const redirectAfter =
+          typeof req.query.redirect === 'string' &&
+          req.query.redirect.startsWith('/')
+            ? req.query.redirect
+            : '/';
+        const state = signOAuthState(redirectAfter, env.AUTH_SECRET);
+        const callbackUrl = `${env.APP_URL.replace(/\/$/, '')}/api/v1/auth/github/callback`;
+        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
+
+        res.setHeader(
+          'Set-Cookie',
+          `ordaris_oauth_state=${encodeURIComponent(state)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=600${secureFlag}`
+        );
+
+        const authorizeUrl = new URL('https://github.com/login/oauth/authorize');
+        authorizeUrl.searchParams.set('client_id', clientId);
+        authorizeUrl.searchParams.set('redirect_uri', callbackUrl);
+        authorizeUrl.searchParams.set('scope', 'read:user user:email');
+        authorizeUrl.searchParams.set('state', state);
+
+        res.redirect(302, authorizeUrl.toString());
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.get(
+    '/api/v1/auth/github/callback',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const env = parseEnv(rawEnv ?? process.env);
+        const clientId = env.AUTH_GITHUB_ID?.trim();
+        const clientSecret = env.AUTH_GITHUB_SECRET?.trim();
+
+        if (!clientId || !clientSecret) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            501,
+            'GITHUB_OAUTH_NOT_CONFIGURED',
+            'GitHub OAuth is not configured',
+            'Set AUTH_GITHUB_ID and AUTH_GITHUB_SECRET in the server environment to enable GitHub OAuth 2.0 login.'
+          );
+          return;
+        }
+
+        const code =
+          typeof req.query.code === 'string' ? req.query.code.trim() : '';
+        const stateParam =
+          typeof req.query.state === 'string' ? req.query.state.trim() : '';
+        const cookies = parseCookies(req.header('cookie'));
+        const verifiedState = verifyOAuthState(stateParam, env.AUTH_SECRET);
+
+        if (
+          !code ||
+          !verifiedState ||
+          (cookies.ordaris_oauth_state &&
+            cookies.ordaris_oauth_state !== stateParam)
+        ) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            400,
+            'INVALID_OAUTH_STATE',
+            'Invalid or expired OAuth state',
+            'The GitHub OAuth callback was missing a valid code or failed HMAC-SHA256 CSRF state verification.'
+          );
+          return;
+        }
+
+        const tokenRes = await fetch(
+          'https://github.com/login/oauth/access_token',
+          {
+            method: 'POST',
+            headers: {
+              accept: 'application/json',
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              client_id: clientId,
+              client_secret: clientSecret,
+              code,
+            }),
+          }
+        );
+
+        const tokenJson = (await tokenRes.json()) as {
+          access_token?: string;
+          error?: string;
+          error_description?: string;
+        };
+
+        if (!tokenRes.ok || !tokenJson.access_token) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            401,
+            'OAUTH_TOKEN_EXCHANGE_FAILED',
+            'GitHub OAuth token exchange failed',
+            tokenJson.error_description ||
+              tokenJson.error ||
+              'Could not exchange GitHub authorization code for an access token.'
+          );
+          return;
+        }
+
+        const profileRes = await fetch('https://api.github.com/user', {
+          headers: {
+            authorization: `Bearer ${tokenJson.access_token}`,
+            accept: 'application/vnd.github+json',
+            'user-agent': 'ordaris-runtime',
+          },
+        });
+
+        if (!profileRes.ok) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            401,
+            'OAUTH_PROFILE_FETCH_FAILED',
+            'Failed to fetch GitHub user profile',
+            'GitHub API rejected the access token when querying /user.'
+          );
+          return;
+        }
+
+        const ghUser = (await profileRes.json()) as {
+          id?: number | string;
+          login?: string;
+          name?: string;
+          email?: string | null;
+        };
+
+        if (!ghUser.id || !ghUser.login) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            401,
+            'OAUTH_PROFILE_INVALID',
+            'Invalid GitHub profile payload',
+            'GitHub profile did not include a user ID and login.'
+          );
+          return;
+        }
+
+        const { db } = await contextProvider();
+        const userRecord = await ensureUser(db, {
+          authSubject: `github:${ghUser.id}`,
+          email: ghUser.email ?? `${ghUser.login}@users.noreply.github.com`,
+          displayName: ghUser.name ?? ghUser.login,
+        });
+
+        let userOrgs = await listUserOrganizations(db, userRecord.id);
+        if (userOrgs.length === 0) {
+          const slugBase = `gh-${ghUser.login
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, '-')
+            .slice(0, 32)}-${String(ghUser.id).slice(-4)}`;
+          await createOrganizationWithOwner(db, {
+            name: `${ghUser.name || ghUser.login} Workspace`,
+            slug: slugBase,
+            creatorUserId: userRecord.id,
+          });
+          userOrgs = await listUserOrganizations(db, userRecord.id);
+        }
+
+        const primaryOrg = userOrgs[0]!;
+        const actor: AuthenticatedActor = {
+          userId: userRecord.id,
+          organizationId: primaryOrg.organization.id,
+          role: primaryOrg.role,
+        };
+
+        const expiresIn = 8 * 3600;
+        const sessionJwt = signAuthToken(
+          {
+            userId: actor.userId,
+            organizationId: actor.organizationId,
+            role: actor.role,
+            expiresInSeconds: expiresIn,
+          },
+          env.AUTH_SECRET
+        );
+
+        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
+        res.setHeader(
+          'Set-Cookie',
+          `ordaris_session=${encodeURIComponent(sessionJwt)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
+        );
+
+        if ((req.header('accept') ?? '').includes('text/html')) {
+          res.redirect(302, verifiedState.redirectAfter || '/');
+          return;
+        }
+
+        res.status(200).json({
+          data: {
+            token: sessionJwt,
+            tokenType: 'Bearer',
+            expiresIn,
+            actor,
+          },
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
 }

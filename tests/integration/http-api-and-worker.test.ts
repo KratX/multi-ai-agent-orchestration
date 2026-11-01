@@ -332,7 +332,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     assert.equal(betaDevWs.data.organization.slug, 'beta-logistics');
     assert.equal(betaDevWs.data.actor.role, 'developer');
 
-    // 2. Session-Scoped BYOK Vault Isolation (x-aegis-demo-session with high-entropy token)
+    // 2. Session-Scoped BYOK Vault Isolation (x-ordaris-demo-session with high-entropy token)
     const sessionAlpha = 'sess_alpha_eval_9f8e7d6c5b4a3210';
     const sessionBeta = 'sess_beta_eval_1a2b3c4d5e6f7890';
 
@@ -342,7 +342,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
       headers: {
         'content-type': 'application/json',
         'x-actor-id': 'acme-owner',
-        'x-aegis-demo-session': '1234',
+        'x-ordaris-demo-session': '1234',
       },
       body: JSON.stringify({
         provider: 'openrouter',
@@ -356,7 +356,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
       headers: {
         'content-type': 'application/json',
         'x-actor-id': 'acme-owner',
-        'x-aegis-demo-session': sessionAlpha,
+        'x-ordaris-demo-session': sessionAlpha,
       },
       body: JSON.stringify({
         provider: 'openrouter',
@@ -410,7 +410,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     const keysBetaRes = await fetch(`${baseUrl}/api/v1/providers/keys`, {
       headers: {
         'x-actor-id': 'acme-owner',
-        'x-aegis-demo-session': sessionBeta,
+        'x-ordaris-demo-session': sessionBeta,
       },
     });
     assert.equal(keysBetaRes.status, 200);
@@ -437,7 +437,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
       headers: {
         'content-type': 'application/json',
         'x-actor-id': 'acme-owner',
-        'x-aegis-demo-session': sessionAlpha,
+        'x-ordaris-demo-session': sessionAlpha,
       },
       body: JSON.stringify({ resetMode: 'workspace_only' }),
     });
@@ -467,7 +467,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
       headers: {
         'content-type': 'application/json',
         'x-actor-id': 'acme-owner',
-        'x-aegis-demo-session': sessionAlpha,
+        'x-ordaris-demo-session': sessionAlpha,
       },
       body: JSON.stringify({ resetMode: 'keys_only' }),
     });
@@ -624,7 +624,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
         logs: Array<{ level: string; component: string; message: string }>;
       };
     };
-    assert.ok(logsData.data.logFilePath.endsWith('aegis-runtime.log'));
+    assert.ok(logsData.data.logFilePath.endsWith('ordaris-runtime.log'));
     assert.ok(logsData.data.logs.length >= 1);
   } finally {
     await worker.stop();
@@ -635,7 +635,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
 
 test('Production-Mode & Cryptographic Authentication Hardening: rejects unauthenticated calls, query-param spoofing, unsigned headers in production, and unauthenticated destructive endpoints', async () => {
   const ctx = await createDatabaseClient();
-  const prodSecret = 'production-hmac-sha256-auth-secret-2026-aegis';
+  const prodSecret = 'production-hmac-sha256-auth-secret-2026-ordaris';
 
   // 1. Verify Demo Mode (`DEMO_MODE=true`) NEVER silently defaults to acme-admin and NEVER trusts ?actor= query params
   const demoApp = createApiApp({

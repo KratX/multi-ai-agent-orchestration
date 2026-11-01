@@ -6,8 +6,6 @@ import {
   appendRuntimeLog,
   getProviderKeyStatus,
   getPublicEnvSummary,
-  getRuntimeLogs,
-  LOG_FILE_PATH,
   parseEnv,
   type AppEnv,
 } from '../config/env';
@@ -19,31 +17,23 @@ import {
 } from '../ai/provider-factory';
 import {
   getSharedDatabase,
-  type AegisDatabase,
   type DatabaseContext,
+  type OrdarisDatabase,
 } from '../db/client';
 import {
   AuthorizationError,
-  listRolePermissions,
   requireAuthorization,
   type AuthenticatedActor,
 } from '../policies/authorization';
 import {
-  createOrganizationWithOwner,
-  ensureUser,
   listUserOrganizations,
-  listOrganizationMembers,
   resolveActorContext,
   TenantConstraintError,
 } from '../db/repositories/tenant-repository';
 import {
   extractTokenFromRequest,
-  parseCookies,
-  signAuthToken,
-  signOAuthState,
-  verifyAuthSecretHeader,
+  registerAuthRoutes,
   verifyAuthToken,
-  verifyOAuthState,
 } from './auth';
 import {
   AgentConstraintError,
@@ -80,7 +70,6 @@ import {
   WorkflowResourceNotFoundError,
 } from '../modules/workflows/workflow-engine';
 import {
-  compareEvalExperiments,
   EvalResourceNotFoundError,
   EvalValidationError,
   runEvalExperiment,
@@ -91,12 +80,9 @@ import {
 } from '../modules/health/health-service';
 import type { ReadinessCheckResult } from '../../app/api/v1/health/route';
 import { RuntimeWorker } from '../worker/main';
-import { seedFlagshipWorkspace, type FlagshipSeedReport } from '../seed';
 import { agents, agentVersions } from '../db/schema/agents';
 import { knowledgeDocuments } from '../db/schema/knowledge';
-import { organizations, users, memberships } from '../db/schema/tenant';
 import { usageEvents, workflows, workflowVersions } from '../db/schema/workflows';
-import { evalCases, evalExperiments, evalSuites } from '../db/schema/evals';
 import { WorkflowDagValidationError } from '../modules/workflows/dag-validator';
 import {
   ByokSessionValidationError,
@@ -104,22 +90,31 @@ import {
   resolveByokScopeKey,
   resolveEffectiveEnvWithByok,
 } from '../security/session-key-vault';
+import { deleteKnowledgeDocumentForActor } from '../modules/workspace/demo-workspace-service';
 import {
-  deleteKnowledgeDocumentForActor,
-  getWorkspaceQuotaStatus,
-  resetDemoSandboxOnly,
-  type DemoResetMode,
-} from '../modules/workspace/demo-workspace-service';
-import { registerDemoRoutes } from './demo-routes';
+  ensureWorkspaceSeededWithPendingHitl,
+  listDemoPersonas,
+  registerDemoRoutes,
+  resolvePersonaActor,
+  type DemoPersonaDirectory,
+  type DemoPersonaId,
+} from './demo-routes';
+
+export {
+  ensureWorkspaceSeededWithPendingHitl,
+  listDemoPersonas,
+  type DemoPersonaDirectory,
+  type DemoPersonaId,
+};
 
 /**
- * Aegis Runtime (v1.0.0-demo) — Express HTTP API Application (`src/server/http/app.ts`)
+ * Ordaris Runtime (v1.0.0-demo) — Express HTTP API Application (`src/server/http/app.ts`)
  *
  * Mounts real `/api/v1/*` routes backed by PostgreSQL (PGlite) and the domain services:
  * - Request correlation (`x-request-id`), bounded JSON parsing (`1mb`), RFC 9457 Problem Details.
  * - Real membership-verified actor authentication (`resolveActorFromRequest`) across all 8 RBAC personas
  *   (`acme-owner`, `acme-admin`, `acme-dev`, `acme-viewer`, `beta-owner`, `beta-admin`, `beta-dev`, `beta-viewer`).
- * - Session-isolated in-RAM AES-256-GCM BYOK Vault (`x-aegis-demo-session`) with 2-hour sliding TTL.
+ * - Session-isolated in-RAM AES-256-GCM BYOK Vault (`x-ordaris-demo-session`) with 2-hour sliding TTL.
  * - PII/Secret scrubbing, Red-Team guardrail interception, FinOps budget-cap checks, and automatic
  *   `outcome = 'denied'` security audit logging on `403`/`404` rejections.
  */
@@ -130,28 +125,6 @@ export interface ApiAppDependencies {
   rawEnv?: Record<string, string | undefined>;
   worker?: RuntimeWorker;
   modelProvider?: ModelProvider;
-}
-
-export type DemoPersonaId =
-  | 'acme-owner'
-  | 'acme-admin'
-  | 'acme-dev'
-  | 'acme-viewer'
-  | 'beta-owner'
-  | 'beta-admin'
-  | 'beta-dev'
-  | 'beta-viewer';
-
-export interface DemoPersonaDirectory {
-  id: DemoPersonaId;
-  label: string;
-  email: string;
-  organizationId: string;
-  organizationName: string;
-  organizationSlug: string;
-  userId: string;
-  role: 'owner' | 'admin' | 'developer' | 'viewer';
-  permissionsCount: number;
 }
 
 const AI_ENGINE_ENUM = z.enum([
@@ -224,20 +197,6 @@ const startWorkflowRunBodySchema = z.object({
   engine: AI_ENGINE_ENUM.optional(),
 });
 
-const ACTOR_AUTH_SUBJECT_MAP: Record<
-  DemoPersonaId,
-  { authSubject: string; orgSlug: string }
-> = {
-  'acme-owner': { authSubject: 'seed_acme_owner', orgSlug: 'acme-cyber-defense' },
-  'acme-admin': { authSubject: 'seed_acme_admin', orgSlug: 'acme-cyber-defense' },
-  'acme-dev': { authSubject: 'seed_acme_dev', orgSlug: 'acme-cyber-defense' },
-  'acme-viewer': { authSubject: 'seed_acme_viewer', orgSlug: 'acme-cyber-defense' },
-  'beta-owner': { authSubject: 'seed_beta_owner', orgSlug: 'beta-logistics' },
-  'beta-admin': { authSubject: 'seed_beta_admin', orgSlug: 'beta-logistics' },
-  'beta-dev': { authSubject: 'seed_beta_dev', orgSlug: 'beta-logistics' },
-  'beta-viewer': { authSubject: 'seed_beta_viewer', orgSlug: 'beta-logistics' },
-};
-
 export interface PromptRedactionResult {
   scrubbedPrompt: string;
   redacted: boolean;
@@ -285,263 +244,12 @@ export function scrubPromptPiiAndSecrets(rawPrompt: string): PromptRedactionResu
   };
 }
 
-export async function ensureWorkspaceSeededWithPendingHitl(
-  db: AegisDatabase,
-  options?: {
-    forceReset?: boolean;
-    onlyDemo?: boolean;
-    resetMode?: DemoResetMode;
-    clearByokScopeKey?: string;
-    clearAllByok?: boolean;
-  }
-): Promise<{
-  seedReport: FlagshipSeedReport | null;
-  pendingApprovalId: string | null;
-  clearedByokKeysCount: number;
-  resetMode: DemoResetMode;
-}> {
-  const resetMode: DemoResetMode =
-    options?.resetMode ??
-    (options?.onlyDemo
-      ? 'workspace_only'
-      : options?.forceReset
-        ? 'workspace_only'
-        : 'workspace_only');
-
-  let clearedByokKeysCount = 0;
-
-  if (options?.resetMode === 'keys_only') {
-    const res = await resetDemoSandboxOnly(db, {
-      mode: 'keys_only',
-      clearByokScopeKey: options.clearByokScopeKey,
-      clearAllByok: options.clearAllByok,
-    });
-    clearedByokKeysCount = res.clearedByokKeysCount;
-  } else if (
-    options?.resetMode === 'factory_reset' ||
-    options?.onlyDemo ||
-    options?.forceReset
-  ) {
-    const res = await resetDemoSandboxOnly(db, {
-      mode: options?.resetMode === 'factory_reset' ? 'factory_reset' : 'workspace_only',
-      clearByokScopeKey: options?.clearByokScopeKey,
-      clearAllByok: options?.clearAllByok,
-    });
-    clearedByokKeysCount = res.clearedByokKeysCount;
-  }
-
-  const [existingAcme] = await db
-    .select()
-    .from(organizations)
-    .where(eq(organizations.slug, 'acme-cyber-defense'))
-    .limit(1);
-
-  const [existingBetaAdmin] = await db
-    .select()
-    .from(users)
-    .where(eq(users.authSubject, 'seed_beta_admin'))
-    .limit(1);
-
-  let seedReport: FlagshipSeedReport | null = null;
-
-  if (!existingAcme) {
-    seedReport = await seedFlagshipWorkspace(db);
-  } else if (!existingBetaAdmin) {
-    await resetDemoSandboxOnly(db, { mode: 'workspace_only' });
-  }
-
-  const [acmeOrg] = await db
-    .select()
-    .from(organizations)
-    .where(eq(organizations.slug, 'acme-cyber-defense'))
-    .limit(1);
-
-  if (!acmeOrg) {
-    return {
-      seedReport,
-      pendingApprovalId: null,
-      clearedByokKeysCount,
-      resetMode,
-    };
-  }
-
-  const [acmeOwnerUser] = await db
-    .select()
-    .from(users)
-    .where(eq(users.authSubject, 'seed_acme_owner'))
-    .limit(1);
-
-  const [wf] = await db
-    .select()
-    .from(workflows)
-    .where(eq(workflows.organizationId, acmeOrg.id))
-    .limit(1);
-
-  if (!acmeOwnerUser || !wf) {
-    return {
-      seedReport,
-      pendingApprovalId: null,
-      clearedByokKeysCount,
-      resetMode,
-    };
-  }
-
-  const acmeOwnerActor: AuthenticatedActor = {
-    userId: acmeOwnerUser.id,
-    organizationId: acmeOrg.id,
-    role: 'owner',
-  };
-
-  const existingApprovals = await listApprovalRequests(
-    db,
-    acmeOwnerActor,
-    acmeOrg.id
-  );
-  const pending = existingApprovals.find((a) => a.status === 'pending');
-
-  if (pending) {
-    return {
-      seedReport,
-      pendingApprovalId: pending.id,
-      clearedByokKeysCount,
-      resetMode,
-    };
-  }
-
-  const [wfVersion] = await db
-    .select()
-    .from(workflowVersions)
-    .where(eq(workflowVersions.workflowId, wf.id))
-    .orderBy(desc(workflowVersions.versionNumber))
-    .limit(1);
-
-  const [agentV1] = await db
-    .select()
-    .from(agentVersions)
-    .where(eq(agentVersions.organizationId, acmeOrg.id))
-    .orderBy(asc(agentVersions.versionNumber))
-    .limit(1);
-
-  if (wfVersion && agentV1) {
-    const livePausedRun = await startWorkflowRun(db, acmeOwnerActor, {
-      organizationId: acmeOrg.id,
-      workflowVersionId: wfVersion.id,
-      defaultAgentVersionId: agentV1.id,
-      inputPrompt:
-        'Execute production firewall rotation for SEV-1 incident #409 (risk score 150 > threshold 100)',
-    });
-    return {
-      seedReport,
-      pendingApprovalId: livePausedRun.pendingApproval?.id ?? null,
-      clearedByokKeysCount,
-      resetMode,
-    };
-  }
-
-  return {
-    seedReport,
-    pendingApprovalId: null,
-    clearedByokKeysCount,
-    resetMode,
-  };
-}
-
-export async function listDemoPersonas(
-  db: AegisDatabase
-): Promise<DemoPersonaDirectory[]> {
-  const rows = await db
-    .select({
-      userId: users.id,
-      authSubject: users.authSubject,
-      email: users.email,
-      displayName: users.displayName,
-      organizationId: organizations.id,
-      organizationName: organizations.name,
-      organizationSlug: organizations.slug,
-      role: memberships.role,
-    })
-    .from(memberships)
-    .innerJoin(users, eq(memberships.userId, users.id))
-    .innerJoin(organizations, eq(memberships.organizationId, organizations.id));
-
-  const reverseMap: Record<string, DemoPersonaId> = {
-    seed_acme_owner: 'acme-owner',
-    seed_acme_admin: 'acme-admin',
-    seed_acme_dev: 'acme-dev',
-    seed_acme_viewer: 'acme-viewer',
-    seed_beta_owner: 'beta-owner',
-    seed_beta_admin: 'beta-admin',
-    seed_beta_dev: 'beta-dev',
-    seed_beta_viewer: 'beta-viewer',
-  };
-
-  const order: DemoPersonaId[] = [
-    'acme-owner',
-    'acme-admin',
-    'acme-dev',
-    'acme-viewer',
-    'beta-owner',
-    'beta-admin',
-    'beta-dev',
-    'beta-viewer',
-  ];
-
-  const mapped: DemoPersonaDirectory[] = [];
-  for (const row of rows) {
-    const id = reverseMap[row.authSubject];
-    if (id) {
-      const permissionsCount = listRolePermissions(row.role).length;
-      mapped.push({
-        id,
-        label: row.displayName ?? row.email ?? id,
-        email: row.email ?? '',
-        organizationId: row.organizationId,
-        organizationName: row.organizationName,
-        organizationSlug: row.organizationSlug,
-        userId: row.userId,
-        role: row.role,
-        permissionsCount,
-      });
-    }
-  }
-
-  return mapped.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
-}
-
-async function resolvePersonaActor(
-  db: AegisDatabase,
-  personaId: DemoPersonaId
-): Promise<AuthenticatedActor | null> {
-  const mapping = ACTOR_AUTH_SUBJECT_MAP[personaId];
-  if (!mapping) {
-    return null;
-  }
-
-  const [userRow] = await db
-    .select()
-    .from(users)
-    .where(eq(users.authSubject, mapping.authSubject))
-    .limit(1);
-
-  const [orgRow] = await db
-    .select()
-    .from(organizations)
-    .where(eq(organizations.slug, mapping.orgSlug))
-    .limit(1);
-
-  if (!userRow || !orgRow) {
-    return null;
-  }
-
-  return resolveActorContext(db, userRow.id, orgRow.id);
-}
-
 async function resolveActorFromRequest(
   req: Request,
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   env: AppEnv
 ): Promise<AuthenticatedActor | null> {
-  // 1. Explicit Cryptographic Token Header (`Authorization: Bearer <jwt>` or `x-aegis-auth-token: <jwt>`)
+  // 1. Explicit Cryptographic Token Header (`Authorization: Bearer <jwt>` or `x-ordaris-auth-token: <jwt>`)
   const extracted = extractTokenFromRequest(req);
   if (
     extracted.hadExplicitAuthAttempt &&
@@ -571,7 +279,7 @@ async function resolveActorFromRequest(
 
   // 2. Production & Non-Demo Guard:
   // When NODE_ENV === "production" or DEMO_MODE === false, unsigned headers and query params are NEVER trusted.
-  // Only a valid signed `aegis_session` cookie (or Bearer token above) is accepted.
+  // Only a valid signed `ordaris_session` cookie (or Bearer token above) is accepted.
   if (env.NODE_ENV === 'production' || !env.DEMO_MODE) {
     if (extracted.source === 'cookie' && extracted.token) {
       const claims = verifyAuthToken(extracted.token, env.AUTH_SECRET);
@@ -666,7 +374,7 @@ async function resolveActorFromRequest(
 }
 
 /**
- * Resolves the caller's isolated BYOK vault scope strictly from the `x-aegis-demo-session` header.
+ * Resolves the caller's isolated BYOK vault scope strictly from the `x-ordaris-demo-session` header.
  * Never accepts `?sessionId=` query parameters, and enforces high-entropy session token validation.
  */
 function getRequestByokScope(
@@ -674,7 +382,7 @@ function getRequestByokScope(
   fallbackOrgId: string,
   strictSessionValidation = false
 ): string {
-  const sessionId = req.header('x-aegis-demo-session')?.trim() || '';
+  const sessionId = req.header('x-ordaris-demo-session')?.trim() || '';
   return resolveByokScopeKey({
     sessionId: sessionId || undefined,
     organizationId: fallbackOrgId,
@@ -695,7 +403,7 @@ function sendProblemDetails(
     .setHeader('x-request-id', requestId)
     .setHeader('cache-control', 'no-store')
     .json({
-      type: `https://aegis.runtime/problems/${code.toLowerCase().replace(/_/g, '-')}`,
+      type: `https://ordaris-runtime.dev/problems/${code.toLowerCase().replace(/_/g, '-')}`,
       title,
       status,
       code,
@@ -774,7 +482,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         .json({
           data: {
             status: 'ok',
-            service: 'aegis-runtime',
+            service: 'ordaris-runtime',
             version: '1.0.0-demo',
             timestamp: new Date().toISOString(),
             requestId,
@@ -811,567 +519,28 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     handleReadiness(req, res).catch(next);
   });
 
-  // 2b. Cryptographic Authentication & GitHub OAuth 2.0 Endpoints (`/api/v1/auth/*`)
-  app.get(
-    '/api/v1/auth/status',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        const authMethod =
-          (req as Request & { authMethod?: string }).authMethod ?? 'none';
-
-        res.status(200).json({
-          data: {
-            authenticated: Boolean(actor),
-            actor,
-            authMethod: actor ? authMethod : 'none',
-            demoMode: env.DEMO_MODE && env.NODE_ENV !== 'production',
-            githubOAuthConfigured: Boolean(
-              env.AUTH_GITHUB_ID?.trim() && env.AUTH_GITHUB_SECRET?.trim()
-            ),
-          },
-        });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  app.post(
-    '/api/v1/auth/token',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-
-        const providedSecret =
-          req.header('x-auth-secret') ??
-          (typeof req.body?.authSecret === 'string'
-            ? req.body.authSecret
-            : undefined);
-        const hasValidPreSharedSecret = verifyAuthSecretHeader(
-          providedSecret,
-          env.AUTH_SECRET
-        );
-
-        if (
-          (env.NODE_ENV === 'production' || !env.DEMO_MODE) &&
-          !hasValidPreSharedSecret
-        ) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            403,
-            'DEMO_AUTH_DISABLED',
-            'Demo authentication disabled in production',
-            'Unauthenticated demo persona token issuance is disabled when DEMO_MODE=false or NODE_ENV=production. Authenticate via GitHub OAuth (/api/v1/auth/github/login) or supply a valid x-auth-secret header.'
-          );
-          return;
-        }
-
-        await ensureWorkspaceSeededWithPendingHitl(db, { forceReset: false });
-
-        const rawPersonaId =
-          typeof req.body?.personaId === 'string' && req.body.personaId.trim()
-            ? (req.body.personaId.trim() as DemoPersonaId)
-            : undefined;
-        const rawUserId =
-          typeof req.body?.userId === 'string' && req.body.userId.trim()
-            ? req.body.userId.trim()
-            : undefined;
-        const rawOrgId =
-          typeof req.body?.organizationId === 'string' &&
-          req.body.organizationId.trim()
-            ? req.body.organizationId.trim()
-            : undefined;
-
-        let actor: AuthenticatedActor | null = null;
-        if (rawUserId && rawOrgId) {
-          actor = await resolveActorContext(db, rawUserId, rawOrgId);
-        } else if (rawPersonaId) {
-          actor = await resolvePersonaActor(db, rawPersonaId);
-        }
-
-        if (!actor) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            401,
-            'INVALID_AUTH_SUBJECT',
-            'Invalid authentication subject',
-            'Provide a valid personaId or verified (userId, organizationId) membership pair.'
-          );
-          return;
-        }
-
-        const expiresIn = 8 * 3600;
-        const token = signAuthToken(
-          {
-            userId: actor.userId,
-            organizationId: actor.organizationId,
-            role: actor.role,
-            personaId: rawPersonaId,
-            expiresInSeconds: expiresIn,
-          },
-          env.AUTH_SECRET
-        );
-
-        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
-        res.setHeader(
-          'Set-Cookie',
-          `aegis_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
-        );
-
-        res.status(200).json({
-          data: {
-            token,
-            tokenType: 'Bearer',
-            expiresIn,
-            actor,
-            personaId: rawPersonaId ?? null,
-          },
-        });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  app.post('/api/v1/auth/logout', (_req: Request, res: Response) => {
-    res.setHeader(
-      'Set-Cookie',
-      'aegis_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'
-    );
-    res.status(200).json({ data: { loggedOut: true } });
+  // 3. Mount Cryptographic Auth & GitHub OAuth 2.0 Routes (`src/server/http/auth.ts`)
+  registerAuthRoutes(app, {
+    contextProvider,
+    rawEnv: deps.rawEnv,
+    getReqId,
+    sendProblemDetails,
+    resolveActorFromRequest,
+    ensureWorkspaceSeededWithPendingHitl: async (db, options) => {
+      await ensureWorkspaceSeededWithPendingHitl(db, options);
+    },
+    resolvePersonaActor: (db, personaId) =>
+      resolvePersonaActor(db, personaId as DemoPersonaId),
   });
 
-  app.get(
-    '/api/v1/auth/github/login',
-    (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const clientId = env.AUTH_GITHUB_ID?.trim();
-        const clientSecret = env.AUTH_GITHUB_SECRET?.trim();
-
-        if (!clientId || !clientSecret) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            501,
-            'GITHUB_OAUTH_NOT_CONFIGURED',
-            'GitHub OAuth is not configured',
-            'Set AUTH_GITHUB_ID and AUTH_GITHUB_SECRET in the server environment to enable GitHub OAuth 2.0 login.'
-          );
-          return;
-        }
-
-        const redirectAfter =
-          typeof req.query.redirect === 'string' &&
-          req.query.redirect.startsWith('/')
-            ? req.query.redirect
-            : '/';
-        const state = signOAuthState(redirectAfter, env.AUTH_SECRET);
-        const callbackUrl = `${env.APP_URL.replace(/\/$/, '')}/api/v1/auth/github/callback`;
-        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
-
-        res.setHeader(
-          'Set-Cookie',
-          `aegis_oauth_state=${encodeURIComponent(state)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=600${secureFlag}`
-        );
-
-        const authorizeUrl = new URL('https://github.com/login/oauth/authorize');
-        authorizeUrl.searchParams.set('client_id', clientId);
-        authorizeUrl.searchParams.set('redirect_uri', callbackUrl);
-        authorizeUrl.searchParams.set('scope', 'read:user user:email');
-        authorizeUrl.searchParams.set('state', state);
-
-        res.redirect(302, authorizeUrl.toString());
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  app.get(
-    '/api/v1/auth/github/callback',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const clientId = env.AUTH_GITHUB_ID?.trim();
-        const clientSecret = env.AUTH_GITHUB_SECRET?.trim();
-
-        if (!clientId || !clientSecret) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            501,
-            'GITHUB_OAUTH_NOT_CONFIGURED',
-            'GitHub OAuth is not configured',
-            'Set AUTH_GITHUB_ID and AUTH_GITHUB_SECRET in the server environment to enable GitHub OAuth 2.0 login.'
-          );
-          return;
-        }
-
-        const code =
-          typeof req.query.code === 'string' ? req.query.code.trim() : '';
-        const stateParam =
-          typeof req.query.state === 'string' ? req.query.state.trim() : '';
-        const cookies = parseCookies(req.header('cookie'));
-        const verifiedState = verifyOAuthState(stateParam, env.AUTH_SECRET);
-
-        if (
-          !code ||
-          !verifiedState ||
-          (cookies.aegis_oauth_state &&
-            cookies.aegis_oauth_state !== stateParam)
-        ) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            400,
-            'INVALID_OAUTH_STATE',
-            'Invalid or expired OAuth state',
-            'The GitHub OAuth callback was missing a valid code or failed HMAC-SHA256 CSRF state verification.'
-          );
-          return;
-        }
-
-        const tokenRes = await fetch(
-          'https://github.com/login/oauth/access_token',
-          {
-            method: 'POST',
-            headers: {
-              accept: 'application/json',
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify({
-              client_id: clientId,
-              client_secret: clientSecret,
-              code,
-            }),
-          }
-        );
-
-        const tokenJson = (await tokenRes.json()) as {
-          access_token?: string;
-          error?: string;
-          error_description?: string;
-        };
-
-        if (!tokenRes.ok || !tokenJson.access_token) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            401,
-            'OAUTH_TOKEN_EXCHANGE_FAILED',
-            'GitHub OAuth token exchange failed',
-            tokenJson.error_description ||
-              tokenJson.error ||
-              'Could not exchange GitHub authorization code for an access token.'
-          );
-          return;
-        }
-
-        const profileRes = await fetch('https://api.github.com/user', {
-          headers: {
-            authorization: `Bearer ${tokenJson.access_token}`,
-            accept: 'application/vnd.github+json',
-            'user-agent': 'aegis-runtime',
-          },
-        });
-
-        if (!profileRes.ok) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            401,
-            'OAUTH_PROFILE_FETCH_FAILED',
-            'Failed to fetch GitHub user profile',
-            'GitHub API rejected the access token when querying /user.'
-          );
-          return;
-        }
-
-        const ghUser = (await profileRes.json()) as {
-          id?: number | string;
-          login?: string;
-          name?: string;
-          email?: string | null;
-        };
-
-        if (!ghUser.id || !ghUser.login) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            401,
-            'OAUTH_PROFILE_INVALID',
-            'Invalid GitHub profile payload',
-            'GitHub profile did not include a user ID and login.'
-          );
-          return;
-        }
-
-        const { db } = await contextProvider();
-        const userRecord = await ensureUser(db, {
-          authSubject: `github:${ghUser.id}`,
-          email: ghUser.email ?? `${ghUser.login}@users.noreply.github.com`,
-          displayName: ghUser.name ?? ghUser.login,
-        });
-
-        let userOrgs = await listUserOrganizations(db, userRecord.id);
-        if (userOrgs.length === 0) {
-          const slugBase = `gh-${ghUser.login
-            .toLowerCase()
-            .replace(/[^a-z0-9-]/g, '-')
-            .slice(0, 32)}-${String(ghUser.id).slice(-4)}`;
-          await createOrganizationWithOwner(db, {
-            name: `${ghUser.name || ghUser.login} Workspace`,
-            slug: slugBase,
-            creatorUserId: userRecord.id,
-          });
-          userOrgs = await listUserOrganizations(db, userRecord.id);
-        }
-
-        const primaryOrg = userOrgs[0]!;
-        const actor: AuthenticatedActor = {
-          userId: userRecord.id,
-          organizationId: primaryOrg.organization.id,
-          role: primaryOrg.role,
-        };
-
-        const expiresIn = 8 * 3600;
-        const sessionJwt = signAuthToken(
-          {
-            userId: actor.userId,
-            organizationId: actor.organizationId,
-            role: actor.role,
-            expiresInSeconds: expiresIn,
-          },
-          env.AUTH_SECRET
-        );
-
-        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
-        res.setHeader(
-          'Set-Cookie',
-          `aegis_session=${encodeURIComponent(sessionJwt)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
-        );
-
-        if ((req.header('accept') ?? '').includes('text/html')) {
-          res.redirect(302, verifiedState.redirectAfter || '/');
-          return;
-        }
-
-        res.status(200).json({
-          data: {
-            token: sessionJwt,
-            tokenType: 'Bearer',
-            expiresIn,
-            actor,
-          },
-        });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  // 3. Mount Demo Governance, Session BYOK Vault, Arena, DAG Validator & Reset Routes (`demo-routes.ts`)
+  // 4. Mount Workspace, Demo Governance, Session BYOK Vault, Arena, DAG Validator & Reset Routes (`demo-routes.ts`)
   registerDemoRoutes(app, {
     contextProvider,
     rawEnv: deps.rawEnv,
     worker: deps.worker,
     modelProvider: deps.modelProvider,
     resolveActorFromRequest,
-    ensureWorkspaceSeededWithPendingHitl,
-    listDemoPersonas,
     getRequestByokScope,
-  });
-
-  // 4. Get Persisted Workspace Snapshot for Active Actor (`GET /api/v1/workspace`)
-  app.get('/api/v1/workspace', async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const rawEnv = parseEnv(deps.rawEnv ?? process.env);
-      const ctx = await contextProvider();
-      const { db } = ctx;
-
-      await ensureWorkspaceSeededWithPendingHitl(db, { forceReset: false });
-      const personas = await listDemoPersonas(db);
-      const actor = await resolveActorFromRequest(req, db, rawEnv);
-
-      if (!actor) {
-        throw new AuthorizationError({
-          allowed: false,
-          code: 'UNAUTHENTICATED',
-          action: 'org.view',
-          reason: 'Authentication required to inspect workspace state.',
-        });
-      }
-
-      const requestedOrgId =
-        typeof req.query.organizationId === 'string' &&
-        req.query.organizationId.trim()
-          ? req.query.organizationId.trim()
-          : actor.organizationId;
-
-      requireAuthorization(actor, 'org.view', {
-        organizationId: requestedOrgId,
-        resourceType: 'organization',
-        resourceId: requestedOrgId,
-      });
-
-      const byokScopeKey = getRequestByokScope(req, requestedOrgId);
-      const effectiveEnv = resolveEffectiveEnvWithByok(rawEnv, byokScopeKey);
-
-      const [orgRow] = await db
-        .select()
-        .from(organizations)
-        .where(eq(organizations.id, requestedOrgId))
-        .limit(1);
-
-      let orgMembers: Awaited<ReturnType<typeof listOrganizationMembers>> = [];
-      try {
-        orgMembers = await listOrganizationMembers(db, actor, requestedOrgId);
-      } catch {
-        orgMembers = [];
-      }
-
-      const orgAgents = await db
-        .select()
-        .from(agents)
-        .where(eq(agents.organizationId, requestedOrgId))
-        .orderBy(desc(agents.updatedAt));
-
-      const orgVersions = await db
-        .select()
-        .from(agentVersions)
-        .where(eq(agentVersions.organizationId, requestedOrgId))
-        .orderBy(desc(agentVersions.versionNumber));
-
-      const orgRuns = await listOrganizationRuns(db, actor, requestedOrgId, 25);
-      const orgApprovals = await listApprovalRequests(db, actor, requestedOrgId);
-
-      const orgWorkflows = await db
-        .select()
-        .from(workflows)
-        .where(eq(workflows.organizationId, requestedOrgId))
-        .orderBy(desc(workflows.updatedAt));
-
-      const orgWorkflowVersions = await db
-        .select()
-        .from(workflowVersions)
-        .where(eq(workflowVersions.organizationId, requestedOrgId))
-        .orderBy(desc(workflowVersions.versionNumber));
-
-      const orgDocuments = await db
-        .select()
-        .from(knowledgeDocuments)
-        .where(eq(knowledgeDocuments.organizationId, requestedOrgId))
-        .orderBy(desc(knowledgeDocuments.createdAt));
-
-      const orgSuites = await db
-        .select()
-        .from(evalSuites)
-        .where(eq(evalSuites.organizationId, requestedOrgId));
-
-      const orgCases = await db
-        .select()
-        .from(evalCases)
-        .where(eq(evalCases.organizationId, requestedOrgId))
-        .orderBy(asc(evalCases.caseIndex));
-
-      const orgExperiments = await db
-        .select()
-        .from(evalExperiments)
-        .where(eq(evalExperiments.organizationId, requestedOrgId))
-        .orderBy(asc(evalExperiments.createdAt));
-
-      let evalComparison = null;
-      if (orgExperiments.length >= 2) {
-        try {
-          evalComparison = await compareEvalExperiments(db, actor, {
-            organizationId: requestedOrgId,
-            baselineExperimentId: orgExperiments[0]!.id,
-            candidateExperimentId: orgExperiments[orgExperiments.length - 1]!.id,
-          });
-        } catch {
-          evalComparison = null;
-        }
-      }
-
-      const usageSummary = await getOrganizationUsageSummary(
-        db,
-        actor,
-        requestedOrgId
-      );
-
-      const recentUsageEvents = await db
-        .select()
-        .from(usageEvents)
-        .where(eq(usageEvents.organizationId, requestedOrgId))
-        .orderBy(desc(usageEvents.createdAt))
-        .limit(40);
-
-      let auditLog: Awaited<ReturnType<typeof listAuditEvents>> = [];
-      let canViewAudit = false;
-      try {
-        auditLog = await listAuditEvents(db, actor, {
-          organizationId: requestedOrgId,
-        });
-        canViewAudit = true;
-      } catch {
-        canViewAudit = false;
-      }
-
-      const providerKeys = getProviderKeyStatus(effectiveEnv);
-      const byokProviders = listByokProviderStatuses(rawEnv, byokScopeKey);
-      const quotas = await getWorkspaceQuotaStatus(db, requestedOrgId);
-
-      const rbacMatrix = {
-        owner: listRolePermissions('owner'),
-        admin: listRolePermissions('admin'),
-        developer: listRolePermissions('developer'),
-        viewer: listRolePermissions('viewer'),
-        activeActorPermissions: listRolePermissions(actor.role),
-      };
-
-      res.status(200).json({
-        data: {
-          actor,
-          organization: orgRow ?? null,
-          members: orgMembers,
-          quotas,
-          rbacMatrix,
-          storageMode: ctx.storageMode,
-          aiMode: effectiveEnv.AI_MODE,
-          hasGeminiKey: providerKeys.gemini,
-          providerKeys,
-          byokProviders,
-          byokScopeKey,
-          logFilePath: LOG_FILE_PATH,
-          runtimeLogs: getRuntimeLogs(80),
-          personas,
-          agents: orgAgents,
-          agentVersions: orgVersions,
-          runs: orgRuns,
-          approvals: orgApprovals,
-          workflows: orgWorkflows,
-          workflowVersions: orgWorkflowVersions,
-          documents: orgDocuments,
-          evalSuites: orgSuites,
-          evalCases: orgCases,
-          evalExperiments: orgExperiments,
-          evalComparison,
-          usageSummary,
-          usageEvents: recentUsageEvents,
-          auditEvents: auditLog,
-          canViewAudit,
-        },
-      });
-    } catch (err) {
-      next(err);
-    }
   });
 
   function unauthenticatedError(): AuthorizationError {
@@ -1546,7 +715,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
             outcome: 'denied',
             metadata: {
               reason:
-                'Prompt injection / secret exfiltration pattern blocked by Aegis Input Guardrail.',
+                'Prompt injection / secret exfiltration pattern blocked by Ordaris Input Guardrail.',
               promptPreview: body.inputPrompt.slice(0, 120),
             },
           });
@@ -1555,7 +724,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
             getReqId(req),
             422,
             'GUARDRAIL_PROMPT_INJECTION_BLOCKED',
-            'Blocked by Aegis Security Guardrail',
+            'Blocked by Ordaris Security Guardrail',
             'Adversarial system-prompt override or secret exfiltration directive was intercepted prior to model dispatch and logged in audit_events (outcome=denied).'
           );
           return;

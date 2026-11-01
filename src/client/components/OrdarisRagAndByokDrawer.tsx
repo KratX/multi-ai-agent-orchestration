@@ -161,7 +161,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
       onNotify?.(
         okMsg,
         'success',
-        `Cipher: AES-256-GCM + scrypt • Scope: session:${demoSessionId.slice(0, 12)} • Zero disk writes`
+        `Cipher: AES-256-GCM (ephemeral CSPRNG master key, 2h sliding TTL) • Scope: session:${demoSessionId.slice(0, 12)} • Zero disk writes`
       );
       await onRefreshWorkspace();
     } catch (err) {
@@ -341,7 +341,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
               </span>
             </div>
             <p className="text-zinc-400 text-[10px] mt-1 leading-relaxed">
-              Zero-key offline simulation engine (<code className="text-amber-200">aegis-mock-v1</code>).
+              Zero-key offline simulation engine (<code className="text-amber-200">ordaris-mock-v1</code>).
             </p>
           </div>
         </div>
@@ -516,7 +516,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
           <div className="flex items-center gap-2">
             <Lock className="w-3.5 h-3.5 text-emerald-400" />
             <span>
-              Keys are encrypted with AES-256-GCM + scrypt and never returned in plaintext.
+              Keys live only in server RAM under an ephemeral AES-256-GCM master key (2h sliding TTL) and are never written to disk.
             </span>
           </div>
           <button

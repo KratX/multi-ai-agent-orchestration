@@ -203,7 +203,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
   const [cacheHitRatePct, setCacheHitRatePct] = useState<number>(35);
 
   // Sub-Tab 4C: Team & RBAC Membership + Policy Matrix state
-  const [newMemberEmail, setNewMemberEmail] = useState<string>('secops.lead@ordaris.dev');
+  const [newMemberEmail, setNewMemberEmail] = useState<string>('secops.lead@ordaris.runtime');
   const [newMemberName, setNewMemberName] = useState<string>('Elena Vance (SecOps)');
   const [newMemberRole, setNewMemberRole] = useState<'owner' | 'admin' | 'developer' | 'viewer'>('developer');
   const [savingMember, setSavingMember] = useState<boolean>(false);
@@ -911,7 +911,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   disabled={savingMember}
                   onClick={() =>
                     handleUpsertMember(
-                      'escalation.probe@ordaris.dev',
+                      'escalation.probe@ordaris.runtime',
                       'Escalation Probe',
                       'owner',
                     )
@@ -1387,7 +1387,7 @@ export const OrdarisEngineMatrixAndLogsPanel: React.FC<OrdarisEngineMatrixAndLog
     );
   });
 
-  const envTemplateText = `# Ordaris v1.0.0-demo Local Environment Configuration
+  const envTemplateText = `# Ordaris Runtime v1.0.0-demo Local Environment Configuration
 NODE_ENV=development
 PORT=3000
 PGLITE_DATA_DIR=.local/ordaris-db

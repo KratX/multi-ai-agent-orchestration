@@ -1,10 +1,10 @@
-# Aegis Runtime (`v1.0.0-demo`) — Implementation Status & Planned Roadmap
+# Ordaris Runtime (`v1.0.0-demo`) — Implementation Status & Planned Roadmap
 
 - **Current Release**: `v1.0.0-demo` — Enterprise Multi-Tenant AI Agent, Hybrid RAG, Workflow DAG, HITL Governance & FinOps Platform (**COMPLETE**)
-- **Current Phase**: Phases `A`–`H` (Core Runtime) + Phase `I` / Checkpoints `1`–`12` (`Aegis Runtime v1.0.0-demo` Interactive Multi-Tenant Sandbox & Security Hardening) (**COMPLETE**)
+- **Current Phase**: Phases `A`–`H` (Core Runtime) + Phase `I` / Checkpoints `1`–`12` (`Ordaris Runtime v1.0.0-demo` Interactive Multi-Tenant Sandbox & Security Hardening) (**COMPLETE**)
 - **Last Updated**: 2026-10-31
 - **AI Execution Mode**: 3-Tier AI Resolution (`Tier 1`: Session AES-256-GCM BYOK Vault -> `Tier 2`: Server `.env` -> `Tier 3`: Deterministic `MockModelProvider` across `mock`, `gemini`, `chatgpt`, `claude`, `grok`, `openrouter`)
-- **Local Database**: File-backed PGlite PostgreSQL (`PGLITE_DATA_DIR=".local/aegis-db"`) with `18` tables, migrations `0001`..`0006`, and composite `(organization_id, ...)` foreign keys enforced at the SQL constraint layer
+- **Local Database**: File-backed PGlite PostgreSQL (`PGLITE_DATA_DIR=".local/ordaris-db"`) with `20` tables, migrations `0001`..`0006`, and composite `(organization_id, ...)` foreign keys enforced at the SQL constraint layer
 - **Runtime Processes**: Full-stack Express API + Vite UI (`pnpm dev` / `server.ts`) and standalone background queue worker (`pnpm dev:worker` / `src/server/worker/main.ts`)
 - **Automated Verification**: `21` test suites (`104/104` tests passing across unit, security, and full-stack PostgreSQL/HTTP integration), `pnpm typecheck` (`0` errors), `pnpm seed`, and `pnpm build` verified
 
@@ -19,14 +19,14 @@
    - Mutable agent drafts (`agents`) separated from immutable published snapshots (`agent_versions` with canonical SHA-256 `snapshot_hash`) so active runs, workflows, and evaluations never read mutable draft state.
 3. **Bounded Agent Runtime & Safe Tool Gateway (`TOOL-001`..`002`, `RUN-001`..`002`)**:
    - Strict step (`8`), tool-call (`6`), timeout (`120s`), and payload byte budgets.
-   - Server-validated `ToolGateway` enforcing per-version tool allowlists, `calculator` (recursive-descent arithmetic parser with **zero `eval()` or `Function()`**), organization-scoped `knowledge_search`, and `verifyModelCitations()` to strip hallucinated citations.
+   - Server-validated `ToolGateway` (`src/server/modules/tools/tool-gateway.ts`) enforcing per-version tool allowlists, `calculator` (recursive-descent arithmetic parser with **zero `eval()` or `Function()`**), organization-scoped `knowledge_search`, and `verifyModelCitations()` to strip hallucinated citations.
 4. **PostgreSQL Transactional Job Queue & Background Worker (`QUEUE-001`..`002`, `ADR-003`)**:
    - Atomic transaction inserting `runs`, `job_queue`, and `run_events (seq=1)`.
    - `RuntimeWorker` (`src/server/worker/main.ts`) claiming jobs via `FOR UPDATE SKIP LOCKED` leases, heartbeats, `recoverExpiredJobLeases`, and graceful `SIGINT`/`SIGTERM` shutdown.
 5. **Tenant-Isolated Knowledge Ingestion & Hybrid RAG (`RAG-001`..`003`)**:
    - Path-traversal filename sanitization (`Threat T-05`), opaque `<org_id>/<uuid>.bin` storage keys, SHA-256 deduplication, `<untrusted_knowledge_context>` prompt-injection delimiters (`Threat T-03`), and hybrid PostgreSQL `tsvector` + 64-D cosine vector ranking.
 6. **Directed Acyclic Workflow Engine & HITL Approval Gates (`WORKFLOW-001`..`002`, `HITL-001`)**:
-   - 3-color DFS cycle detector (`validateWorkflowDag`) reporting exact `cyclePath` arrays, safe branching evaluation without `eval()`, durable `approval_requests` (`waiting_approval`), and server-authorized `owner`/`admin` approval/rejection (`POST /api/v1/approvals/:id/decision`).
+   - 3-color DFS cycle detector (`validateWorkflowDag` in `src/server/modules/workflows/dag-validator.ts`) reporting exact `cyclePath` arrays, safe branching evaluation without `eval()`, durable `approval_requests` (`waiting_approval`), and server-authorized `owner`/`admin` approval/rejection (`POST /api/v1/approvals/:id/decision`).
 7. **Automated Evaluation Harness, Honest FinOps Ledger & SSE Cursor Replay (`EVAL-001`, `USAGE-001`, `AUDIT-001`, `SSE-001`)**:
    - 5 deterministic graders (`exact_match`, `contains`, `json_schema`, `citation_required`, `tool_called`) with `v1`-vs-`v2` regression comparison (`compareEvalExperiments`).
    - Append-only `audit_events` recording both `allowed` and `denied` outcomes (`Threat T-06`).
@@ -35,21 +35,21 @@
 
 ---
 
-### B. Aegis Runtime `v1.0.0-demo` Interactive Enterprise Sandbox (Checkpoints `1`–`12`)
+### B. Ordaris Runtime `v1.0.0-demo` Interactive Enterprise Sandbox (Checkpoints `1`–`12`)
 1. **Checkpoint 1 — Session-Scoped AES-256-GCM BYOK Vault (`src/server/security/session-key-vault.ts`)**:
    - Encrypts visitor-supplied cloud API keys in server RAM using `aes-256-gcm` with an ephemeral 256-bit CSPRNG master key (`crypto.randomBytes(32)`), 96-bit random IV, and 128-bit authentication tag.
-   - Enforces a 2-hour sliding TTL per `x-aegis-demo-session` (minimum 16-char high-entropy token), returns only masked previews (`AIza...9xQp`), and never writes raw keys to disk or logs (`Threat T-08`).
+   - Enforces a 2-hour sliding TTL per `x-ordaris-demo-session` (minimum 16-char high-entropy token), returns only masked previews (`AIza...9xQp`), and never writes raw keys to disk or logs (`Threat T-08`).
 2. **Checkpoint 2 — 23-Permission RBAC Policy Matrix (`src/server/policies/authorization.ts`)**:
    - Expanded fine-grained RBAC across `owner` (`23/23`), `admin` (`21/23`), `developer` (`16/23`), and `viewer` (`9/23`), plus `assertNotRemovingLastOwner()` (`409 Conflict` `LAST_OWNER_PROTECTED`).
 3. **Checkpoint 3 — 3-Tier Multi-Provider AI Factory (`src/server/ai/provider-factory.ts`)**:
    - Unified resolution across `mock`, `gemini`, `chatgpt`, `claude`, `grok`, and `openrouter` using `Session BYOK -> Server .env -> Deterministic Mock` fallback and live connectivity testing (`testProviderConnection`).
 4. **Checkpoint 4 — 8-Persona Multi-Tenant Seed & 3-Mode Reset (`src/server/seed.ts`)**:
    - Seeds 8 distinct personas across `Acme Cyber Defense` (`acme-owner`, `acme-admin`, `acme-dev`, `acme-viewer`) and `Beta Global Logistics` (`beta-owner`, `beta-admin`, `beta-dev`, `beta-viewer`).
-   - Supports 3-choice sandbox reset (`workspace_only`, `keys_only`, `factory_reset`) and live 18-table diagnostics (`getDatabaseDiagnostics`).
-5. **Checkpoints 5 & 6 — Demo Governance & Arena HTTP API (`src/server/http/demo-routes.ts`, `src/server/http/app.ts`)**:
+   - Supports 3-choice sandbox reset (`workspace_only`, `keys_only`, `factory_reset`) and live 20-table diagnostics (`getDatabaseDiagnostics`).
+5. **Checkpoints 5 & 6 — Demo Governance & Arena HTTP API (`src/server/http/demo-routes.ts`, `src/server/http/auth.ts`, `src/server/http/app.ts`)**:
    - Mounted `/api/v1/demo/byok`, `/api/v1/demo/verify-isolation` (4-point live cross-tenant & RBAC verifier), `/api/v1/demo/diagnostics`, `/api/v1/workflows/validate-dag`, `/api/v1/agents/:id/arena` (Side-by-Side 2-Engine Comparison Arena), `/api/v1/workspace/reset`, and `/api/v1/members`.
 6. **Checkpoints 7–10 — 5-Tab React 19 Operator Console (`src/App.tsx`, `src/client/components/*`)**:
-   - Built the dark-slate enterprise command header (8-Persona switcher, active role badge, Session BYOK Vault trigger, 3-Choice Reset popover), collapsible 5-Step Evaluator Walkthrough, and 5 specialized workspace tabs (`Agent Studio & Arena`, `Knowledge RAG & Citations`, `Workflow DAG & HITL Gates`, `Evals, FinOps & Security`, `AI Engine Matrix & Logs`).
+   - Built the dark-slate enterprise command header (8-Persona switcher, active role badge, Session BYOK Vault trigger, 3-Choice Reset popover), collapsible 5-Step Evaluator Walkthrough, and 5 specialized workspace tabs (`Agent Studio & Arena`, `Knowledge RAG & Citations`, `Workflow DAG & HITL Gates`, `Evals, FinOps & Security`, `AI Engine Matrix & Logs`) in `OrdarisRagAndByokDrawer.tsx`, `OrdarisWorkflowAndHitl.tsx`, and `OrdarisGovernanceAndTelemetry.tsx`.
 7. **Checkpoints 11 & 12 — Full-Stack Integration Test Suite & Release Documentation**:
    - Expanded `tests/integration/http-api-and-worker.test.ts` to verify 8-persona RBAC, session BYOK isolation, 3-mode sandbox resets, cyclic/acyclic DAG validation, 4-point isolation probes, and `409 LAST_OWNER_PROTECTED`.
 
@@ -91,7 +91,7 @@ While `v1.0.0-demo` completes the self-contained, zero-required-spend multi-tena
 ### Milestone `v1.1` — Identity Federation, Persistent KMS Vault & API Tokens
 - **OAuth 2.0 / OIDC & SAML SSO**: Replace the interactive `x-actor-id` persona switcher in production deployments (`DEMO_MODE=false`) with signed HttpOnly session cookies backed by GitHub, Google Workspace, and Okta OIDC providers while retaining the 8-persona switcher exclusively for sandbox demos.
 - **Envelope-Encrypted Persistent Tenant Key Vault**: Extend the in-memory `SessionKeyVault` with an optional PostgreSQL `tenant_api_keys` table using envelope encryption (per-tenant DEKs wrapped by AWS KMS / GCP Cloud KMS or local Master Key) and scheduled key rotation.
-- **Scoped Machine-to-Machine API Keys**: Allow `owner` and `admin` roles to mint prefix-tagged (`aeg_live_...`) bearer tokens with per-token permission scopes and rate-limit buckets.
+- **Scoped Machine-to-Machine API Keys**: Allow `owner` and `admin` roles to mint prefix-tagged (`ord_live_...`) bearer tokens with per-token permission scopes and rate-limit buckets.
 
 ### Milestone `v1.2` — Native `pgvector` HNSW Indexing & Multimodal RAG Ingestion
 - **`pgvector` HNSW Migration**: Add an optional migration enabling `CREATE EXTENSION IF NOT EXISTS vector` with `HNSW (embedding vector_cosine_ops)` indexes when running against external PostgreSQL 16 (`docker-compose.yml` or managed Postgres), while preserving the in-process cosine + `tsvector` hybrid scorer for zero-dependency PGlite mode.

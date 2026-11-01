@@ -8,7 +8,7 @@
 
 ## 1. Context
 
-We are building **Aegis Runtime (`v1.0.0-demo`)**, an enterprise-grade multi-tenant AI Agent, Hybrid RAG, Workflow DAG, HITL Governance & FinOps Platform designed to demonstrate senior full-stack and AI systems engineering (multi-tenant isolation, immutable versioning, server-authorized tool execution, durable background job queues, RAG with verified source citations, and visual workflow validation).
+We are building **Ordaris Runtime (`v1.0.0-demo`)**, an enterprise-grade multi-tenant AI Agent, Hybrid RAG, Workflow DAG, HITL Governance & FinOps Platform designed to demonstrate senior full-stack and AI systems engineering (multi-tenant isolation, immutable versioning, server-authorized tool execution, durable background job queues, RAG with verified source citations, and visual workflow validation).
 
 Many AI portfolio projects depend on:
 - Paid LLM API keys (OpenAI, Anthropic, or Gemini paid tiers) just to boot or run tests.
@@ -24,11 +24,11 @@ At the same time, evaluators who *do* have a free-tier cloud API key (`Gemini`, 
 We adopt a strict **Zero-Required-Spend, Local-First Architecture with 3-Tier AI Key Resolution**:
 
 1. **3-Tier AI Key Resolution Hierarchy (`src/server/ai/provider-factory.ts`)**:
-   - **Tier 1 — Session-Scoped AES-256-GCM BYOK Vault (`src/server/security/session-key-vault.ts`)**: Visitors can enter free-tier keys (`gemini`, `chatgpt`, `claude`, `grok`, `openrouter`) in the UI's Session BYOK Drawer. Keys are encrypted in server RAM using `aes-256-gcm` under an ephemeral 256-bit CSPRNG master key scoped to `x-aegis-demo-session` with a 2-hour sliding TTL.
+   - **Tier 1 — Session-Scoped AES-256-GCM BYOK Vault (`src/server/security/session-key-vault.ts`)**: Visitors can enter free-tier keys (`gemini`, `chatgpt`, `claude`, `grok`, `openrouter`) in the UI's Session BYOK Drawer. Keys are encrypted in server RAM using `aes-256-gcm` under an ephemeral 256-bit CSPRNG master key scoped to `x-ordaris-demo-session` with a 2-hour sliding TTL.
    - **Tier 2 — Server `.env` Fallback**: Optional server-side environment variables (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`).
    - **Tier 3 — Deterministic Simulation Engine (`MockModelProvider`, `AI_MODE=demo` default)**: The application boots, runs its full 104-test suite, and executes end-to-end multi-step agent, RAG, and workflow runs with **zero network calls and zero API keys required**.
 2. **PostgreSQL as the Single Infrastructure Dependency**:
-   - We use PostgreSQL (via embedded file-backed `PGlite` in `.local/aegis-db` for instant zero-daemon local execution, or `docker-compose.yml` for external Postgres 16) for all 18 relational tables, transactional job queuing (`FOR UPDATE SKIP LOCKED`), append-only event replay (`run_events`), and hybrid `tsvector` + 64-D cosine vector RAG.
+   - We use PostgreSQL (via embedded file-backed `PGlite` in `.local/ordaris-db` for instant zero-daemon local execution, or `docker-compose.yml` for external Postgres 16) for all 20 relational tables, transactional job queuing (`FOR UPDATE SKIP LOCKED`), append-only event replay (`run_events`), and hybrid `tsvector` + 64-D cosine vector RAG.
 3. **Local Opaque File Storage in Development**:
    - Uploaded knowledge documents are stored under `.local/uploads/` using opaque UUID keys (`<orgId>/<uuid>.bin`), avoiding mandatory cloud object storage accounts.
 4. **Honest FinOps Labeling of Simulated vs. Live Telemetry**:

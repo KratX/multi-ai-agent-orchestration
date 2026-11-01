@@ -43,13 +43,13 @@ import {
 } from './model-provider';
 
 /**
- * Aegis 3-Tier Multi-Provider AI Factory (`src/server/ai/provider-factory.ts`)
+ * Ordaris 3-Tier Multi-Provider AI Factory (`src/server/ai/provider-factory.ts`)
  *
  * Implements ADR-001 & Checkpoint 3:
  * 1. Tier 1 (`session_byok`): Resolves visitor keys from the in-RAM AES-256-GCM `SessionKeyVault`.
  * 2. Tier 2 (`server_env`): Falls back to server `.env` credentials (`GEMINI_API_KEY`, `OPENAI_API_KEY`,
  *    `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`).
- * 3. Tier 3 (`deterministic_fallback`): Falls back to `MockModelProvider` (`aegis-mock-v1`) with zero
+ * 3. Tier 3 (`deterministic_fallback`): Falls back to `MockModelProvider` (`ordaris-mock-v1`) with zero
  *    external network calls or spend required.
  * 4. Provides `testProviderConnection()` to probe provider connectivity and update vault verification state.
  */
@@ -86,7 +86,7 @@ export function resolveThreeTierProvider(
   const rawEngine = (options?.engine ?? 'auto').trim().toLowerCase();
 
   let requestedEngine: LiveAiEngineMode = 'auto';
-  if (rawEngine === 'mock' || rawEngine === 'aegis-mock') {
+  if (rawEngine === 'mock' || rawEngine === 'ordaris-mock') {
     requestedEngine = 'mock';
   } else if (rawEngine === 'gemini' || rawEngine === 'gemini-free') {
     requestedEngine = 'gemini-free';

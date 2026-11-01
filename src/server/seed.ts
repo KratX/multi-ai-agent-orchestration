@@ -18,7 +18,7 @@ import {
 } from './modules/workspace/demo-workspace-service';
 
 /**
- * Aegis Flagship Multi-Tenant Seed, 3-Mode Sandbox Reset & Database Diagnostics (`src/server/seed.ts`)
+ * Ordaris Flagship Multi-Tenant Seed, 3-Mode Sandbox Reset & Database Diagnostics (`src/server/seed.ts`)
  *
  * Implements Checkpoint 4 (`SEED-001`):
  * - Seeds 8 RBAC personas across `Acme Cyber Defense` (`acme-owner`, `acme-admin`, `acme-dev`, `acme-viewer`)

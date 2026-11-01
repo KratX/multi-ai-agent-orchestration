@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { AppEnv } from '../config/env';
 
 /**
- * Aegis Session-Scoped AES-256-GCM In-Memory BYOK Vault (`src/server/security/session-key-vault.ts`)
+ * Ordaris Session-Scoped AES-256-GCM In-Memory BYOK Vault (`src/server/security/session-key-vault.ts`)
  *
  * Enforces Threat T-08 & ADR-001:
  * 1. Pure Server-RAM Storage: API keys live exclusively in process memory and are NEVER written
@@ -215,7 +215,7 @@ export function resolveByokScopeKey(input?: {
     } else {
       const digest = crypto
         .createHmac('sha256', ephemeralMasterKey)
-        .update(`aegis-session-scope:${rawSession}`, 'utf8')
+        .update(`ordaris-session-scope:${rawSession}`, 'utf8')
         .digest('hex')
         .slice(0, 32);
       return `session:${digest}`;
