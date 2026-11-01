@@ -30,11 +30,22 @@ import {
   type AuthenticatedActor,
 } from '../policies/authorization';
 import {
+  createOrganizationWithOwner,
+  ensureUser,
   listUserOrganizations,
   listOrganizationMembers,
   resolveActorContext,
   TenantConstraintError,
 } from '../db/repositories/tenant-repository';
+import {
+  extractTokenFromRequest,
+  parseCookies,
+  signAuthToken,
+  signOAuthState,
+  verifyAuthSecretHeader,
+  verifyAuthToken,
+  verifyOAuthState,
+} from './auth';
 import {
   AgentConstraintError,
   createAgentDraft,
@@ -511,31 +522,11 @@ export async function listDemoPersonas(
   return mapped.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 }
 
-async function resolveActorFromRequest(
-  req: Request,
+async function resolvePersonaActor(
   db: AegisDatabase,
-  env: AppEnv
+  personaId: DemoPersonaId
 ): Promise<AuthenticatedActor | null> {
-  const explicitUserId = req.header('x-user-id')?.trim();
-  const explicitOrgId = req.header('x-organization-id')?.trim();
-
-  if (explicitUserId && explicitOrgId) {
-    const resolved = await resolveActorContext(db, explicitUserId, explicitOrgId);
-    (req as Request & { resolvedActor?: AuthenticatedActor | null }).resolvedActor =
-      resolved;
-    return resolved;
-  }
-
-  const actorAlias =
-    req.header('x-actor-id')?.trim() ||
-    (typeof req.query.actor === 'string' ? req.query.actor.trim() : '') ||
-    (env.DEMO_MODE ? 'acme-admin' : '');
-
-  if (!actorAlias || actorAlias === 'anonymous') {
-    return null;
-  }
-
-  const mapping = ACTOR_AUTH_SUBJECT_MAP[actorAlias as DemoPersonaId];
+  const mapping = ACTOR_AUTH_SUBJECT_MAP[personaId];
   if (!mapping) {
     return null;
   }
@@ -556,10 +547,136 @@ async function resolveActorFromRequest(
     return null;
   }
 
-  const resolved = await resolveActorContext(db, userRow.id, orgRow.id);
-  (req as Request & { resolvedActor?: AuthenticatedActor | null }).resolvedActor =
-    resolved;
-  return resolved;
+  return resolveActorContext(db, userRow.id, orgRow.id);
+}
+
+async function resolveActorFromRequest(
+  req: Request,
+  db: AegisDatabase,
+  env: AppEnv
+): Promise<AuthenticatedActor | null> {
+  // 1. Explicit Cryptographic Token Header (`Authorization: Bearer <jwt>` or `x-ordaris-auth-token: <jwt>`)
+  const extracted = extractTokenFromRequest(req);
+  if (
+    extracted.hadExplicitAuthAttempt &&
+    (extracted.source === 'bearer' || extracted.source === 'header')
+  ) {
+    if (!extracted.token) {
+      return null;
+    }
+    const claims = verifyAuthToken(extracted.token, env.AUTH_SECRET);
+    if (!claims) {
+      return null;
+    }
+    const resolved = await resolveActorContext(db, claims.sub, claims.org);
+    (
+      req as Request & {
+        resolvedActor?: AuthenticatedActor | null;
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).resolvedActor = resolved;
+    (
+      req as Request & {
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).authMethod = 'jwt';
+    return resolved;
+  }
+
+  // 2. Production & Non-Demo Guard:
+  // When NODE_ENV === "production" or DEMO_MODE === false, unsigned headers and query params are NEVER trusted.
+  // Only a valid signed `ordaris_session` cookie (or Bearer token above) is accepted.
+  if (env.NODE_ENV === 'production' || !env.DEMO_MODE) {
+    if (extracted.source === 'cookie' && extracted.token) {
+      const claims = verifyAuthToken(extracted.token, env.AUTH_SECRET);
+      if (!claims) {
+        return null;
+      }
+      const resolved = await resolveActorContext(db, claims.sub, claims.org);
+      (
+        req as Request & {
+          resolvedActor?: AuthenticatedActor | null;
+          authMethod?: 'jwt' | 'demo_header';
+        }
+      ).resolvedActor = resolved;
+      (
+        req as Request & {
+          authMethod?: 'jwt' | 'demo_header';
+        }
+      ).authMethod = 'jwt';
+      return resolved;
+    }
+    return null;
+  }
+
+  // 3. Explicit Non-Production Demo Mode Header Resolution:
+  // Note: Query parameters (?actor=...) and silent default fallbacks ('acme-admin') are strictly prohibited
+  // so unauthenticated requests always receive 401 UNAUTHENTICATED.
+  const explicitUserId = req.header('x-user-id')?.trim();
+  const explicitOrgId = req.header('x-organization-id')?.trim();
+
+  if (explicitUserId && explicitOrgId) {
+    const resolved = await resolveActorContext(db, explicitUserId, explicitOrgId);
+    (
+      req as Request & {
+        resolvedActor?: AuthenticatedActor | null;
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).resolvedActor = resolved;
+    (
+      req as Request & {
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).authMethod = 'demo_header';
+    return resolved;
+  }
+
+  const actorAlias =
+    req.header('x-actor-id')?.trim() ||
+    req.header('x-demo-actor')?.trim() ||
+    '';
+
+  if (actorAlias) {
+    if (actorAlias === 'anonymous') {
+      return null;
+    }
+    const resolved = await resolvePersonaActor(db, actorAlias as DemoPersonaId);
+    (
+      req as Request & {
+        resolvedActor?: AuthenticatedActor | null;
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).resolvedActor = resolved;
+    (
+      req as Request & {
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).authMethod = 'demo_header';
+    return resolved;
+  }
+
+  // 4. Signed Session Cookie fallback when no explicit header was provided
+  if (extracted.source === 'cookie' && extracted.token) {
+    const claims = verifyAuthToken(extracted.token, env.AUTH_SECRET);
+    if (!claims) {
+      return null;
+    }
+    const resolved = await resolveActorContext(db, claims.sub, claims.org);
+    (
+      req as Request & {
+        resolvedActor?: AuthenticatedActor | null;
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).resolvedActor = resolved;
+    (
+      req as Request & {
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).authMethod = 'jwt';
+    return resolved;
+  }
+
+  return null;
 }
 
 function getRequestByokScope(req: Request, fallbackOrgId: string): string {
@@ -701,6 +818,373 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     handleReadiness(req, res).catch(next);
   });
 
+  // 2b. Cryptographic Authentication & GitHub OAuth 2.0 Endpoints (`/api/v1/auth/*`)
+  app.get(
+    '/api/v1/auth/status',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const env = parseEnv(deps.rawEnv ?? process.env);
+        const { db } = await contextProvider();
+        const actor = await resolveActorFromRequest(req, db, env);
+        const authMethod =
+          (req as Request & { authMethod?: string }).authMethod ?? 'none';
+
+        res.status(200).json({
+          data: {
+            authenticated: Boolean(actor),
+            actor,
+            authMethod: actor ? authMethod : 'none',
+            demoMode: env.DEMO_MODE && env.NODE_ENV !== 'production',
+            githubOAuthConfigured: Boolean(
+              env.AUTH_GITHUB_ID?.trim() && env.AUTH_GITHUB_SECRET?.trim()
+            ),
+          },
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/auth/token',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const env = parseEnv(deps.rawEnv ?? process.env);
+        const { db } = await contextProvider();
+
+        const providedSecret =
+          req.header('x-auth-secret') ??
+          (typeof req.body?.authSecret === 'string'
+            ? req.body.authSecret
+            : undefined);
+        const hasValidPreSharedSecret = verifyAuthSecretHeader(
+          providedSecret,
+          env.AUTH_SECRET
+        );
+
+        // In production or when DEMO_MODE is disabled, issuing a token without a verified pre-shared AUTH_SECRET is forbidden.
+        if (
+          (env.NODE_ENV === 'production' || !env.DEMO_MODE) &&
+          !hasValidPreSharedSecret
+        ) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            403,
+            'DEMO_AUTH_DISABLED',
+            'Demo authentication disabled in production',
+            'Unauthenticated demo persona token issuance is disabled when DEMO_MODE=false or NODE_ENV=production. Authenticate via GitHub OAuth (/api/v1/auth/github/login) or supply a valid x-auth-secret header.'
+          );
+          return;
+        }
+
+        await ensureWorkspaceSeededWithPendingHitl(db, { forceReset: false });
+
+        const rawPersonaId =
+          typeof req.body?.personaId === 'string' && req.body.personaId.trim()
+            ? (req.body.personaId.trim() as DemoPersonaId)
+            : undefined;
+        const rawUserId =
+          typeof req.body?.userId === 'string' && req.body.userId.trim()
+            ? req.body.userId.trim()
+            : undefined;
+        const rawOrgId =
+          typeof req.body?.organizationId === 'string' &&
+          req.body.organizationId.trim()
+            ? req.body.organizationId.trim()
+            : undefined;
+
+        let actor: AuthenticatedActor | null = null;
+        if (rawUserId && rawOrgId) {
+          actor = await resolveActorContext(db, rawUserId, rawOrgId);
+        } else if (rawPersonaId) {
+          actor = await resolvePersonaActor(db, rawPersonaId);
+        }
+
+        if (!actor) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            401,
+            'INVALID_AUTH_SUBJECT',
+            'Invalid authentication subject',
+            'Provide a valid personaId or verified (userId, organizationId) membership pair.'
+          );
+          return;
+        }
+
+        const expiresIn = 8 * 3600;
+        const token = signAuthToken(
+          {
+            userId: actor.userId,
+            organizationId: actor.organizationId,
+            role: actor.role,
+            personaId: rawPersonaId,
+            expiresInSeconds: expiresIn,
+          },
+          env.AUTH_SECRET
+        );
+
+        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
+        res.setHeader(
+          'Set-Cookie',
+          `ordaris_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
+        );
+
+        res.status(200).json({
+          data: {
+            token,
+            tokenType: 'Bearer',
+            expiresIn,
+            actor,
+            personaId: rawPersonaId ?? null,
+          },
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.post('/api/v1/auth/logout', (_req: Request, res: Response) => {
+    res.setHeader(
+      'Set-Cookie',
+      'ordaris_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'
+    );
+    res.status(200).json({ data: { loggedOut: true } });
+  });
+
+  app.get(
+    '/api/v1/auth/github/login',
+    (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const env = parseEnv(deps.rawEnv ?? process.env);
+        const clientId = env.AUTH_GITHUB_ID?.trim();
+        const clientSecret = env.AUTH_GITHUB_SECRET?.trim();
+
+        if (!clientId || !clientSecret) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            501,
+            'GITHUB_OAUTH_NOT_CONFIGURED',
+            'GitHub OAuth is not configured',
+            'Set AUTH_GITHUB_ID and AUTH_GITHUB_SECRET in the server environment to enable GitHub OAuth 2.0 login.'
+          );
+          return;
+        }
+
+        const redirectAfter =
+          typeof req.query.redirect === 'string' &&
+          req.query.redirect.startsWith('/')
+            ? req.query.redirect
+            : '/';
+        const state = signOAuthState(redirectAfter, env.AUTH_SECRET);
+        const callbackUrl = `${env.APP_URL.replace(/\/$/, '')}/api/v1/auth/github/callback`;
+        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
+
+        res.setHeader(
+          'Set-Cookie',
+          `ordaris_oauth_state=${encodeURIComponent(state)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=600${secureFlag}`
+        );
+
+        const authorizeUrl = new URL('https://github.com/login/oauth/authorize');
+        authorizeUrl.searchParams.set('client_id', clientId);
+        authorizeUrl.searchParams.set('redirect_uri', callbackUrl);
+        authorizeUrl.searchParams.set('scope', 'read:user user:email');
+        authorizeUrl.searchParams.set('state', state);
+
+        res.redirect(302, authorizeUrl.toString());
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.get(
+    '/api/v1/auth/github/callback',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const env = parseEnv(deps.rawEnv ?? process.env);
+        const clientId = env.AUTH_GITHUB_ID?.trim();
+        const clientSecret = env.AUTH_GITHUB_SECRET?.trim();
+
+        if (!clientId || !clientSecret) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            501,
+            'GITHUB_OAUTH_NOT_CONFIGURED',
+            'GitHub OAuth is not configured',
+            'Set AUTH_GITHUB_ID and AUTH_GITHUB_SECRET in the server environment to enable GitHub OAuth 2.0 login.'
+          );
+          return;
+        }
+
+        const code =
+          typeof req.query.code === 'string' ? req.query.code.trim() : '';
+        const stateParam =
+          typeof req.query.state === 'string' ? req.query.state.trim() : '';
+        const cookies = parseCookies(req.header('cookie'));
+        const verifiedState = verifyOAuthState(stateParam, env.AUTH_SECRET);
+
+        if (
+          !code ||
+          !verifiedState ||
+          (cookies.ordaris_oauth_state &&
+            cookies.ordaris_oauth_state !== stateParam)
+        ) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            400,
+            'INVALID_OAUTH_STATE',
+            'Invalid or expired OAuth state',
+            'The GitHub OAuth callback was missing a valid code or failed HMAC-SHA256 CSRF state verification.'
+          );
+          return;
+        }
+
+        const tokenRes = await fetch(
+          'https://github.com/login/oauth/access_token',
+          {
+            method: 'POST',
+            headers: {
+              accept: 'application/json',
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              client_id: clientId,
+              client_secret: clientSecret,
+              code,
+            }),
+          }
+        );
+
+        const tokenJson = (await tokenRes.json()) as {
+          access_token?: string;
+          error?: string;
+          error_description?: string;
+        };
+
+        if (!tokenRes.ok || !tokenJson.access_token) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            401,
+            'OAUTH_TOKEN_EXCHANGE_FAILED',
+            'GitHub OAuth token exchange failed',
+            tokenJson.error_description ||
+              tokenJson.error ||
+              'Could not exchange GitHub authorization code for an access token.'
+          );
+          return;
+        }
+
+        const profileRes = await fetch('https://api.github.com/user', {
+          headers: {
+            authorization: `Bearer ${tokenJson.access_token}`,
+            accept: 'application/vnd.github+json',
+            'user-agent': 'ordaris-server',
+          },
+        });
+
+        if (!profileRes.ok) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            401,
+            'OAUTH_PROFILE_FETCH_FAILED',
+            'Failed to fetch GitHub user profile',
+            'GitHub API rejected the access token when querying /user.'
+          );
+          return;
+        }
+
+        const ghUser = (await profileRes.json()) as {
+          id?: number | string;
+          login?: string;
+          name?: string;
+          email?: string | null;
+        };
+
+        if (!ghUser.id || !ghUser.login) {
+          sendProblemDetails(
+            res,
+            getReqId(req),
+            401,
+            'OAUTH_PROFILE_INVALID',
+            'Invalid GitHub profile payload',
+            'GitHub profile did not include a user ID and login.'
+          );
+          return;
+        }
+
+        const { db } = await contextProvider();
+        const userRecord = await ensureUser(db, {
+          authSubject: `github:${ghUser.id}`,
+          email: ghUser.email ?? `${ghUser.login}@users.noreply.github.com`,
+          displayName: ghUser.name ?? ghUser.login,
+        });
+
+        let userOrgs = await listUserOrganizations(db, userRecord.id);
+        if (userOrgs.length === 0) {
+          const slugBase = `gh-${ghUser.login
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, '-')
+            .slice(0, 32)}-${String(ghUser.id).slice(-4)}`;
+          await createOrganizationWithOwner(db, {
+            name: `${ghUser.name || ghUser.login} Workspace`,
+            slug: slugBase,
+            creatorUserId: userRecord.id,
+          });
+          userOrgs = await listUserOrganizations(db, userRecord.id);
+        }
+
+        const primaryOrg = userOrgs[0]!;
+        const actor: AuthenticatedActor = {
+          userId: userRecord.id,
+          organizationId: primaryOrg.organization.id,
+          role: primaryOrg.role,
+        };
+
+        const expiresIn = 8 * 3600;
+        const sessionJwt = signAuthToken(
+          {
+            userId: actor.userId,
+            organizationId: actor.organizationId,
+            role: actor.role,
+            expiresInSeconds: expiresIn,
+          },
+          env.AUTH_SECRET
+        );
+
+        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
+        res.setHeader(
+          'Set-Cookie',
+          `ordaris_session=${encodeURIComponent(sessionJwt)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
+        );
+
+        if ((req.header('accept') ?? '').includes('text/html')) {
+          res.redirect(302, verifiedState.redirectAfter || '/');
+          return;
+        }
+
+        res.status(200).json({
+          data: {
+            token: sessionJwt,
+            tokenType: 'Bearer',
+            expiresIn,
+            actor,
+          },
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
   // 3. Seed / 3-Choice Reset Flagship Demo Workspace (`POST /api/v1/workspace/seed` & `POST /api/v1/workspace/reset`)
   const handleSeedOrReset = async (
     req: Request,
@@ -710,6 +1194,20 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     try {
       const env = parseEnv(deps.rawEnv ?? process.env);
       const { db } = await contextProvider();
+
+      // Ensure baseline seed exists before resolving actor so first-boot authenticated calls can resolve membership
+      await ensureWorkspaceSeededWithPendingHitl(db, { forceReset: false });
+
+      const actor = await resolveActorFromRequest(req, db, env);
+      if (!actor) {
+        throw new AuthorizationError({
+          allowed: false,
+          code: 'UNAUTHENTICATED',
+          action: 'org.manage',
+          reason: 'Authentication required to reset or re-seed the workspace.',
+        });
+      }
+
       const onlyDemo = req.body?.onlyDemo === true;
       const forceReset = req.body?.forceReset !== false && !onlyDemo;
       const rawMode = req.body?.resetMode as DemoResetMode | undefined;
@@ -720,14 +1218,30 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           ? rawMode
           : 'workspace_only';
 
-      const byokScopeKey = getRequestByokScope(req, 'global');
+      const clearAllByok = req.body?.clearAllByok === true;
+
+      if (resetMode === 'factory_reset' || clearAllByok) {
+        requireAuthorization(actor, 'org.delete', {
+          organizationId: actor.organizationId,
+          resourceType: 'organization',
+          resourceId: actor.organizationId,
+        });
+      } else if (resetMode !== 'keys_only') {
+        requireAuthorization(actor, 'org.manage', {
+          organizationId: actor.organizationId,
+          resourceType: 'organization',
+          resourceId: actor.organizationId,
+        });
+      }
+
+      const byokScopeKey = getRequestByokScope(req, actor.organizationId);
 
       const result = await ensureWorkspaceSeededWithPendingHitl(db, {
         forceReset,
         onlyDemo,
         resetMode: rawMode,
         clearByokScopeKey: byokScopeKey,
-        clearAllByok: req.body?.clearAllByok === true,
+        clearAllByok,
       });
       const personas = await listDemoPersonas(db);
       const byokProviders = listByokProviderStatuses(env, byokScopeKey);
@@ -740,6 +1254,8 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           resetMode,
           clearedByokKeysCount: result.clearedByokKeysCount,
           byokScopeKey,
+          actorUserId: actor.userId,
+          actorRole: actor.role,
         },
       });
 
@@ -949,57 +1465,105 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     }
   });
 
-  // 4b. Diagnostic Logs & Provider Key Status (`GET /api/v1/logs` & `POST /api/v1/logs/clear`)
-  app.get('/api/v1/logs', async (req: Request, res: Response) => {
-    const rawEnv = parseEnv(deps.rawEnv ?? process.env);
-    const byokScopeKey = getRequestByokScope(req, 'global');
-    const effectiveEnv = resolveEffectiveEnvWithByok(rawEnv, byokScopeKey);
-    const rawLogs = getRuntimeLogs(120);
-    const entries = rawLogs.map((l) => ({
-      timestamp: l.timestamp,
-      level: String(l.level || 'info').toLowerCase(),
-      event: `[${l.component}] ${l.message}`,
-      context: l.details,
-    }));
-    res.status(200).json({
-      data: {
-        logFilePath: LOG_FILE_PATH,
-        providerKeys: getProviderKeyStatus(effectiveEnv),
-        byokProviders: listByokProviderStatuses(rawEnv, byokScopeKey),
-        logs: rawLogs,
-        entries,
-      },
+  function unauthenticatedError(): AuthorizationError {
+    return new AuthorizationError({
+      allowed: false,
+      code: 'UNAUTHENTICATED',
+      action: 'org.view',
+      reason: 'Authentication required.',
     });
-  });
+  }
 
-  app.post('/api/v1/logs/clear', (_req: Request, res: Response) => {
-    clearRuntimeLogs();
-    appendRuntimeLog({
-      level: 'INFO',
-      component: 'diagnostic-logger',
-      message: 'Cleared in-memory runtime log buffer via Ordaris Log Explorer.',
-    });
-    const rawLogs = getRuntimeLogs(50);
-    res.status(200).json({
-      data: {
-        cleared: true,
-        logs: rawLogs,
-        entries: rawLogs.map((l) => ({
+  // 4b. Diagnostic Logs & Provider Key Status (`GET /api/v1/logs` & `POST /api/v1/logs/clear`)
+  app.get(
+    '/api/v1/logs',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rawEnv = parseEnv(deps.rawEnv ?? process.env);
+        const { db } = await contextProvider();
+        const actor = await resolveActorFromRequest(req, db, rawEnv);
+        if (!actor) {
+          throw unauthenticatedError();
+        }
+        const byokScopeKey = getRequestByokScope(req, actor.organizationId);
+        const effectiveEnv = resolveEffectiveEnvWithByok(rawEnv, byokScopeKey);
+        const rawLogs = getRuntimeLogs(120);
+        const entries = rawLogs.map((l) => ({
           timestamp: l.timestamp,
           level: String(l.level || 'info').toLowerCase(),
           event: `[${l.component}] ${l.message}`,
           context: l.details,
-        })),
-      },
-    });
-  });
+        }));
+        res.status(200).json({
+          data: {
+            logFilePath: LOG_FILE_PATH,
+            providerKeys: getProviderKeyStatus(effectiveEnv),
+            byokProviders: listByokProviderStatuses(rawEnv, byokScopeKey),
+            logs: rawLogs,
+            entries,
+          },
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/logs/clear',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rawEnv = parseEnv(deps.rawEnv ?? process.env);
+        const { db } = await contextProvider();
+        const actor = await resolveActorFromRequest(req, db, rawEnv);
+        if (!actor) {
+          throw unauthenticatedError();
+        }
+        requireAuthorization(actor, 'org.manage', {
+          organizationId: actor.organizationId,
+          resourceType: 'runtime_logs',
+        });
+
+        clearRuntimeLogs();
+        appendRuntimeLog({
+          level: 'INFO',
+          component: 'diagnostic-logger',
+          message: 'Cleared in-memory runtime log buffer via Ordaris Log Explorer.',
+          details: {
+            actorUserId: actor.userId,
+            actorRole: actor.role,
+          },
+        });
+        const rawLogs = getRuntimeLogs(50);
+        res.status(200).json({
+          data: {
+            cleared: true,
+            logs: rawLogs,
+            entries: rawLogs.map((l) => ({
+              timestamp: l.timestamp,
+              level: String(l.level || 'info').toLowerCase(),
+              event: `[${l.component}] ${l.message}`,
+              context: l.details,
+            })),
+          },
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
 
   // 4c. Live 4-Point Cross-Tenant Isolation Verifier (`GET /api/v1/demo/verify-isolation`)
   app.get(
     '/api/v1/demo/verify-isolation',
-    async (_req: Request, res: Response, next: NextFunction) => {
+    async (req: Request, res: Response, next: NextFunction) => {
       try {
+        const env = parseEnv(deps.rawEnv ?? process.env);
         const { db } = await contextProvider();
+        const actor = await resolveActorFromRequest(req, db, env);
+        if (!actor) {
+          throw unauthenticatedError();
+        }
         const report = await verifyMultiTenantIsolation(db);
         res.status(200).json({ data: report });
       } catch (err) {
@@ -1011,9 +1575,14 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
   // 4d. Live PostgreSQL & Worker Queue Diagnostics (`GET /api/v1/demo/diagnostics`)
   app.get(
     '/api/v1/demo/diagnostics',
-    async (_req: Request, res: Response, next: NextFunction) => {
+    async (req: Request, res: Response, next: NextFunction) => {
       try {
+        const env = parseEnv(deps.rawEnv ?? process.env);
         const { db } = await contextProvider();
+        const actor = await resolveActorFromRequest(req, db, env);
+        if (!actor) {
+          throw unauthenticatedError();
+        }
         const diagnostics = await getSystemDiagnostics(db);
         res.status(200).json({ data: diagnostics });
       } catch (err) {
@@ -1021,15 +1590,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
       }
     }
   );
-
-  function unauthenticatedError(): AuthorizationError {
-    return new AuthorizationError({
-      allowed: false,
-      code: 'UNAUTHENTICATED',
-      action: 'org.view',
-      reason: 'Authentication required.',
-    });
-  }
 
   // 5. Organizations (`GET /api/v1/organizations`)
   app.get(
@@ -1732,8 +2292,14 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
 
   app.post(
     '/api/v1/workflows/validate-dag',
-    async (req: Request, res: Response) => {
+    async (req: Request, res: Response, next: NextFunction) => {
       try {
+        const env = parseEnv(deps.rawEnv ?? process.env);
+        const { db } = await contextProvider();
+        const actor = await resolveActorFromRequest(req, db, env);
+        if (!actor) {
+          throw unauthenticatedError();
+        }
         let graph = req.body?.graph;
         if (!graph && Array.isArray(req.body?.nodes)) {
           const rawNodes = req.body.nodes as Array<{
@@ -1815,6 +2381,10 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           },
         });
       } catch (err) {
+        if (err instanceof AuthorizationError) {
+          next(err);
+          return;
+        }
         if (err instanceof WorkflowDagValidationError) {
           res.status(200).json({
             data: {

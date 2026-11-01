@@ -212,6 +212,16 @@ export const envSchema = z
         message: 'Production environment requires a non-default AUTH_SECRET.',
       });
     }
+
+    // Rule 3: Block DEMO_MODE authentication bypass in production.
+    if (env.NODE_ENV === 'production' && env.DEMO_MODE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DEMO_MODE'],
+        message:
+          'DEMO_MODE authentication bypass cannot be enabled when NODE_ENV="production". Set DEMO_MODE="false" in production.',
+      });
+    }
   });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -267,6 +277,10 @@ export function parseEnv(rawEnv: Record<string, string | undefined> = process.en
   if (!normalized.XAI_BASE_URL) {
     normalized.XAI_BASE_URL = 'https://api.x.ai/v1/chat/completions';
   }
+  // In production, default DEMO_MODE to 'false' unless explicitly supplied (which Rule 3 will reject if 'true')
+  if (normalized.NODE_ENV === 'production' && normalized.DEMO_MODE === undefined) {
+    normalized.DEMO_MODE = 'false';
+  }
 
   const result = envSchema.safeParse(normalized);
   if (!result.success) {
@@ -289,6 +303,9 @@ export function getPublicEnvSummary(env: AppEnv = parseEnv()) {
     nodeEnv: env.NODE_ENV,
     aiMode: env.AI_MODE,
     demoMode: env.DEMO_MODE,
+    githubOAuthConfigured: Boolean(
+      env.AUTH_GITHUB_ID?.trim() && env.AUTH_GITHUB_SECRET?.trim()
+    ),
     providerModel: env.AI_PROVIDER_MODEL,
     hasLiveProviderKey: keyStatus.anyConfigured,
     providerKeys: keyStatus,

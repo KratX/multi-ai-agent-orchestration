@@ -151,27 +151,31 @@ pnpm dev
 
 ---
 
-## 5. Mounted HTTP API Endpoints (`src/server/http/app.ts` & `demo-routes.ts`)
+## 5. Mounted HTTP API Endpoints (`src/server/http/app.ts` & `src/server/http/auth.ts`)
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/v1/health/live` | Process liveness probe (`200 OK`, independent of database) |
 | `GET` | `/api/v1/health/ready` | Executes a real `SELECT 1` query against PostgreSQL (`200 OK` or `503 Service Unavailable`) |
-| `GET` | `/api/v1/workspace` | Returns persisted tenant state, 8 personas, active permissions, and database storage mode |
-| `POST` | `/api/v1/workspace/reset` | Executes 3-mode sandbox reset (`workspace_only`, `keys_only`, or `factory_reset`) |
-| `POST` | `/api/v1/workspace/seed` | Alias for resetting and re-seeding the deterministic multi-tenant workspace |
-| `GET` | `/api/v1/demo/byok` | Lists masked Session BYOK + `.env` status across all 6 AI engines (`mock`, `gemini`, `chatgpt`, `claude`, `grok`, `openrouter`) |
-| `POST` | `/api/v1/demo/byok` | Encrypts and stores a provider API key in the caller's Session AES-256-GCM BYOK Vault |
-| `DELETE` | `/api/v1/demo/byok/:provider` | Deletes a single provider key (or `all`) from the caller's Session BYOK Vault |
-| `POST` | `/api/v1/demo/byok/test` | Executes a live connectivity probe using the resolved key tier |
-| `GET` | `/api/v1/demo/verify-isolation` | Runs the live 4-point cross-tenant & RBAC security verification suite |
-| `GET` | `/api/v1/demo/diagnostics` | Returns live row counts across all 18 PostgreSQL tables and active BYOK vault metrics |
+| `GET` | `/api/v1/auth/status` | Returns active actor, `authMethod` (`jwt` / `demo_header` / `none`), and GitHub OAuth readiness |
+| `POST` | `/api/v1/auth/token` | Mints an `HS256` JWT signed with `AUTH_SECRET` (requires `x-auth-secret` in `NODE_ENV=production`) |
+| `POST` | `/api/v1/auth/logout` | Clears the `ordaris_session` `HttpOnly` cookie |
+| `GET` | `/api/v1/auth/github/login` | Initiates GitHub OAuth 2.0 login (`AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET`) with HMAC-signed `state` |
+| `GET` | `/api/v1/auth/github/callback` | Verifies CSRF `state`, exchanges code with GitHub, provisions user/org, and signs `HS256` JWT |
+| `GET` | `/api/v1/workspace` | Returns persisted tenant state, 8 personas, active permissions, and database storage mode (`401` if unauthenticated) |
+| `POST` | `/api/v1/workspace/reset` | Executes 3-mode sandbox reset (`401` if unauthenticated; requires `org.manage` or `org.delete` for `factory_reset`) |
+| `POST` | `/api/v1/workspace/seed` | Alias for resetting and re-seeding the workspace (`401` if unauthenticated; requires `org.manage`) |
+| `GET` | `/api/v1/providers/keys` | Lists masked Session BYOK + `.env` status across all 5 cloud AI providers (`401` if unauthenticated) |
+| `POST` | `/api/v1/providers/keys` | Encrypts and stores a provider API key in the caller's Session AES-256-GCM BYOK Vault |
+| `DELETE` | `/api/v1/providers/keys` | Deletes all provider keys from the caller's Session BYOK Vault |
+| `POST` | `/api/v1/providers/test` | Executes a live connectivity probe using the resolved key tier |
+| `GET` | `/api/v1/demo/verify-isolation` | Runs the live 4-point cross-tenant & RBAC security verification suite (`401` if unauthenticated) |
+| `GET` | `/api/v1/demo/diagnostics` | Returns live row counts across PostgreSQL tables and worker queue metrics (`401` if unauthenticated) |
 | `GET` | `/api/v1/agents` | Lists tenant-scoped agents |
-| `POST` | `/api/v1/agents` | Creates a new draft agent (`agent:write`) |
-| `PATCH` | `/api/v1/agents/:id` | Updates mutable draft agent fields without mutating published versions (`agent:write`) |
-| `POST` | `/api/v1/agents/:id/publish` | Publishes an immutable `agent_versions` snapshot with SHA-256 hash (`agent:publish`) |
-| `POST` | `/api/v1/agents/:id/runs` | Enqueues a durable run (`202 Accepted`), supports `X-Idempotency-Key` deduplication |
-| `POST` | `/api/v1/agents/:id/arena` | Executes a Side-by-Side 2-Engine Arena comparison on identical prompt & tools |
+| `POST` | `/api/v1/agents` | Creates a new draft agent (`agent.edit`) |
+| `PATCH` | `/api/v1/agents/:id` | Updates mutable draft agent fields without mutating published versions (`agent.edit`) |
+| `POST` | `/api/v1/agents/:id/publish` | Publishes an immutable `agent_versions` snapshot with SHA-256 hash (`agent.publish`) |
+| `POST` | `/api/v1/agents/:id/runs` | Enqueues a durable run (`202 Accepted`), supports `idempotencyKey` deduplication |
 | `GET` | `/api/v1/runs` | Lists tenant-scoped run history |
 | `GET` | `/api/v1/runs/:id` | Returns run status, pinned version, step timeline, and persisted events (`404` across tenants) |
 | `GET` | `/api/v1/runs/:id/events` | Cursor-paginated persisted events (`?afterSequence=N`) for reconnect replay |
@@ -180,16 +184,17 @@ pnpm dev
 | `GET` | `/api/v1/approvals` | Lists pending and decided HITL approval gates |
 | `POST` | `/api/v1/approvals/:id/decision` | Server-authorized `owner`/`admin` approval or rejection (`403` for `developer`/`viewer`) |
 | `GET` | `/api/v1/knowledge/documents` | Lists tenant-scoped knowledge documents |
-| `POST` | `/api/v1/knowledge/documents` | Ingests, sanitizes, chunks, and indexes a knowledge document (`knowledge:write`) |
-| `POST` | `/api/v1/knowledge/search` | Executes hybrid PostgreSQL `tsvector` + cosine vector similarity search with `<untrusted_knowledge_context>` |
+| `POST` | `/api/v1/knowledge/documents` | Ingests, sanitizes, chunks, and indexes a knowledge document (`document.upload`) |
+| `GET` | `/api/v1/knowledge/search` | Executes hybrid PostgreSQL `tsvector` + cosine vector similarity search with `<untrusted_knowledge_context>` |
 | `POST` | `/api/v1/workflows/:id/runs` | Starts a gated workflow DAG execution |
-| `POST` | `/api/v1/workflows/validate-dag` | Runs the 3-color DFS cycle detector and returns topological order or exact `cyclePath` |
-| `POST` | `/api/v1/evals/suites/:id/experiments` | Executes a `v1`-vs-`v2` evaluation regression experiment across deterministic graders |
+| `POST` | `/api/v1/workflows/validate-dag` | Runs the 3-color DFS cycle detector and returns topological order or exact `cyclePath` (`401` if unauthenticated) |
+| `POST` | `/api/v1/eval-suites/:id/experiments` | Executes a `v1`-vs-`v2` evaluation regression experiment across deterministic graders |
 | `GET` | `/api/v1/usage` | Reads tenant FinOps usage ledger separating `mock` (simulated) from `live` provider tokens |
 | `GET` | `/api/v1/audit-events` | Reads append-only security audit trail (`owner`/`admin` only; `403` for `viewer`/`developer`) |
-| `GET` | `/api/v1/members` | Lists organization members and roles |
+| `POST` | `/api/v1/members` | Invites or updates organization member roles (`member.manage`) |
 | `DELETE` | `/api/v1/members/:userId` | Removes a member while enforcing the sole-owner `409 Conflict` (`LAST_OWNER_PROTECTED`) safeguard |
-| `GET` | `/api/v1/logs` | Returns structured runtime diagnostic logs from `.local/logs/ordaris-runtime.log` |
+| `GET` | `/api/v1/logs` | Returns structured runtime diagnostic logs (`401` if unauthenticated) |
+| `POST` | `/api/v1/logs/clear` | Clears in-memory runtime log buffer (`401` if unauthenticated; requires `org.manage`) |
 
 ---
 

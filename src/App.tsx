@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Shield,
   Sparkles,
@@ -372,15 +372,45 @@ export function App() {
     events: RunDetailEvent[];
   } | null>(null);
 
-  // Unified API Fetch helper that injects `x-actor-id`, `x-demo-actor`, `x-ordaris-demo-session`, and JSON content-type
+  const tokenCacheRef = useRef<Record<string, string>>({});
+
+  // Unified API Fetch helper that exchanges persona for an AUTH_SECRET-signed HS256 JWT (`Authorization: Bearer <token>`)
   const apiFetch = useCallback(
     async (url: string, init?: RequestInit): Promise<Response> => {
       const headers = new Headers(init?.headers ?? {});
+      const targetPersona = headers.get('x-actor-id') || activeActorId;
+
+      if (!headers.has('authorization') && url !== '/api/v1/auth/token') {
+        let jwt = tokenCacheRef.current[targetPersona];
+        if (!jwt) {
+          try {
+            const tokRes = await fetch('/api/v1/auth/token', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ personaId: targetPersona }),
+            });
+            if (tokRes.ok) {
+              const tokJson = await tokRes.json();
+              const issued = tokJson?.data?.token;
+              if (typeof issued === 'string' && issued.length > 0) {
+                jwt = issued;
+                tokenCacheRef.current[targetPersona] = issued;
+              }
+            }
+          } catch {
+            // Fall back to explicit header in non-production demo mode if token endpoint is unreachable
+          }
+        }
+        if (jwt) {
+          headers.set('authorization', `Bearer ${jwt}`);
+        }
+      }
+
       if (!headers.has('x-actor-id')) {
-        headers.set('x-actor-id', activeActorId);
+        headers.set('x-actor-id', targetPersona);
       }
       if (!headers.has('x-demo-actor')) {
-        headers.set('x-demo-actor', activeActorId);
+        headers.set('x-demo-actor', targetPersona);
       }
       if (typeof init?.body === 'string' && !headers.has('content-type')) {
         headers.set('content-type', 'application/json');
