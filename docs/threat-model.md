@@ -1,4 +1,4 @@
-# Ordaris (`v1.0.0-demo`) — Security Threat Model (`PLAN-003`)
+# Aegis Runtime (`v1.0.0-demo`) — Security Threat Model (`PLAN-003`)
 
 **Status:** Verified Release (`v1.0.0-demo`)
 **Scope:** 8-Persona Multi-Tenant API, Session-Scoped AES-256-GCM BYOK Vault, Background Worker, Agent Runtime, Tool Gateway, Hybrid Knowledge RAG, and Interactive Sandbox Reset.
@@ -8,7 +8,7 @@
 ## 1. Security Philosophy: Zero Trust in Model & Client Inputs
 
 In an enterprise AI Agent Platform, **three inputs must always be treated as untrusted**:
-1. **Browser / HTTP Client Input**: Headers (`x-actor-id`, `x-ordaris-demo-session`), URL parameters (`:agentId`, `:runId`), and JSON request bodies (including any client-supplied `organizationId`).
+1. **Browser / HTTP Client Input**: Headers (`x-actor-id`, `x-aegis-demo-session`), URL parameters (`:agentId`, `:runId`), and JSON request bodies (including any client-supplied `organizationId`).
 2. **Retrieved Knowledge & User Documents**: Uploaded `.txt`, `.md`, or `.pdf` passages retrieved via RAG may contain adversarial instructions (**Indirect Prompt Injection**).
 3. **Model Outputs & Tool Call Arguments**: Even when using a trusted cloud model provider, the LLM's generated text, citations, and tool-call JSON arguments are untrusted outputs influenced by user and document text.
 
@@ -55,7 +55,7 @@ In an enterprise AI Agent Platform, **three inputs must always be treated as unt
   1. Active `organizationId` is derived **exclusively from verified persona membership**, never from an unchecked request body field.
   2. Cross-tenant resource checks in `authorize()` return `404 Not Found` (`TENANT_MISMATCH`) rather than `403 Forbidden` to prevent UUID existence enumeration (`ADR-002`).
   3. PostgreSQL tables enforce **composite foreign keys** (`FOREIGN KEY (organization_id, agent_version_id) REFERENCES agent_versions(organization_id, id)`), making cross-tenant parent-child links impossible even if application code has a defect.
-- **Verification**: `tests/security/authorization.test.ts`, `tests/integration/persistence-and-tenant-fk.test.ts`, and live `GET /api/v1/demo/verify-isolation`.
+- **Verification**: `tests/unit/authorization.test.ts`, `tests/integration/persistence-and-tenant-fk.test.ts`, and live `GET /api/v1/demo/verify-isolation`.
 
 ---
 
@@ -65,7 +65,7 @@ In an enterprise AI Agent Platform, **three inputs must always be treated as unt
   1. Central policy function `authorize(actor, action, resourceContext)` enforces the **23-permission matrix** across `owner` (`23/23`), `admin` (`21/23`), `developer` (`16/23`), and `viewer` (`9/23`).
   2. `assertNotRemovingLastOwner()` rejects removing or demoting the final `owner` of an organization with `409 Conflict` (`LAST_OWNER_PROTECTED`).
   3. Denied actions are recorded in the append-only `audit_events` ledger.
-- **Verification**: `tests/security/authorization.test.ts` and `tests/integration/http-api-and-worker.test.ts`.
+- **Verification**: `tests/unit/authorization.test.ts` and `tests/integration/http-api-and-worker.test.ts`.
 
 ---
 
@@ -121,10 +121,10 @@ In an enterprise AI Agent Platform, **three inputs must always be treated as unt
 ### T-08: Session BYOK API Key Theft or Cross-Session Leakage (`v1.0.0-demo`)
 - **Attack Vector**: Visitors testing live cloud providers (`Gemini`, `ChatGPT`, `Claude`, `Grok`, `OpenRouter`) in a shared demo environment risk having their API key read by another browser session, persisted to disk, or echoed back in API responses.
 - **Server-Side Mitigation**:
-  1. **Ephemeral AES-256-GCM In-Memory Vault (`src/server/security/session-key-vault.ts`)**: Keys are encrypted immediately upon receipt using a random 256-bit process key generated via `crypto.randomBytes(32)` at server boot, a unique 96-bit IV per write, and a 128-bit GCM authentication tag.
-  2. **Strict Session Partitioning**: Keys are keyed by the caller's `x-ordaris-demo-session` token (`Session A` can never inspect, test, or use `Session B`'s keys).
-  3. **One-Way Masked Previews**: `GET /api/v1/demo/byok` only returns masked metadata (`configured: true`, `maskedPreview: "AIza...9xQp"`), never the plaintext key.
-  4. **Automatic 2-Hour TTL & Instant Purge**: Keys automatically expire after 2 hours in RAM or can be wiped immediately via `DELETE /api/v1/demo/byok/:provider` or the `keys_only` / `factory_reset` sandbox reset modes.
+  1. **Ephemeral AES-256-GCM In-Memory Vault (`src/server/security/session-key-vault.ts`)**: Keys are encrypted immediately upon receipt using an ephemeral 256-bit master key generated via `crypto.randomBytes(32)` in RAM, a unique 96-bit IV per write, and a 128-bit GCM authentication tag. Zero keys are ever written to disk.
+  2. **High-Entropy Session Partitioning**: Keys are keyed by the caller's `x-aegis-demo-session` header token (requiring `>= 16` characters of high-entropy non-guessable token material; `?sessionId=` query parameters are rejected).
+  3. **One-Way Masked Previews**: `GET /api/v1/demo/byok` and `GET /api/v1/providers/keys` only return masked metadata (`configured: true`, `maskedPreview: "AIza...9xQp"`), never the plaintext key.
+  4. **Automatic 2-Hour Sliding TTL & Instant Purge**: Keys automatically expire after 2 hours of inactivity in RAM (sliding forward by 2 hours on active read) or can be wiped immediately via `DELETE /api/v1/demo/byok/:provider` or the `keys_only` / `factory_reset` sandbox reset modes.
 - **Verification**: `tests/unit/session-key-vault.test.ts` and `tests/integration/http-api-and-worker.test.ts`.
 
 ---

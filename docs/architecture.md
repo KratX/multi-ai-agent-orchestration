@@ -1,4 +1,4 @@
-# Ordaris (`v1.0.0-demo`) — System Architecture (`PLAN-002`)
+# Aegis Runtime (`v1.0.0-demo`) — System Architecture (`PLAN-002`)
 
 **Status:** Verified Release (`v1.0.0-demo` — Phases `A`–`I` / Checkpoints `1`–`12` Complete)
 **Target Mode:** Local-first, Zero-Required-Spend (`AI_MODE=demo` default) with 3-Tier Live Cloud AI Resolution (`Session AES-256-GCM BYOK Vault -> Server .env -> Deterministic Mock`)
@@ -9,12 +9,12 @@
 
 Most portfolio AI projects are thin wrappers around a chat completion endpoint: the browser sends a prompt, an HTTP handler waits on an external LLM, and the response streams back with no durability, no tenant isolation, and no server-enforced tool boundaries.
 
-**Ordaris (`v1.0.0-demo`)** is architected around **observable, bounded, and multi-tenant execution**:
+**Aegis Runtime (`v1.0.0-demo`)** is architected around **observable, bounded, and multi-tenant execution**:
 
 1. **Strict Multi-Tenant Isolation & 8-Persona RBAC**: Every domain record (`agents`, `agent_versions`, `runs`, `job_queue`, `knowledge_documents`, `workflows`, `approval_requests`, `usage_events`, `eval_experiments`) is owned by an `organization_id` and enforced by both composite PostgreSQL foreign keys and a central server-side 23-permission policy engine (`src/server/policies/authorization.ts`). Cross-tenant lookups always return `404 Not Found` (`TENANT_MISMATCH`) to prevent UUID existence enumeration (`ADR-002`).
 2. **Immutable Execution Snapshots**: Runs never execute against an editable draft. Publishing an agent or workflow creates an immutable snapshot (`agent_versions` / `workflow_versions`) fingerprinted by a canonical SHA-256 `snapshot_hash`.
 3. **3-Tier AI Provider Resolution & Session-Scoped AES-256-GCM BYOK Vault**:
-   - **Tier 1 (Session BYOK Vault)**: Visitor-supplied cloud API keys (`Gemini`, `ChatGPT`, `Claude`, `Grok`, `OpenRouter`) are encrypted in server RAM using `aes-256-gcm` (`src/server/security/session-key-vault.ts`) scoped to `x-ordaris-demo-session` with a 2-hour TTL.
+   - **Tier 1 (Session BYOK Vault)**: Visitor-supplied cloud API keys (`Gemini`, `ChatGPT`, `Claude`, `Grok`, `OpenRouter`) are encrypted in server RAM using `aes-256-gcm` (`src/server/security/session-key-vault.ts`) under an ephemeral 256-bit CSPRNG master key scoped to `x-aegis-demo-session` with a 2-hour sliding TTL.
    - **Tier 2 (Server `.env`)**: Optional environment-level free-tier keys.
    - **Tier 3 (Deterministic Simulation Engine)**: Zero-key, zero-spend `MockModelProvider` fallback (`ADR-001`).
 4. **Transactional Run + Queue Enqueue**: Accepting a run (`POST /api/v1/agents/:agentId/runs`) inserts the `runs` record, the `job_queue` row, and sequence `1` (`run.queued`) in `run_events` inside a **single PostgreSQL ACID transaction**—eliminating dual-write inconsistencies between the database and the job queue.
@@ -49,7 +49,7 @@ flowchart TB
     FACTORY["3-Tier Provider Factory: Session BYOK -> .env -> Mock (provider-factory.ts)"]
   end
 
-  subgraph Persistence["PostgreSQL / File-Backed PGlite (.local/ordaris-db)"]
+  subgraph Persistence["PostgreSQL / File-Backed PGlite (.local/aegis-db)"]
     PG[("18 Tables • Migrations 0001..0006 with Composite Tenant FKs")]
   end
 
@@ -72,7 +72,7 @@ To prevent architectural drift and security bypasses, dependencies flow strictly
 
 | Layer | Directory / Location | Allowed Responsibilities | Strictly Forbidden |
 |---|---|---|---|
-| **Presentation & Operator Console** | `src/App.tsx`, `src/client/components/*` | Render 5-tab workspace, manage active persona (`x-actor-id`) and session token (`x-ordaris-demo-session`), subscribe to SSE streams, invoke `/api/v1/*` endpoints. | Importing `src/server/*` database clients, trusting UI role flags for security, or holding raw provider secrets after submission. |
+| **Presentation & Operator Console** | `src/App.tsx`, `src/client/components/*` | Render 5-tab workspace, manage active persona (`x-actor-id`) and session token (`x-aegis-demo-session`), subscribe to SSE streams, invoke `/api/v1/*` endpoints. | Importing `src/server/*` database clients, trusting UI role flags for security, or holding raw provider secrets after submission. |
 | **HTTP API & Demo Governance Routes** | `src/server/http/app.ts`, `src/server/http/demo-routes.ts` | Parse HTTP requests, validate payloads with Zod, resolve persona/tenant context, manage Session BYOK Vault entries, return RFC 9457 Problem Details on error. | Running unbounded loops, bypassing `authorize()`, or returning raw API keys or stack traces. |
 | **Central Policy Engine** | `src/server/policies/authorization.ts` | Evaluate `authorize(actor, action, resourceContext)` across 23 permissions and 4 roles (`owner`, `admin`, `developer`, `viewer`), enforce `404` cross-tenant masking and `409` last-owner protection. | Relying on client-passed `organizationId` without verifying membership. |
 | **Session Security Vault** | `src/server/security/session-key-vault.ts` | Encrypt/decrypt session-scoped BYOK keys in memory with `aes-256-gcm`, enforce 2-hour TTL, emit masked key previews. | Writing raw API keys to disk, database tables, or logs. |
@@ -94,7 +94,7 @@ sequenceDiagram
   participant P as 3-Tier Provider Factory
   participant T as Safe Tool Gateway
 
-  U->>A: POST /api/v1/agents/:agentId/runs (x-actor-id, x-ordaris-demo-session, X-Idempotency-Key)
+  U->>A: POST /api/v1/agents/:agentId/runs (x-actor-id, x-aegis-demo-session, X-Idempotency-Key)
   A->>A: Resolve Persona + requireAuthorization('run:start')
   A->>D: BEGIN TX: Verify immutable agent_version, insert run + job_queue + run_event(seq=1)
   D-->>A: COMMIT TX

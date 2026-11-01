@@ -51,10 +51,13 @@ test('Phase C & D: Express API serves real health/readiness probes, agent creati
     assert.equal(readyJson.data.readiness.database, 'ready');
     assert.equal(readyJson.data.readiness.engine, 'pglite');
 
-    // 2. Seed workspace via HTTP POST /api/v1/workspace/seed
+    // 2. Seed workspace via HTTP POST /api/v1/workspace/seed (requires owner/admin auth)
     const seedRes = await fetch(`${baseUrl}/api/v1/workspace/seed`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-id': 'acme-owner',
+      },
       body: JSON.stringify({ forceReset: true }),
     });
     assert.equal(seedRes.status, 200);
@@ -267,7 +270,10 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     // 1. Seed workspace and verify all 8 personas across Acme Cyber Defense & Beta Logistics
     const seedRes = await fetch(`${baseUrl}/api/v1/workspace/seed`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-id': 'acme-owner',
+      },
       body: JSON.stringify({ forceReset: true }),
     });
     assert.equal(seedRes.status, 200);
@@ -326,13 +332,31 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     assert.equal(betaDevWs.data.organization.slug, 'beta-logistics');
     assert.equal(betaDevWs.data.actor.role, 'developer');
 
-    // 2. Session-Scoped BYOK Vault Isolation (x-ordaris-demo-session)
+    // 2. Session-Scoped BYOK Vault Isolation (x-aegis-demo-session with high-entropy token)
+    const sessionAlpha = 'sess_alpha_eval_9f8e7d6c5b4a3210';
+    const sessionBeta = 'sess_beta_eval_1a2b3c4d5e6f7890';
+
+    // Short or guessable session tokens must be rejected with 400 Bad Request
+    const weakSessionRes = await fetch(`${baseUrl}/api/v1/providers/keys`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-id': 'acme-owner',
+        'x-aegis-demo-session': '1234',
+      },
+      body: JSON.stringify({
+        provider: 'openrouter',
+        rawKey: 'sk-or-v1-alpha-session-secret-key-9999',
+      }),
+    });
+    assert.equal(weakSessionRes.status, 400);
+
     const saveKeyAlphaRes = await fetch(`${baseUrl}/api/v1/providers/keys`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         'x-actor-id': 'acme-owner',
-        'x-ordaris-demo-session': 'session-alpha-eval',
+        'x-aegis-demo-session': sessionAlpha,
       },
       body: JSON.stringify({
         provider: 'openrouter',
@@ -363,11 +387,30 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
       'Expected masked BYOK key preview without leaking plaintext middle characters'
     );
 
-    // Verify session-beta-eval does NOT see session-alpha-eval's BYOK key
+    // Verify ?sessionId= query parameter is ignored and cannot leak sessionAlpha's key
+    const queryParamAttemptRes = await fetch(
+      `${baseUrl}/api/v1/providers/keys?sessionId=${sessionAlpha}`,
+      {
+        headers: {
+          'x-actor-id': 'acme-owner',
+        },
+      }
+    );
+    assert.equal(queryParamAttemptRes.status, 200);
+    const queryParamAttemptData = (await queryParamAttemptRes.json()) as {
+      data: Array<{ provider: string; configuredInVault: boolean }>;
+    };
+    assert.equal(
+      queryParamAttemptData.data.find((p) => p.provider === 'openrouter')?.configuredInVault,
+      false,
+      'Expected ?sessionId= query parameter to be ignored for BYOK vault resolution'
+    );
+
+    // Verify sessionBeta does NOT see sessionAlpha's BYOK key
     const keysBetaRes = await fetch(`${baseUrl}/api/v1/providers/keys`, {
       headers: {
         'x-actor-id': 'acme-owner',
-        'x-ordaris-demo-session': 'session-beta-eval',
+        'x-aegis-demo-session': sessionBeta,
       },
     });
     assert.equal(keysBetaRes.status, 200);
@@ -383,18 +426,18 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     assert.equal(
       betaOpenRouter.configuredInVault,
       false,
-      'Expected session-beta-eval to have zero access to session-alpha-eval BYOK key'
+      'Expected sessionBeta to have zero access to sessionAlpha BYOK key'
     );
     assert.notEqual(betaOpenRouter.resolutionTier, 'session_byok');
 
     // 3. 3-Mode Sandbox Reset:
-    // 3a. workspace_only preserves session-alpha-eval's BYOK key
+    // 3a. workspace_only preserves sessionAlpha's BYOK key
     const wsOnlyResetRes = await fetch(`${baseUrl}/api/v1/workspace/reset`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         'x-actor-id': 'acme-owner',
-        'x-ordaris-demo-session': 'session-alpha-eval',
+        'x-aegis-demo-session': sessionAlpha,
       },
       body: JSON.stringify({ resetMode: 'workspace_only' }),
     });
@@ -418,13 +461,13 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
       'session_byok'
     );
 
-    // 3b. keys_only wipes session-alpha-eval's BYOK key without wiping database state
+    // 3b. keys_only wipes sessionAlpha's BYOK key without wiping database state
     const keysOnlyResetRes = await fetch(`${baseUrl}/api/v1/workspace/reset`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         'x-actor-id': 'acme-owner',
-        'x-ordaris-demo-session': 'session-alpha-eval',
+        'x-aegis-demo-session': sessionAlpha,
       },
       body: JSON.stringify({ resetMode: 'keys_only' }),
     });
@@ -465,7 +508,10 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     };
     const cyclicRes = await fetch(`${baseUrl}/api/v1/workflows/validate-dag`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-id': 'acme-owner',
+      },
       body: JSON.stringify({ graph: cyclicGraph }),
     });
     assert.equal(cyclicRes.status, 200);
@@ -492,7 +538,10 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     };
     const acyclicRes = await fetch(`${baseUrl}/api/v1/workflows/validate-dag`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-id': 'acme-owner',
+      },
       body: JSON.stringify({ graph: acyclicGraph }),
     });
     assert.equal(acyclicRes.status, 200);
@@ -503,7 +552,9 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     assert.deepEqual(acyclicData.data.topologicalOrder, ['start_1', 'step_a', 'end_1']);
 
     // 5. Live 4-Point Cross-Tenant Isolation Verifier (`GET /api/v1/demo/verify-isolation`)
-    const isolationRes = await fetch(`${baseUrl}/api/v1/demo/verify-isolation`);
+    const isolationRes = await fetch(`${baseUrl}/api/v1/demo/verify-isolation`, {
+      headers: { 'x-actor-id': 'acme-owner' },
+    });
     assert.equal(isolationRes.status, 200);
     const isolationData = (await isolationRes.json()) as {
       data: {
@@ -541,7 +592,9 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     assert.equal(removeSoleOwnerProblem.code, 'LAST_OWNER_PROTECTED');
 
     // 7. Live PostgreSQL Table Diagnostics & Runtime Logs (`GET /api/v1/demo/diagnostics` & `GET /api/v1/logs`)
-    const diagRes = await fetch(`${baseUrl}/api/v1/demo/diagnostics`);
+    const diagRes = await fetch(`${baseUrl}/api/v1/demo/diagnostics`, {
+      headers: { 'x-actor-id': 'acme-owner' },
+    });
     assert.equal(diagRes.status, 200);
     const diagData = (await diagRes.json()) as {
       data: {
@@ -561,7 +614,9 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
     assert.ok((diagData.data.database.tables.organizations ?? 0) >= 2);
     assert.ok((diagData.data.database.tables.users ?? 0) >= 8);
 
-    const logsRes = await fetch(`${baseUrl}/api/v1/logs`);
+    const logsRes = await fetch(`${baseUrl}/api/v1/logs`, {
+      headers: { 'x-actor-id': 'acme-owner' },
+    });
     assert.equal(logsRes.status, 200);
     const logsData = (await logsRes.json()) as {
       data: {
@@ -569,11 +624,212 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
         logs: Array<{ level: string; component: string; message: string }>;
       };
     };
-    assert.ok(logsData.data.logFilePath.endsWith('ordaris-runtime.log'));
+    assert.ok(logsData.data.logFilePath.endsWith('aegis-runtime.log'));
     assert.ok(logsData.data.logs.length >= 1);
   } finally {
     await worker.stop();
     server.close();
+    await ctx.close();
+  }
+});
+
+test('Production-Mode & Cryptographic Authentication Hardening: rejects unauthenticated calls, query-param spoofing, unsigned headers in production, and unauthenticated destructive endpoints', async () => {
+  const ctx = await createDatabaseClient();
+  const prodSecret = 'production-hmac-sha256-auth-secret-2026-aegis';
+
+  // 1. Verify Demo Mode (`DEMO_MODE=true`) NEVER silently defaults to acme-admin and NEVER trusts ?actor= query params
+  const demoApp = createApiApp({
+    contextProvider: async () => ctx,
+    rawEnv: {
+      NODE_ENV: 'test',
+      AI_MODE: 'demo',
+      DEMO_MODE: 'true',
+      AUTH_SECRET: prodSecret,
+    },
+  });
+  const demoServer = demoApp.listen(0, '127.0.0.1');
+
+  // 2. Verify Production Mode (`NODE_ENV=production`, `DEMO_MODE=false`) rejects all unsigned headers and enforces AUTH_SECRET JWTs
+  const prodApp = createApiApp({
+    contextProvider: async () => ctx,
+    rawEnv: {
+      NODE_ENV: 'production',
+      AI_MODE: 'demo',
+      DEMO_MODE: 'false',
+      AUTH_SECRET: prodSecret,
+      AUTH_GITHUB_ID: 'gh_client_id_test_123',
+      AUTH_GITHUB_SECRET: 'gh_client_secret_test_456',
+    },
+  });
+  const prodServer = prodApp.listen(0, '127.0.0.1');
+
+  try {
+    await Promise.all([
+      new Promise<void>((res, rej) => {
+        demoServer.once('listening', () => res());
+        demoServer.once('error', rej);
+      }),
+      new Promise<void>((res, rej) => {
+        prodServer.once('listening', () => res());
+        prodServer.once('error', rej);
+      }),
+    ]);
+
+    const demoUrl = `http://127.0.0.1:${(demoServer.address() as AddressInfo).port}`;
+    const prodUrl = `http://127.0.0.1:${(prodServer.address() as AddressInfo).port}`;
+
+    // Seed workspace first using an authenticated owner in demo mode
+    const seedRes = await fetch(`${demoUrl}/api/v1/workspace/seed`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-id': 'acme-owner',
+      },
+      body: JSON.stringify({ forceReset: true }),
+    });
+    assert.equal(seedRes.status, 200);
+    const seedJson = (await seedRes.json()) as {
+      data: {
+        personas: Array<{ id: string; userId: string; organizationId: string }>;
+      };
+    };
+    const acmeOwner = seedJson.data.personas.find((p) => p.id === 'acme-owner')!;
+    const betaOwner = seedJson.data.personas.find((p) => p.id === 'beta-owner')!;
+
+    // A. No header at all with DEMO_MODE=true MUST NOT become acme-admin -> 401 UNAUTHENTICATED
+    const noHeaderWorkspace = await fetch(`${demoUrl}/api/v1/workspace`);
+    assert.equal(noHeaderWorkspace.status, 401);
+
+    // B. Requesting /api/v1/audit-events?actor=beta-owner with no credentials MUST return 401 UNAUTHENTICATED
+    const querySpoofAudit = await fetch(
+      `${demoUrl}/api/v1/audit-events?actor=beta-owner`
+    );
+    assert.equal(querySpoofAudit.status, 401);
+
+    // C. Unauthenticated destructive endpoints MUST return 401 UNAUTHENTICATED
+    const unauthFactoryReset = await fetch(`${demoUrl}/api/v1/workspace/reset`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resetMode: 'factory_reset', clearAllByok: true }),
+    });
+    assert.equal(unauthFactoryReset.status, 401);
+
+    const unauthLogsGet = await fetch(`${demoUrl}/api/v1/logs`);
+    assert.equal(unauthLogsGet.status, 401);
+
+    const unauthLogsClear = await fetch(`${demoUrl}/api/v1/logs/clear`, {
+      method: 'POST',
+    });
+    assert.equal(unauthLogsClear.status, 401);
+
+    // D. Viewer/Admin role restrictions on factory_reset and logs/clear
+    const viewerFactoryReset = await fetch(`${demoUrl}/api/v1/workspace/reset`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-id': 'acme-viewer',
+      },
+      body: JSON.stringify({ resetMode: 'factory_reset', clearAllByok: true }),
+    });
+    assert.equal(viewerFactoryReset.status, 403);
+
+    const adminFactoryReset = await fetch(`${demoUrl}/api/v1/workspace/reset`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-id': 'acme-admin',
+      },
+      body: JSON.stringify({ resetMode: 'factory_reset', clearAllByok: true }),
+    });
+    assert.equal(adminFactoryReset.status, 403, 'Only owner has org.delete for factory_reset');
+
+    const viewerLogsClear = await fetch(`${demoUrl}/api/v1/logs/clear`, {
+      method: 'POST',
+      headers: { 'x-actor-id': 'acme-viewer' },
+    });
+    assert.equal(viewerLogsClear.status, 403);
+
+    // E. In Production Mode (NODE_ENV=production, DEMO_MODE=false):
+    // Unsigned x-actor-id and x-user-id / x-organization-id headers MUST be rejected with 401
+    const prodHeaderSpoof1 = await fetch(`${prodUrl}/api/v1/workspace`, {
+      headers: { 'x-actor-id': 'acme-owner' },
+    });
+    assert.equal(prodHeaderSpoof1.status, 401);
+
+    const prodHeaderSpoof2 = await fetch(`${prodUrl}/api/v1/audit-events`, {
+      headers: {
+        'x-user-id': betaOwner.userId,
+        'x-organization-id': betaOwner.organizationId,
+      },
+    });
+    assert.equal(prodHeaderSpoof2.status, 401);
+
+    // Unauthenticated token minting in production is rejected with 403 DEMO_AUTH_DISABLED
+    const prodUnauthToken = await fetch(`${prodUrl}/api/v1/auth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ personaId: 'acme-owner' }),
+    });
+    assert.equal(prodUnauthToken.status, 403);
+
+    // Minting a token in production with valid x-auth-secret succeeds and returns an AUTH_SECRET-signed HS256 JWT
+    const prodMintToken = await fetch(`${prodUrl}/api/v1/auth/token`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-auth-secret': prodSecret,
+      },
+      body: JSON.stringify({
+        userId: acmeOwner.userId,
+        organizationId: acmeOwner.organizationId,
+      }),
+    });
+    assert.equal(prodMintToken.status, 200);
+    const mintedData = (await prodMintToken.json()) as {
+      data: { token: string; actor: { userId: string; organizationId: string } };
+    };
+    assert.ok(mintedData.data.token.split('.').length === 3);
+
+    // Using the signed Bearer token in production succeeds for Acme Cyber Defense
+    const prodAuthedWs = await fetch(`${prodUrl}/api/v1/workspace`, {
+      headers: {
+        authorization: `Bearer ${mintedData.data.token}`,
+      },
+    });
+    assert.equal(prodAuthedWs.status, 200);
+
+    // Attempting to use Acme Owner's signed JWT to access Beta Logistics returns 404 TENANT_MISMATCH
+    const prodCrossTenant = await fetch(
+      `${prodUrl}/api/v1/workspace?organizationId=${betaOwner.organizationId}`,
+      {
+        headers: {
+          authorization: `Bearer ${mintedData.data.token}`,
+        },
+      }
+    );
+    assert.equal(prodCrossTenant.status, 404);
+
+    // Forged Bearer token fails signature check with 401 UNAUTHENTICATED
+    const forgedToken = `${mintedData.data.token.slice(0, -4)}xxxx`;
+    const prodForgedRes = await fetch(`${prodUrl}/api/v1/workspace`, {
+      headers: {
+        authorization: `Bearer ${forgedToken}`,
+      },
+    });
+    assert.equal(prodForgedRes.status, 401);
+
+    // GitHub OAuth 2.0 login endpoint redirects to github.com with client_id and signed state
+    const ghLoginRes = await fetch(`${prodUrl}/api/v1/auth/github/login`, {
+      redirect: 'manual',
+    });
+    assert.equal(ghLoginRes.status, 302);
+    const locationHeader = ghLoginRes.headers.get('location') ?? '';
+    assert.match(locationHeader, /https:\/\/github\.com\/login\/oauth\/authorize/);
+    assert.match(locationHeader, /client_id=gh_client_id_test_123/);
+    assert.match(locationHeader, /state=/);
+  } finally {
+    demoServer.close();
+    prodServer.close();
     await ctx.close();
   }
 });

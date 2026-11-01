@@ -3,7 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 
 /**
- * Ticket REPO-003: Ordaris (v1.0.0-demo) Server Environment Schema, Runtime Configuration & Diagnostic Logger
+ * Ticket REPO-003: Aegis Runtime (v1.0.0-demo) Server Environment Schema, Runtime Configuration & Diagnostic Logger
  *
  * Enforces Blueprint Section 2.5 & Section 6.3:
  * 1. Fails fast at startup if numeric limits or URLs are malformed.
@@ -11,11 +11,11 @@ import { z } from 'zod';
  * 3. Requires AI_PROVIDER_API_KEY (or GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / XAI_API_KEY / OPENROUTER_API_KEY)
  *    ONLY when AI_MODE="provider".
  * 4. Blocks unsafe DEMO_MODE authentication bypass in production unless explicitly safe.
- * 5. Writes structured diagnostic logs to `.local/logs/ordaris-runtime.log`, stdout/stderr,
+ * 5. Writes structured diagnostic logs to `.local/logs/aegis-runtime.log`, stdout/stderr,
  *    and an in-memory ring buffer exposed at `GET /api/v1/logs`.
  */
 
-export const LOG_FILE_PATH = '.local/logs/ordaris-runtime.log';
+export const LOG_FILE_PATH = '.local/logs/aegis-runtime.log';
 
 export interface RuntimeLogEntry {
   id: string;
@@ -62,7 +62,7 @@ export function appendRuntimeLog(entry: {
     }
   }
 
-  // Persist to .local/logs/ordaris-runtime.log
+  // Persist to .local/logs/aegis-runtime.log
   try {
     const absLogPath = path.resolve(process.cwd(), LOG_FILE_PATH);
     fs.mkdirSync(path.dirname(absLogPath), { recursive: true });
@@ -98,7 +98,7 @@ export const envSchema = z
     PGLITE_DATA_DIR: z
       .string()
       .min(1, 'PGLITE_DATA_DIR must not be empty')
-      .default('.local/ordaris-db'),
+      .default('.local/aegis-db'),
 
     AUTH_SECRET: z
       .string()

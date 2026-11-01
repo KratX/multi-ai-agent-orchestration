@@ -630,7 +630,7 @@ export type LiveAiEngineMode =
   | 'mock';
 
 /**
- * Factory for the live interactive Ordaris runtime server (`server.ts` & `/api/v1/*`).
+ * Factory for the live interactive Aegis Runtime server (`server.ts` & `/api/v1/*`).
  * Routes across the 5 official free-tier cloud providers with 3-tier fallback resolution:
  * - Google Gemini Free Tier (`gemini-3-flash-preview` via `@google/genai`)
  * - OpenRouter Free Router (`openrouter/free`)

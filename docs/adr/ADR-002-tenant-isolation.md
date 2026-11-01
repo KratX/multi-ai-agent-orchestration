@@ -8,7 +8,7 @@
 
 ## 1. Context
 
-**Ordaris (`v1.0.0-demo`)** is a multi-tenant AI Agent, Hybrid RAG, Workflow DAG & Governance Platform where multiple organizations (`Acme Cyber Defense` and `Beta Global Logistics`) share a single PostgreSQL database (`18` tables).
+**Aegis Runtime (`v1.0.0-demo`)** is a multi-tenant AI Agent, Hybrid RAG, Workflow DAG & Governance Platform where multiple organizations (`Acme Cyber Defense` and `Beta Global Logistics`) share a single PostgreSQL database (`18` tables).
 
 In multi-tenant AI systems, cross-tenant leakage and privilege escalation can occur through four distinct vectors:
 1. **Direct API/Repository IDOR (`Threat T-01`)**: An authenticated actor in Tenant A passes a valid resource UUID (`agentId`, `runId`, `documentId`) belonging to Tenant B.
@@ -38,4 +38,4 @@ We enforce a **four-layer defense-in-depth tenant isolation and RBAC architectur
 ## 3. Consequences & Planned Evolution (`v1.1+`)
 
 - **Positive**: Eliminates IDOR (`T-01`), prevents foreign UUID probing, enforces strict role separation across all 8 seeded personas, and guarantees that prompt-injected models cannot query another organization's knowledge base.
-- **Planned `v1.1` Evolution**: Gate interactive `x-actor-id` persona switching behind `DEMO_MODE=true` and bind production `ActorContext` resolution to OAuth 2.0 / OIDC session tokens and scoped `ord_live_...` API keys.
+- **Planned `v1.1` Evolution**: Gate interactive `x-actor-id` persona switching behind `DEMO_MODE=true` and bind production `ActorContext` resolution to OAuth 2.0 / OIDC session tokens and scoped `aeg_live_...` API keys.

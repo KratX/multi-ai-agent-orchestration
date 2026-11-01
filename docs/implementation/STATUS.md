@@ -1,10 +1,10 @@
-# Ordaris (`v1.0.0-demo`) — Implementation Status & Planned Roadmap
+# Aegis Runtime (`v1.0.0-demo`) — Implementation Status & Planned Roadmap
 
 - **Current Release**: `v1.0.0-demo` — Enterprise Multi-Tenant AI Agent, Hybrid RAG, Workflow DAG, HITL Governance & FinOps Platform (**COMPLETE**)
-- **Current Phase**: Phases `A`–`H` (Core Runtime) + Phase `I` / Checkpoints `1`–`12` (`Ordaris v1.0.0-demo` Interactive Multi-Tenant Sandbox & Security Hardening) (**COMPLETE**)
+- **Current Phase**: Phases `A`–`H` (Core Runtime) + Phase `I` / Checkpoints `1`–`12` (`Aegis Runtime v1.0.0-demo` Interactive Multi-Tenant Sandbox & Security Hardening) (**COMPLETE**)
 - **Last Updated**: 2026-10-31
 - **AI Execution Mode**: 3-Tier AI Resolution (`Tier 1`: Session AES-256-GCM BYOK Vault -> `Tier 2`: Server `.env` -> `Tier 3`: Deterministic `MockModelProvider` across `mock`, `gemini`, `chatgpt`, `claude`, `grok`, `openrouter`)
-- **Local Database**: File-backed PGlite PostgreSQL (`PGLITE_DATA_DIR=".local/ordaris-db"`) with `18` tables, migrations `0001`..`0006`, and composite `(organization_id, ...)` foreign keys enforced at the SQL constraint layer
+- **Local Database**: File-backed PGlite PostgreSQL (`PGLITE_DATA_DIR=".local/aegis-db"`) with `18` tables, migrations `0001`..`0006`, and composite `(organization_id, ...)` foreign keys enforced at the SQL constraint layer
 - **Runtime Processes**: Full-stack Express API + Vite UI (`pnpm dev` / `server.ts`) and standalone background queue worker (`pnpm dev:worker` / `src/server/worker/main.ts`)
 - **Automated Verification**: `21` test suites (`104/104` tests passing across unit, security, and full-stack PostgreSQL/HTTP integration), `pnpm typecheck` (`0` errors), `pnpm seed`, and `pnpm build` verified
 
@@ -35,10 +35,10 @@
 
 ---
 
-### B. Ordaris `v1.0.0-demo` Interactive Enterprise Sandbox (Checkpoints `1`–`12`)
+### B. Aegis Runtime `v1.0.0-demo` Interactive Enterprise Sandbox (Checkpoints `1`–`12`)
 1. **Checkpoint 1 — Session-Scoped AES-256-GCM BYOK Vault (`src/server/security/session-key-vault.ts`)**:
-   - Encrypts visitor-supplied cloud API keys in server RAM using `aes-256-gcm` with an ephemeral 256-bit master key, 96-bit random IV, and 128-bit authentication tag.
-   - Enforces a 2-hour sliding TTL per `x-ordaris-demo-session`, returns only masked previews (`AIza...9xQp`), and never writes raw keys to disk or logs (`Threat T-08`).
+   - Encrypts visitor-supplied cloud API keys in server RAM using `aes-256-gcm` with an ephemeral 256-bit CSPRNG master key (`crypto.randomBytes(32)`), 96-bit random IV, and 128-bit authentication tag.
+   - Enforces a 2-hour sliding TTL per `x-aegis-demo-session` (minimum 16-char high-entropy token), returns only masked previews (`AIza...9xQp`), and never writes raw keys to disk or logs (`Threat T-08`).
 2. **Checkpoint 2 — 23-Permission RBAC Policy Matrix (`src/server/policies/authorization.ts`)**:
    - Expanded fine-grained RBAC across `owner` (`23/23`), `admin` (`21/23`), `developer` (`16/23`), and `viewer` (`9/23`), plus `assertNotRemovingLastOwner()` (`409 Conflict` `LAST_OWNER_PROTECTED`).
 3. **Checkpoint 3 — 3-Tier Multi-Provider AI Factory (`src/server/ai/provider-factory.ts`)**:
@@ -57,22 +57,22 @@
 
 ## 2. Test Evidence (`104/104` Passing Across `21` Suites)
 
-### Unit & Security Suites (`55/55` Passing)
-- `tests/unit/session-key-vault.test.ts` -> `8 pass, 0 fail` (AES-256-GCM encryption, session isolation, masked preview, TTL expiry)
-- `tests/security/authorization.test.ts` -> `7 pass, 0 fail` (23-permission matrix, 404 cross-tenant masking, 409 last-owner guard)
-- `tests/unit/provider-factory.test.ts` -> `5 pass, 0 fail` (3-tier key resolution: Session BYOK -> `.env` -> Deterministic Mock)
-- `tests/unit/env.test.ts` -> `7 pass, 0 fail`
+### Unit & Security Suites (`72/72` Passing Across `12` Suites)
+- `tests/unit/session-key-vault.test.ts` -> `9 pass, 0 fail` (In-RAM AES-256-GCM encryption with ephemeral CSPRNG master key, master key rotation, zero disk writes, 2-hour sliding TTL expiry & extension, high-entropy session token validation, session isolation, masked preview, and scope clearing)
+- `tests/unit/provider-factory.test.ts` -> `6 pass, 0 fail` (3-tier key resolution: Session BYOK -> `.env` -> Deterministic Mock, TTL expiry fallback, multi-engine routing, and live connection verification)
+- `tests/unit/authorization.test.ts` -> `6 pass, 0 fail` (23-permission matrix, 404 cross-tenant masking, 409 last-owner guard)
+- `tests/unit/env.test.ts` -> `9 pass, 0 fail` (Env validation, secret redaction, production `DEMO_MODE` lockout)
 - `tests/unit/health-route.test.ts` -> `4 pass, 0 fail`
 - `tests/unit/mock-model-provider.test.ts` -> `6 pass, 0 fail`
-- `tests/unit/gemini-provider.test.ts` -> `3 pass, 0 fail`
+- `tests/unit/gemini-provider.test.ts` -> `4 pass, 0 fail`
 - `tests/unit/tool-gateway.test.ts` -> `6 pass, 0 fail`
 - `tests/unit/rag-chunker.test.ts` -> `6 pass, 0 fail`
 - `tests/unit/workflow-dag.test.ts` -> `6 pass, 0 fail`
 - `tests/unit/eval-graders.test.ts` -> `6 pass, 0 fail`
 - `tests/security/tenant-isolation.test.ts` -> `4 pass, 0 fail`
 
-### PostgreSQL & Full-Stack HTTP Integration Suites (`49/49` Passing)
-- `tests/integration/http-api-and-worker.test.ts` -> `2 suites (18 subtests) pass, 0 fail` (Full `v1.0.0-demo` HTTP API, worker queue, SSE replay, 8-persona RBAC, BYOK vault, DAG validator, 4-point isolation verifier, and 3-mode reset)
+### PostgreSQL & Full-Stack HTTP Integration Suites (`32/32` Passing Across `9` Suites)
+- `tests/integration/http-api-and-worker.test.ts` -> `3 pass, 0 fail` (Full `v1.0.0-demo` HTTP API, worker queue, SSE replay, 8-persona RBAC, production JWT auth lockout, in-RAM BYOK vault with high-entropy session enforcement, DAG validator, 4-point isolation verifier, and 3-mode reset)
 - `tests/integration/persistence-and-tenant-fk.test.ts` -> `2 pass, 0 fail` (Restart durability & composite FK violation rejection)
 - `tests/integration/flagship-e2e.test.ts` -> `4 pass, 0 fail`
 - `tests/integration/tenant-schema.test.ts` -> `6 pass, 0 fail`
@@ -91,7 +91,7 @@ While `v1.0.0-demo` completes the self-contained, zero-required-spend multi-tena
 ### Milestone `v1.1` — Identity Federation, Persistent KMS Vault & API Tokens
 - **OAuth 2.0 / OIDC & SAML SSO**: Replace the interactive `x-actor-id` persona switcher in production deployments (`DEMO_MODE=false`) with signed HttpOnly session cookies backed by GitHub, Google Workspace, and Okta OIDC providers while retaining the 8-persona switcher exclusively for sandbox demos.
 - **Envelope-Encrypted Persistent Tenant Key Vault**: Extend the in-memory `SessionKeyVault` with an optional PostgreSQL `tenant_api_keys` table using envelope encryption (per-tenant DEKs wrapped by AWS KMS / GCP Cloud KMS or local Master Key) and scheduled key rotation.
-- **Scoped Machine-to-Machine API Keys**: Allow `owner` and `admin` roles to mint prefix-tagged (`ord_live_...`) bearer tokens with per-token permission scopes and rate-limit buckets.
+- **Scoped Machine-to-Machine API Keys**: Allow `owner` and `admin` roles to mint prefix-tagged (`aeg_live_...`) bearer tokens with per-token permission scopes and rate-limit buckets.
 
 ### Milestone `v1.2` — Native `pgvector` HNSW Indexing & Multimodal RAG Ingestion
 - **`pgvector` HNSW Migration**: Add an optional migration enabling `CREATE EXTENSION IF NOT EXISTS vector` with `HNSW (embedding vector_cosine_ops)` indexes when running against external PostgreSQL 16 (`docker-compose.yml` or managed Postgres), while preserving the in-process cosine + `tsvector` hybrid scorer for zero-dependency PGlite mode.

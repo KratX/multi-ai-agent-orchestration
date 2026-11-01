@@ -1,6 +1,6 @@
-# Ordaris (`v1.0.0-demo`) — Enterprise Governed AI Agent, Hybrid RAG & Workflow Runtime
+# Aegis Runtime (`v1.0.0-demo`) — Enterprise Governed AI Agent, Hybrid RAG & Workflow Runtime
 
-**Ordaris** is a local-first, defense-in-depth multi-tenant AI agent orchestration, Hybrid Retrieval-Augmented Generation (RAG), Directed Acyclic Workflow (DAG), Human-in-the-Loop (HITL) governance, FinOps telemetry, and automated evaluation platform backed by an Express HTTP API, a durable PostgreSQL job worker (`FOR UPDATE SKIP LOCKED`), and Drizzle ORM.
+**Aegis Runtime** is a local-first, defense-in-depth multi-tenant AI agent orchestration, Hybrid Retrieval-Augmented Generation (RAG), Directed Acyclic Workflow (DAG), Human-in-the-Loop (HITL) governance, FinOps telemetry, and automated evaluation platform backed by an Express HTTP API, a durable PostgreSQL job worker (`FOR UPDATE SKIP LOCKED`), and Drizzle ORM.
 
 Built under a strict **Zero-Required-Spend (`ADR-001`)** and **Defense-in-Depth Tenant Isolation (`ADR-002`)** architecture, the entire full-stack application runs deterministically out of the box with zero external API keys required (`AI_MODE=demo`), while allowing operators and technical evaluators to plug in free-tier cloud AI keys (`Gemini`, `ChatGPT`, `Claude`, `Grok`, `OpenRouter`) at runtime via a **Session-Scoped AES-256-GCM BYOK Vault** or `.env` configuration.
 
@@ -14,13 +14,13 @@ Built under a strict **Zero-Required-Spend (`ADR-001`)** and **Defense-in-Depth 
    - Central policy engine (`src/server/policies/authorization.ts`) enforces a **23-permission RBAC matrix**, masks cross-tenant resource lookups with `404 Not Found` (`TENANT_MISMATCH`) to prevent UUID enumeration, and enforces the last-owner safeguard (`409 Conflict` `LAST_OWNER_PROTECTED`).
 
 2. **Session-Scoped AES-256-GCM BYOK Vault & 3-Tier AI Key Resolution (`src/server/security/session-key-vault.ts`, `src/server/ai/provider-factory.ts`)**
-   - **Tier 1 — Session BYOK Vault**: Browser sessions (`x-ordaris-demo-session`) can store API keys encrypted in server memory with **AES-256-GCM** using a random 256-bit process key, 96-bit IV, and 128-bit auth tag, with automatic 2-hour TTL expiry. Raw keys are never persisted to disk, never logged, and never returned to the browser.
+   - **Tier 1 — Session BYOK Vault**: Browser sessions (`x-aegis-demo-session`, minimum 16-char high-entropy token) can store API keys encrypted in server RAM with **AES-256-GCM** using an ephemeral 256-bit CSPRNG master key (`crypto.randomBytes(32)`), 96-bit IV, and 128-bit auth tag, with an automatic 2-hour sliding TTL. Raw keys are never persisted to disk, never logged, and never returned to the browser.
    - **Tier 2 — Server `.env` Fallback**: Falls back to `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XAI_API_KEY`, or `OPENROUTER_API_KEY` when configured on the server.
    - **Tier 3 — Deterministic Simulation Engine (`MockModelProvider`)**: Guarantees 100% deterministic multi-turn tool calls, citations, embeddings, and workflow execution with zero network access or API keys.
 
 3. **3-Choice Sandbox Reset & Live Database Diagnostics (`src/server/seed.ts`)**
    - `workspace_only`: Resets and re-seeds PostgreSQL tenants, runs, approvals, and RAG corpus while preserving active Session BYOK keys.
-   - `keys_only`: Purges AES-256-GCM keys for the caller's `x-ordaris-demo-session` without touching database state.
+   - `keys_only`: Purges AES-256-GCM keys for the caller's `x-aegis-demo-session` without touching database state.
    - `factory_reset`: Performs both a full database re-seed and a session BYOK vault purge.
 
 4. **Agent Studio, Immutable Snapshot Versioning & Side-by-Side 2-Engine Arena (`AGENT-001`..`003`)**
@@ -91,7 +91,7 @@ flowchart TB
     AI["3-Tier Provider Factory: Session BYOK -> .env -> Deterministic Mock"]
   end
 
-  subgraph Storage["Persistent PGlite PostgreSQL (.local/ordaris-db)"]
+  subgraph Storage["Persistent PGlite PostgreSQL (.local/aegis-db)"]
     DB[("18 Tables • Migrations 0001..0006 with Composite Tenant FKs")]
   end
 
@@ -123,7 +123,7 @@ pnpm install --frozen-lockfile
 ```bash
 cp .env.example .env
 ```
-*(No API keys are required in `.env`—Ordaris boots cleanly in `AI_MODE=demo` and allows adding keys per browser session in the UI's **Session BYOK Vault** drawer.)*
+*(No API keys are required in `.env`—Aegis Runtime boots cleanly in `AI_MODE=demo` and allows adding keys per browser session in the UI's **Session BYOK Vault** drawer.)*
 
 ### 3. Run Strict TypeScript Verification
 ```bash
@@ -146,12 +146,12 @@ pnpm seed
 ```bash
 pnpm dev
 ```
-- Open `http://localhost:3000` to launch the **Ordaris `v1.0.0-demo` Operator Console**.
+- Open `http://localhost:3000` to launch the **Aegis Runtime `v1.0.0-demo` Operator Console**.
 - Follow the built-in **5-Step Interactive Evaluator Walkthrough** banner at the top of the workspace.
 
 ---
 
-## 5. Mounted HTTP API Endpoints (`src/server/http/app.ts` & `src/server/http/auth.ts`)
+## 5. Mounted HTTP API Endpoints (`src/server/http/app.ts`, `src/server/http/demo-routes.ts` & `src/server/http/auth.ts`)
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
@@ -159,7 +159,7 @@ pnpm dev
 | `GET` | `/api/v1/health/ready` | Executes a real `SELECT 1` query against PostgreSQL (`200 OK` or `503 Service Unavailable`) |
 | `GET` | `/api/v1/auth/status` | Returns active actor, `authMethod` (`jwt` / `demo_header` / `none`), and GitHub OAuth readiness |
 | `POST` | `/api/v1/auth/token` | Mints an `HS256` JWT signed with `AUTH_SECRET` (requires `x-auth-secret` in `NODE_ENV=production`) |
-| `POST` | `/api/v1/auth/logout` | Clears the `ordaris_session` `HttpOnly` cookie |
+| `POST` | `/api/v1/auth/logout` | Clears the `aegis_session` `HttpOnly` cookie |
 | `GET` | `/api/v1/auth/github/login` | Initiates GitHub OAuth 2.0 login (`AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET`) with HMAC-signed `state` |
 | `GET` | `/api/v1/auth/github/callback` | Verifies CSRF `state`, exchanges code with GitHub, provisions user/org, and signs `HS256` JWT |
 | `GET` | `/api/v1/workspace` | Returns persisted tenant state, 8 personas, active permissions, and database storage mode (`401` if unauthenticated) |
@@ -209,7 +209,7 @@ Detailed engineering documentation lives in `/docs`:
 | Milestone | Status | Scope Summary |
 | :--- | :---: | :--- |
 | **`v1.0.0-demo` (Current)** | **Built & Verified** | 2-tenant / 8-persona 23-permission RBAC, composite SQL foreign keys, Session AES-256-GCM BYOK Vault, 6-engine 3-tier AI factory, bounded tool gateway (zero `eval()`), hybrid `tsvector` + cosine RAG, 3-color DFS workflow DAG & HITL gates, `v1`-vs-`v2` eval harness, 2-engine Arena, 3-choice sandbox reset, 5-tab React 19 UI (`104/104` tests passing). |
-| **`v1.1` (Planned)** | Planned | OAuth 2.0 / OIDC & SAML SSO session authentication (`DEMO_MODE=false`), persistent KMS envelope-encrypted tenant API key vault (`AWS KMS` / `GCP Cloud KMS`), and prefix-tagged (`ord_live_...`) machine-to-machine bearer tokens. |
+| **`v1.1` (Planned)** | Planned | OAuth 2.0 / OIDC & SAML SSO session authentication (`DEMO_MODE=false`), persistent KMS envelope-encrypted tenant API key vault (`AWS KMS` / `GCP Cloud KMS`), and prefix-tagged (`aeg_live_...`) machine-to-machine bearer tokens. |
 | **`v1.2` (Planned)** | Planned | Native `pgvector` HNSW index migration for external PostgreSQL 16, asynchronous worker-backed PDF/CSV ingestion with SSE chunk progress, and chunk-level sensitivity ACL tags. |
 | **`v1.3` (Planned)** | Planned | OpenTelemetry (`OTLP`) distributed trace propagation across HTTP -> `job_queue` -> worker -> LLM provider, `HMAC-SHA256` signed outbound webhooks (Slack/PagerDuty/Jira), and live token delta streaming over SSE. |
 | **`v2.0` (Planned)** | Planned | Hierarchical parent-to-child sub-agent delegation (`MAX_DELEGATION_DEPTH = 3`), hard FinOps organization daily/monthly USD spend caps, and WebAssembly (`.wasm`) sandboxed custom user tools. |

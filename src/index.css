@@ -43,7 +43,7 @@
   }
 }
 
-@keyframes ordarisPopupSlideIn {
+@keyframes aegisPopupSlideIn {
   0% {
     opacity: 0;
     transform: translateY(-14px) scale(0.97);
@@ -54,7 +54,7 @@
   }
 }
 
-@keyframes ordarisPopupCountdown {
+@keyframes aegisPopupCountdown {
   0% {
     width: 100%;
   }
@@ -64,20 +64,20 @@
 }
 
 .animate-popup-slide-in {
-  animation: ordarisPopupSlideIn 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: aegisPopupSlideIn 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .animate-popup-countdown {
-  animation: ordarisPopupCountdown 6.5s linear forwards;
+  animation: aegisPopupCountdown 6.5s linear forwards;
 }
 
 /* Comfortable Mode Global Readability & Spacing Enhancements */
-.ordaris-comfortable p {
+.aegis-comfortable p {
   line-height: 1.65;
 }
 
-.ordaris-comfortable table th,
-.ordaris-comfortable table td {
+.aegis-comfortable table th,
+.aegis-comfortable table td {
   padding-top: 0.75rem;
   padding-bottom: 0.75rem;
 }

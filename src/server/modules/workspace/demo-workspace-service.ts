@@ -47,7 +47,7 @@ import { clearByokScope } from '../../ai/byok-vault';
 import { getPublicEnvSummary, parseEnv } from '../../config/env';
 
 /**
- * Ordaris (v1.0.0-demo) — Interactive Demo Workspace, Isolation Verifier & Diagnostics Service
+ * Aegis Runtime (v1.0.0-demo) — Interactive Demo Workspace, Isolation Verifier & Diagnostics Service
  * (`src/server/modules/workspace/demo-workspace-service.ts`)
  *
  * Replaces `saas-workspace-service.ts` with a 100% pure Demo Sandbox service supporting:
@@ -76,7 +76,7 @@ export interface DemoResetResult {
 }
 
 export interface WorkspaceQuotaStatus {
-  planName: 'Ordaris Enterprise Sandbox';
+  planName: 'Aegis Enterprise Sandbox';
   limits: {
     maxAgents: number;
     maxDocuments: number;
@@ -612,7 +612,7 @@ export async function getWorkspaceQuotaStatus(
   );
 
   return {
-    planName: 'Ordaris Enterprise Sandbox',
+    planName: 'Aegis Enterprise Sandbox',
     limits: {
       maxAgents: 25,
       maxDocuments: 50,
@@ -706,7 +706,7 @@ export async function exportWorkspaceDataBundle(
   return {
     exportedAt: new Date().toISOString(),
     schemaVersion: '1.0.0-demo',
-    platform: 'Ordaris Enterprise Agent Sandbox',
+    platform: 'Aegis Enterprise Agent Sandbox',
     organization: org,
     members,
     agents: orgAgents,
@@ -777,7 +777,7 @@ export async function importWorkspaceDataBundle(
         name: item.name.slice(0, 120),
         slug: uniqueSlug,
         description:
-          item.description ?? 'Imported via Ordaris Workspace Bundle.',
+          item.description ?? 'Imported via Aegis Workspace Bundle.',
         draftSystemPrompt: item.draftSystemPrompt,
         draftToolAllowlist: Array.isArray(item.draftToolAllowlist)
           ? item.draftToolAllowlist

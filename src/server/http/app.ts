@@ -4,7 +4,6 @@ import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   appendRuntimeLog,
-  clearRuntimeLogs,
   getProviderKeyStatus,
   getPublicEnvSummary,
   getRuntimeLogs,
@@ -17,7 +16,7 @@ import {
   createModelProvider,
   type LiveAiEngineMode,
   type ModelProvider,
-} from '../ai/model-provider';
+} from '../ai/provider-factory';
 import {
   getSharedDatabase,
   type AegisDatabase,
@@ -92,47 +91,35 @@ import {
 } from '../modules/health/health-service';
 import type { ReadinessCheckResult } from '../../app/api/v1/health/route';
 import { RuntimeWorker } from '../worker/main';
-import { seedFlagshipWorkspace, type FlagshipSeedReport } from '../seed/demo-seed';
+import { seedFlagshipWorkspace, type FlagshipSeedReport } from '../seed';
 import { agents, agentVersions } from '../db/schema/agents';
 import { knowledgeDocuments } from '../db/schema/knowledge';
 import { organizations, users, memberships } from '../db/schema/tenant';
 import { usageEvents, workflows, workflowVersions } from '../db/schema/workflows';
 import { evalCases, evalExperiments, evalSuites } from '../db/schema/evals';
+import { WorkflowDagValidationError } from '../modules/workflows/dag-validator';
 import {
-  validateWorkflowDag,
-  WorkflowDagValidationError,
-} from '../modules/workflows/dag-validator';
-import {
-  clearByokScope,
+  ByokSessionValidationError,
   listByokProviderStatuses,
-  normalizeByokProviderId,
-  recordByokVerificationResult,
   resolveByokScopeKey,
   resolveEffectiveEnvWithByok,
-  saveByokProviderKey,
-  type ByokProviderId,
-} from '../ai/byok-vault';
+} from '../security/session-key-vault';
 import {
   deleteKnowledgeDocumentForActor,
-  exportWorkspaceDataBundle,
-  getSystemDiagnostics,
   getWorkspaceQuotaStatus,
-  importWorkspaceDataBundle,
-  inviteOrUpdateWorkspaceMember,
-  removeWorkspaceMemberForActor,
   resetDemoSandboxOnly,
-  verifyMultiTenantIsolation,
   type DemoResetMode,
 } from '../modules/workspace/demo-workspace-service';
+import { registerDemoRoutes } from './demo-routes';
 
 /**
- * Ordaris (v1.0.0-demo) — Express HTTP API Application (`src/server/http/app.ts`)
+ * Aegis Runtime (v1.0.0-demo) — Express HTTP API Application (`src/server/http/app.ts`)
  *
  * Mounts real `/api/v1/*` routes backed by PostgreSQL (PGlite) and the domain services:
  * - Request correlation (`x-request-id`), bounded JSON parsing (`1mb`), RFC 9457 Problem Details.
  * - Real membership-verified actor authentication (`resolveActorFromRequest`) across all 8 RBAC personas
  *   (`acme-owner`, `acme-admin`, `acme-dev`, `acme-viewer`, `beta-owner`, `beta-admin`, `beta-dev`, `beta-viewer`).
- * - Session-isolated BYOK Vault (`x-ordaris-demo-session`) with 3-tier AI resolution provenance.
+ * - Session-isolated in-RAM AES-256-GCM BYOK Vault (`x-aegis-demo-session`) with 2-hour sliding TTL.
  * - PII/Secret scrubbing, Red-Team guardrail interception, FinOps budget-cap checks, and automatic
  *   `outcome = 'denied'` security audit logging on `403`/`404` rejections.
  */
@@ -360,7 +347,6 @@ export async function ensureWorkspaceSeededWithPendingHitl(
   if (!existingAcme) {
     seedReport = await seedFlagshipWorkspace(db);
   } else if (!existingBetaAdmin) {
-    // Upgrade legacy 5-persona DB to full 8-persona Ordaris DB
     await resetDemoSandboxOnly(db, { mode: 'workspace_only' });
   }
 
@@ -555,7 +541,7 @@ async function resolveActorFromRequest(
   db: AegisDatabase,
   env: AppEnv
 ): Promise<AuthenticatedActor | null> {
-  // 1. Explicit Cryptographic Token Header (`Authorization: Bearer <jwt>` or `x-ordaris-auth-token: <jwt>`)
+  // 1. Explicit Cryptographic Token Header (`Authorization: Bearer <jwt>` or `x-aegis-auth-token: <jwt>`)
   const extracted = extractTokenFromRequest(req);
   if (
     extracted.hadExplicitAuthAttempt &&
@@ -585,7 +571,7 @@ async function resolveActorFromRequest(
 
   // 2. Production & Non-Demo Guard:
   // When NODE_ENV === "production" or DEMO_MODE === false, unsigned headers and query params are NEVER trusted.
-  // Only a valid signed `ordaris_session` cookie (or Bearer token above) is accepted.
+  // Only a valid signed `aegis_session` cookie (or Bearer token above) is accepted.
   if (env.NODE_ENV === 'production' || !env.DEMO_MODE) {
     if (extracted.source === 'cookie' && extracted.token) {
       const claims = verifyAuthToken(extracted.token, env.AUTH_SECRET);
@@ -610,7 +596,7 @@ async function resolveActorFromRequest(
   }
 
   // 3. Explicit Non-Production Demo Mode Header Resolution:
-  // Note: Query parameters (?actor=...) and silent default fallbacks ('acme-admin') are strictly prohibited
+  // Query parameters (?actor=...) and silent default fallbacks ('acme-admin') are strictly prohibited
   // so unauthenticated requests always receive 401 UNAUTHENTICATED.
   const explicitUserId = req.header('x-user-id')?.trim();
   const explicitOrgId = req.header('x-organization-id')?.trim();
@@ -679,13 +665,20 @@ async function resolveActorFromRequest(
   return null;
 }
 
-function getRequestByokScope(req: Request, fallbackOrgId: string): string {
-  const sessionId =
-    req.header('x-ordaris-demo-session')?.trim() ||
-    (typeof req.query.sessionId === 'string' ? req.query.sessionId.trim() : '');
+/**
+ * Resolves the caller's isolated BYOK vault scope strictly from the `x-aegis-demo-session` header.
+ * Never accepts `?sessionId=` query parameters, and enforces high-entropy session token validation.
+ */
+function getRequestByokScope(
+  req: Request,
+  fallbackOrgId: string,
+  strictSessionValidation = false
+): string {
+  const sessionId = req.header('x-aegis-demo-session')?.trim() || '';
   return resolveByokScopeKey({
     sessionId: sessionId || undefined,
     organizationId: fallbackOrgId,
+    strictSessionValidation,
   });
 }
 
@@ -702,7 +695,7 @@ function sendProblemDetails(
     .setHeader('x-request-id', requestId)
     .setHeader('cache-control', 'no-store')
     .json({
-      type: `https://ordaris.dev/problems/${code.toLowerCase().replace(/_/g, '-')}`,
+      type: `https://aegis.runtime/problems/${code.toLowerCase().replace(/_/g, '-')}`,
       title,
       status,
       code,
@@ -781,7 +774,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         .json({
           data: {
             status: 'ok',
-            service: 'ordaris',
+            service: 'aegis-runtime',
             version: '1.0.0-demo',
             timestamp: new Date().toISOString(),
             requestId,
@@ -863,7 +856,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           env.AUTH_SECRET
         );
 
-        // In production or when DEMO_MODE is disabled, issuing a token without a verified pre-shared AUTH_SECRET is forbidden.
         if (
           (env.NODE_ENV === 'production' || !env.DEMO_MODE) &&
           !hasValidPreSharedSecret
@@ -929,7 +921,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
         res.setHeader(
           'Set-Cookie',
-          `ordaris_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
+          `aegis_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
         );
 
         res.status(200).json({
@@ -950,7 +942,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
   app.post('/api/v1/auth/logout', (_req: Request, res: Response) => {
     res.setHeader(
       'Set-Cookie',
-      'ordaris_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'
+      'aegis_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'
     );
     res.status(200).json({ data: { loggedOut: true } });
   });
@@ -986,7 +978,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
 
         res.setHeader(
           'Set-Cookie',
-          `ordaris_oauth_state=${encodeURIComponent(state)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=600${secureFlag}`
+          `aegis_oauth_state=${encodeURIComponent(state)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=600${secureFlag}`
         );
 
         const authorizeUrl = new URL('https://github.com/login/oauth/authorize');
@@ -1032,8 +1024,8 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         if (
           !code ||
           !verifiedState ||
-          (cookies.ordaris_oauth_state &&
-            cookies.ordaris_oauth_state !== stateParam)
+          (cookies.aegis_oauth_state &&
+            cookies.aegis_oauth_state !== stateParam)
         ) {
           sendProblemDetails(
             res,
@@ -1086,7 +1078,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           headers: {
             authorization: `Bearer ${tokenJson.access_token}`,
             accept: 'application/vnd.github+json',
-            'user-agent': 'ordaris-server',
+            'user-agent': 'aegis-runtime',
           },
         });
 
@@ -1163,7 +1155,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
         res.setHeader(
           'Set-Cookie',
-          `ordaris_session=${encodeURIComponent(sessionJwt)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
+          `aegis_session=${encodeURIComponent(sessionJwt)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
         );
 
         if ((req.header('accept') ?? '').includes('text/html')) {
@@ -1185,98 +1177,17 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     }
   );
 
-  // 3. Seed / 3-Choice Reset Flagship Demo Workspace (`POST /api/v1/workspace/seed` & `POST /api/v1/workspace/reset`)
-  const handleSeedOrReset = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) => {
-    try {
-      const env = parseEnv(deps.rawEnv ?? process.env);
-      const { db } = await contextProvider();
-
-      // Ensure baseline seed exists before resolving actor so first-boot authenticated calls can resolve membership
-      await ensureWorkspaceSeededWithPendingHitl(db, { forceReset: false });
-
-      const actor = await resolveActorFromRequest(req, db, env);
-      if (!actor) {
-        throw new AuthorizationError({
-          allowed: false,
-          code: 'UNAUTHENTICATED',
-          action: 'org.manage',
-          reason: 'Authentication required to reset or re-seed the workspace.',
-        });
-      }
-
-      const onlyDemo = req.body?.onlyDemo === true;
-      const forceReset = req.body?.forceReset !== false && !onlyDemo;
-      const rawMode = req.body?.resetMode as DemoResetMode | undefined;
-      const resetMode: DemoResetMode =
-        rawMode === 'factory_reset' ||
-        rawMode === 'keys_only' ||
-        rawMode === 'workspace_only'
-          ? rawMode
-          : 'workspace_only';
-
-      const clearAllByok = req.body?.clearAllByok === true;
-
-      if (resetMode === 'factory_reset' || clearAllByok) {
-        requireAuthorization(actor, 'org.delete', {
-          organizationId: actor.organizationId,
-          resourceType: 'organization',
-          resourceId: actor.organizationId,
-        });
-      } else if (resetMode !== 'keys_only') {
-        requireAuthorization(actor, 'org.manage', {
-          organizationId: actor.organizationId,
-          resourceType: 'organization',
-          resourceId: actor.organizationId,
-        });
-      }
-
-      const byokScopeKey = getRequestByokScope(req, actor.organizationId);
-
-      const result = await ensureWorkspaceSeededWithPendingHitl(db, {
-        forceReset,
-        onlyDemo,
-        resetMode: rawMode,
-        clearByokScopeKey: byokScopeKey,
-        clearAllByok,
-      });
-      const personas = await listDemoPersonas(db);
-      const byokProviders = listByokProviderStatuses(env, byokScopeKey);
-
-      appendRuntimeLog({
-        level: 'INFO',
-        component: 'workspace-reset',
-        message: `Executed demo workspace reset (mode=${resetMode}, clearedKeys=${result.clearedByokKeysCount})`,
-        details: {
-          resetMode,
-          clearedByokKeysCount: result.clearedByokKeysCount,
-          byokScopeKey,
-          actorUserId: actor.userId,
-          actorRole: actor.role,
-        },
-      });
-
-      res.status(200).json({
-        data: {
-          status: 'seeded',
-          scope: 'demo-sandbox-only',
-          resetMode,
-          clearedByokKeysCount: result.clearedByokKeysCount,
-          pendingApprovalId: result.pendingApprovalId,
-          personas,
-          byokProviders,
-        },
-      });
-    } catch (err) {
-      next(err);
-    }
-  };
-
-  app.post('/api/v1/workspace/seed', handleSeedOrReset);
-  app.post('/api/v1/workspace/reset', handleSeedOrReset);
+  // 3. Mount Demo Governance, Session BYOK Vault, Arena, DAG Validator & Reset Routes (`demo-routes.ts`)
+  registerDemoRoutes(app, {
+    contextProvider,
+    rawEnv: deps.rawEnv,
+    worker: deps.worker,
+    modelProvider: deps.modelProvider,
+    resolveActorFromRequest,
+    ensureWorkspaceSeededWithPendingHitl,
+    listDemoPersonas,
+    getRequestByokScope,
+  });
 
   // 4. Get Persisted Workspace Snapshot for Active Actor (`GET /api/v1/workspace`)
   app.get('/api/v1/workspace', async (req: Request, res: Response, next: NextFunction) => {
@@ -1298,7 +1209,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         });
       }
 
-      // Target organization can be overridden by ?organizationId=... to test cross-tenant 404 isolation
       const requestedOrgId =
         typeof req.query.organizationId === 'string' &&
         req.query.organizationId.trim()
@@ -1418,7 +1328,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
       const byokProviders = listByokProviderStatuses(rawEnv, byokScopeKey);
       const quotas = await getWorkspaceQuotaStatus(db, requestedOrgId);
 
-      // Expose the 23-action RBAC matrix metadata for the interactive RBAC Policy Matrix Modal
       const rbacMatrix = {
         owner: listRolePermissions('owner'),
         admin: listRolePermissions('admin'),
@@ -1473,123 +1382,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
       reason: 'Authentication required.',
     });
   }
-
-  // 4b. Diagnostic Logs & Provider Key Status (`GET /api/v1/logs` & `POST /api/v1/logs/clear`)
-  app.get(
-    '/api/v1/logs',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const rawEnv = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, rawEnv);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-        const byokScopeKey = getRequestByokScope(req, actor.organizationId);
-        const effectiveEnv = resolveEffectiveEnvWithByok(rawEnv, byokScopeKey);
-        const rawLogs = getRuntimeLogs(120);
-        const entries = rawLogs.map((l) => ({
-          timestamp: l.timestamp,
-          level: String(l.level || 'info').toLowerCase(),
-          event: `[${l.component}] ${l.message}`,
-          context: l.details,
-        }));
-        res.status(200).json({
-          data: {
-            logFilePath: LOG_FILE_PATH,
-            providerKeys: getProviderKeyStatus(effectiveEnv),
-            byokProviders: listByokProviderStatuses(rawEnv, byokScopeKey),
-            logs: rawLogs,
-            entries,
-          },
-        });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  app.post(
-    '/api/v1/logs/clear',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const rawEnv = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, rawEnv);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-        requireAuthorization(actor, 'org.manage', {
-          organizationId: actor.organizationId,
-          resourceType: 'runtime_logs',
-        });
-
-        clearRuntimeLogs();
-        appendRuntimeLog({
-          level: 'INFO',
-          component: 'diagnostic-logger',
-          message: 'Cleared in-memory runtime log buffer via Ordaris Log Explorer.',
-          details: {
-            actorUserId: actor.userId,
-            actorRole: actor.role,
-          },
-        });
-        const rawLogs = getRuntimeLogs(50);
-        res.status(200).json({
-          data: {
-            cleared: true,
-            logs: rawLogs,
-            entries: rawLogs.map((l) => ({
-              timestamp: l.timestamp,
-              level: String(l.level || 'info').toLowerCase(),
-              event: `[${l.component}] ${l.message}`,
-              context: l.details,
-            })),
-          },
-        });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  // 4c. Live 4-Point Cross-Tenant Isolation Verifier (`GET /api/v1/demo/verify-isolation`)
-  app.get(
-    '/api/v1/demo/verify-isolation',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-        const report = await verifyMultiTenantIsolation(db);
-        res.status(200).json({ data: report });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  // 4d. Live PostgreSQL & Worker Queue Diagnostics (`GET /api/v1/demo/diagnostics`)
-  app.get(
-    '/api/v1/demo/diagnostics',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-        const diagnostics = await getSystemDiagnostics(db);
-        res.status(200).json({ data: diagnostics });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
 
   // 5. Organizations (`GET /api/v1/organizations`)
   app.get(
@@ -1736,7 +1528,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
             ? req.body.organizationId.trim()
             : actor.organizationId;
 
-        // Ensure agent exists in targetOrgId first so cross-tenant attempts get 404
         await getAgentForActor(db, actor, targetOrgId, String(req.params.id));
 
         // 7a. Red-Team Prompt-Injection & Exfiltration Guardrail Interception
@@ -1755,7 +1546,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
             outcome: 'denied',
             metadata: {
               reason:
-                'Prompt injection / secret exfiltration pattern blocked by Ordaris Input Guardrail.',
+                'Prompt injection / secret exfiltration pattern blocked by Aegis Input Guardrail.',
               promptPreview: body.inputPrompt.slice(0, 120),
             },
           });
@@ -1764,7 +1555,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
             getReqId(req),
             422,
             'GUARDRAIL_PROMPT_INJECTION_BLOCKED',
-            'Blocked by Ordaris Security Guardrail',
+            'Blocked by Aegis Security Guardrail',
             'Adversarial system-prompt override or secret exfiltration directive was intercepted prior to model dispatch and logged in audit_events (outcome=denied).'
           );
           return;
@@ -2261,7 +2052,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     }
   );
 
-  // 11. Workflows (`GET /api/v1/workflows`, `POST /api/v1/workflows`, `POST /api/v1/workflows/validate-dag`, `POST /api/v1/workflows/:id/publish`, `POST /api/v1/workflows/:id/runs`)
+  // 11. Workflows (`GET /api/v1/workflows`, `POST /api/v1/workflows`, `POST /api/v1/workflows/:id/publish`, `POST /api/v1/workflows/:id/runs`)
   app.get(
     '/api/v1/workflows',
     async (req: Request, res: Response, next: NextFunction) => {
@@ -2286,128 +2077,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         res.status(200).json({ data: list });
       } catch (err) {
         next(err);
-      }
-    }
-  );
-
-  app.post(
-    '/api/v1/workflows/validate-dag',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-        let graph = req.body?.graph;
-        if (!graph && Array.isArray(req.body?.nodes)) {
-          const rawNodes = req.body.nodes as Array<{
-            id: string;
-            label?: string;
-            type?: string;
-            kind?: string;
-            dependsOn?: string[];
-          }>;
-          const edges: Array<{ id: string; source: string; target: string }> = [];
-          for (const n of rawNodes) {
-            if (Array.isArray(n.dependsOn)) {
-              for (const dep of n.dependsOn) {
-                edges.push({
-                  id: `e_${dep}_${n.id}`,
-                  source: String(dep),
-                  target: String(n.id),
-                });
-              }
-            }
-          }
-          const incomingCount = new Map<string, number>();
-          const outgoingCount = new Map<string, number>();
-          for (const n of rawNodes) {
-            incomingCount.set(n.id, 0);
-            outgoingCount.set(n.id, 0);
-          }
-          for (const e of edges) {
-            incomingCount.set(e.target, (incomingCount.get(e.target) ?? 0) + 1);
-            outgoingCount.set(e.source, (outgoingCount.get(e.source) ?? 0) + 1);
-          }
-          const mappedNodes = rawNodes.map((n, idx) => {
-            const rawKind = n.kind ?? n.type ?? 'tool';
-            let kind = String(rawKind);
-            if (kind === 'human_approval') {
-              kind = 'approval';
-            }
-            if (!['start', 'end', 'agent', 'tool', 'approval'].includes(kind)) {
-              kind = 'tool';
-            }
-            const label = String(n.label ?? n.id ?? `Node ${idx + 1}`);
-            return {
-              id: String(n.id),
-              kind,
-              label,
-              ...(kind === 'approval' ? { approvalTitle: label } : {}),
-            };
-          });
-          if (!mappedNodes.some((n) => n.kind === 'start') && mappedNodes.length > 0) {
-            const rootCandidate =
-              mappedNodes.find((n) => (incomingCount.get(n.id) ?? 0) === 0) ??
-              mappedNodes[0]!;
-            rootCandidate.kind = 'start';
-          }
-          if (!mappedNodes.some((n) => n.kind === 'end') && mappedNodes.length > 1) {
-            const leafCandidates = mappedNodes.filter(
-              (n) => n.kind !== 'start' && (outgoingCount.get(n.id) ?? 0) === 0
-            );
-            const leaf =
-              leafCandidates[leafCandidates.length - 1] ??
-              mappedNodes[mappedNodes.length - 1]!;
-            if (leaf.kind !== 'start') {
-              leaf.kind = 'end';
-            }
-          }
-          graph = { nodes: mappedNodes, edges };
-        }
-
-        const result = validateWorkflowDag(graph);
-        res.status(200).json({
-          data: {
-            valid: result.valid,
-            topologicalOrder: result.topologicalOrder,
-            errors: result.errors,
-            error: result.errors?.[0] ?? null,
-            cyclePath: result.cyclePath,
-            nodeCount: Array.isArray(graph?.nodes) ? graph.nodes.length : 0,
-            edgeCount: Array.isArray(graph?.edges) ? graph.edges.length : 0,
-          },
-        });
-      } catch (err) {
-        if (err instanceof AuthorizationError) {
-          next(err);
-          return;
-        }
-        if (err instanceof WorkflowDagValidationError) {
-          res.status(200).json({
-            data: {
-              valid: false,
-              code: err.code,
-              message: err.message,
-              error: err.message,
-              errors: err.errors,
-              cyclePath: err.cyclePath,
-            },
-          });
-          return;
-        }
-        res.status(400).json({
-          data: {
-            valid: false,
-            code: 'INVALID_DAG_INPUT',
-            error:
-              err instanceof Error ? err.message : 'Invalid workflow DAG payload.',
-            message:
-              err instanceof Error ? err.message : 'Invalid workflow DAG payload.',
-          },
-        });
       }
     }
   );
@@ -2474,8 +2143,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
 
       let workflowVersionId = body.workflowVersionId;
 
-      // If user requested a Low-Risk branch override (e.g. expression "20 * 3" = 60 <= 100),
-      // create or reuse a published low-risk version so they can watch the condition node auto-bypass the HITL gate!
       if (body.riskOverrideExpression) {
         const [wfRow] = await db
           .select()
@@ -2721,314 +2388,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     }
   );
 
-  // 13. Session-Scoped BYOK Encrypted Vault & Provider Live Verification (`/api/v1/providers/*`)
-  app.get(
-    '/api/v1/providers/keys',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-        const byokScopeKey = getRequestByokScope(req, actor.organizationId);
-        const statuses = listByokProviderStatuses(env, byokScopeKey);
-        res.status(200).json({ data: statuses });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  app.post(
-    '/api/v1/providers/keys',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-
-        const byokScopeKey = getRequestByokScope(req, actor.organizationId);
-        // If no session header is present, require member.manage to mutate org-wide secrets
-        if (!byokScopeKey.startsWith('session:')) {
-          requireAuthorization(actor, 'member.manage', {
-            organizationId: actor.organizationId,
-            resourceType: 'organization_secret',
-          });
-        }
-
-        const providerSchema = z.object({
-          provider: z.string().min(1),
-          rawKey: z.string(),
-        });
-        const body = providerSchema.parse(req.body);
-        const providerId: ByokProviderId =
-          normalizeByokProviderId(body.provider) ?? 'gemini';
-        const updated = saveByokProviderKey({
-          scopeKey: byokScopeKey,
-          provider: providerId,
-          apiKey: body.rawKey,
-          authSecret: env.AUTH_SECRET,
-        });
-
-        appendRuntimeLog({
-          level: 'INFO',
-          component: 'byok-vault',
-          message: body.rawKey.trim()
-            ? `Saved AES-256-GCM encrypted Session BYOK key for ${providerId}`
-            : `Removed Session BYOK override for ${providerId}`,
-          details: {
-            byokScopeKey,
-            provider: providerId,
-            actorUserId: actor.userId,
-          },
-        });
-
-        res.status(200).json({
-          data: {
-            updated,
-            providers: listByokProviderStatuses(env, byokScopeKey),
-          },
-        });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  app.delete(
-    '/api/v1/providers/keys',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-
-        const byokScopeKey = getRequestByokScope(req, actor.organizationId);
-        const cleared = clearByokScope(byokScopeKey);
-
-        appendRuntimeLog({
-          level: 'INFO',
-          component: 'byok-vault',
-          message: `Wiped ${cleared.clearedCount} Session BYOK key(s) from scope ${byokScopeKey}`,
-          details: {
-            byokScopeKey,
-            clearedCount: cleared.clearedCount,
-            actorUserId: actor.userId,
-          },
-        });
-
-        res.status(200).json({
-          data: {
-            clearedCount: cleared.clearedCount,
-            scopeKey: byokScopeKey,
-            providers: listByokProviderStatuses(env, byokScopeKey),
-          },
-        });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  app.post(
-    '/api/v1/providers/test',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-
-        const providerId: ByokProviderId =
-          normalizeByokProviderId(String(req.body?.provider ?? 'gemini')) ??
-          'gemini';
-        const engineMap: Record<ByokProviderId, LiveAiEngineMode> = {
-          gemini: 'gemini-free',
-          openrouter: 'openrouter-free',
-          chatgpt: 'chatgpt-free',
-          claude: 'claude-free',
-          grok: 'grok-free',
-        };
-        const engine = engineMap[providerId] ?? 'auto';
-        const byokScopeKey = getRequestByokScope(req, actor.organizationId);
-        const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
-        const testProvider = createLiveRuntimeModelProvider(effectiveEnv, {
-          engine,
-        });
-
-        const result = await testProvider.generate({
-          systemPrompt:
-            'Respond concisely in one short sentence confirming the API connection is active.',
-          modelConfig: {
-            provider: 'google',
-            model: 'gemini-3-flash-preview',
-            temperature: 0,
-            maxSteps: 2,
-            maxToolCalls: 0,
-          },
-          allowedTools: [],
-          messages: [
-            {
-              role: 'user',
-              content: 'Verify live BYOK API connection health.',
-            },
-          ],
-          stepIndex: 0,
-        });
-
-        const answerText = result.answer ?? result.reasoningSummary ?? '';
-        const isFallback =
-          result.usage.isSimulated ||
-          result.usage.source === 'mock' ||
-          result.resolutionTier === 'deterministic_fallback' ||
-          result.modelName.includes('fallback') ||
-          result.modelName.includes('mock');
-
-        const verifyMessage = isFallback
-          ? `Tier 3 Deterministic Fallback used (${result.providerName} / ${result.modelName})`
-          : `Verified live (${result.providerName} / ${result.modelName})`;
-
-        recordByokVerificationResult({
-          scopeKey: byokScopeKey,
-          provider: providerId,
-          verified: !isFallback,
-          message: verifyMessage,
-        });
-
-        res.status(200).json({
-          data: {
-            provider: providerId,
-            verified: !isFallback,
-            message: verifyMessage,
-            outputPreview: answerText.slice(0, 240),
-            providers: listByokProviderStatuses(env, byokScopeKey),
-          },
-        });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  // 14. Team RBAC Membership & Workspace Bundle Export/Import (`/api/v1/members/*` & `/api/v1/workspace/*`)
-  const handleInviteOrUpdateMember = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) => {
-    try {
-      const env = parseEnv(deps.rawEnv ?? process.env);
-      const { db } = await contextProvider();
-      const actor = await resolveActorFromRequest(req, db, env);
-      if (!actor) {
-        throw unauthenticatedError();
-      }
-      const schema = z.object({
-        email: z.string().email(),
-        displayName: z.string().min(1).max(120),
-        role: z.enum(['owner', 'admin', 'member', 'developer', 'viewer']),
-      });
-      const body = schema.parse(req.body);
-      const normalizedRole = body.role === 'member' ? 'developer' : body.role;
-      const updatedMembers = await inviteOrUpdateWorkspaceMember(db, actor, {
-        organizationId: actor.organizationId,
-        email: body.email,
-        displayName: body.displayName,
-        role: normalizedRole,
-      });
-      res.status(201).json({ data: updatedMembers });
-    } catch (err) {
-      next(err);
-    }
-  };
-
-  const handleRemoveMember = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) => {
-    try {
-      const env = parseEnv(deps.rawEnv ?? process.env);
-      const { db } = await contextProvider();
-      const actor = await resolveActorFromRequest(req, db, env);
-      if (!actor) {
-        throw unauthenticatedError();
-      }
-      const updatedMembers = await removeWorkspaceMemberForActor(
-        db,
-        actor,
-        actor.organizationId,
-        String(req.params.userId)
-      );
-      res.status(200).json({ data: updatedMembers });
-    } catch (err) {
-      next(err);
-    }
-  };
-
-  const handleExportWorkspace = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) => {
-    try {
-      const env = parseEnv(deps.rawEnv ?? process.env);
-      const { db } = await contextProvider();
-      const actor = await resolveActorFromRequest(req, db, env);
-      if (!actor) {
-        throw unauthenticatedError();
-      }
-      const bundle = await exportWorkspaceDataBundle(
-        db,
-        actor,
-        actor.organizationId
-      );
-      res.status(200).json({ data: bundle });
-    } catch (err) {
-      next(err);
-    }
-  };
-
-  app.post('/api/v1/members', handleInviteOrUpdateMember);
-  app.post('/api/v1/saas/members', handleInviteOrUpdateMember);
-  app.delete('/api/v1/members/:userId', handleRemoveMember);
-  app.delete('/api/v1/saas/members/:userId', handleRemoveMember);
-  app.get('/api/v1/workspace/export', handleExportWorkspace);
-  app.get('/api/v1/saas/export', handleExportWorkspace);
-
-  app.post(
-    '/api/v1/workspace/import',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-        const imported = await importWorkspaceDataBundle(
-          db,
-          actor,
-          actor.organizationId,
-          req.body ?? {}
-        );
-        res.status(201).json({ data: imported });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
   // Central RFC 9457 Problem Details Error Handler with Automatic Denied Audit Logging
   app.use(
     async (err: unknown, req: Request, res: Response, _next: NextFunction) => {
@@ -3037,8 +2396,6 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         req as Request & { resolvedActor?: AuthenticatedActor | null }
       ).resolvedActor;
 
-      // Record outcome='denied' in audit_events when an authenticated actor hits a 403/404 RBAC or tenant boundary
-      // (Skip approval.decide because decideApprovalRequest already writes its own denied audit event)
       if (
         resolvedActor &&
         !req.path.endsWith('/decision') &&
@@ -3083,6 +2440,18 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           'INVALID_REQUEST_BODY',
           'Validation failed',
           detail
+        );
+        return;
+      }
+
+      if (err instanceof ByokSessionValidationError) {
+        sendProblemDetails(
+          res,
+          requestId,
+          err.statusCode,
+          err.code,
+          'Invalid session BYOK token',
+          err.message
         );
         return;
       }

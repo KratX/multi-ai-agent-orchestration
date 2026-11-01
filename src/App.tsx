@@ -26,23 +26,23 @@ import {
 } from 'lucide-react';
 import {
   SessionByokVaultDrawer,
-  OrdarisRagKnowledgePanel,
+  AegisRagKnowledgePanel,
   type ByokProviderStatusItem,
   type KnowledgeDocumentItem,
-} from './client/components/OrdarisRagAndByokDrawer';
+} from './client/components/AegisRagAndByokDrawer';
 import {
-  OrdarisWorkflowAndHitl,
+  AegisWorkflowAndHitl,
   type WorkflowSummaryItem,
   type ApprovalQueueItem,
-} from './client/components/OrdarisWorkflowAndHitl';
+} from './client/components/AegisWorkflowAndHitl';
 import {
-  OrdarisGovernanceAndFinopsPanel,
-  OrdarisEngineMatrixAndLogsPanel,
+  AegisGovernanceAndFinopsPanel,
+  AegisEngineMatrixAndLogsPanel,
   type EvalSuiteItem,
   type UsageSummaryData,
   type AuditLedgerEvent,
   type WorkspaceMemberItem,
-} from './client/components/OrdarisGovernanceAndTelemetry';
+} from './client/components/AegisGovernanceAndTelemetry';
 
 export type DemoPersonaId =
   | 'acme-owner'
@@ -200,17 +200,28 @@ interface SystemDiagnosticsData {
 }
 
 function getOrCreateDemoSessionId(): string {
-  const key = 'ordaris_demo_session_id';
+  const key = 'aegis_demo_session_id';
   try {
     const existing = window.localStorage.getItem(key);
-    if (existing && existing.trim().length >= 8) {
+    if (existing && existing.trim().length >= 16) {
       return existing.trim();
     }
-    const created = `sess_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`;
+    const randomBytes = new Uint8Array(16);
+    if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+      window.crypto.getRandomValues(randomBytes);
+    } else {
+      for (let i = 0; i < randomBytes.length; i += 1) {
+        randomBytes[i] = Math.floor(Math.random() * 256);
+      }
+    }
+    const hex = Array.from(randomBytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    const created = `sess_${hex}`;
     window.localStorage.setItem(key, created);
     return created;
   } catch {
-    return 'sess_browser_ephemeral';
+    return 'sess_browser_ephemeral_9f8e7d6c5b4a3210';
   }
 }
 
@@ -240,7 +251,7 @@ export function App() {
   const [newAgentName, setNewAgentName] = useState<string>('');
   const [newAgentSlug, setNewAgentSlug] = useState<string>('');
   const [newAgentPrompt, setNewAgentPrompt] = useState<string>(
-    'You are an Ordaris governed enterprise AI agent. Cite retrieved runbook evidence and verify quantitative calculations.'
+    'You are an Aegis governed enterprise AI agent. Cite retrieved runbook evidence and verify quantitative calculations.'
   );
   const [creatingAgent, setCreatingAgent] = useState<boolean>(false);
   const [publishingAgent, setPublishingAgent] = useState<boolean>(false);
@@ -415,7 +426,7 @@ export function App() {
       if (typeof init?.body === 'string' && !headers.has('content-type')) {
         headers.set('content-type', 'application/json');
       }
-      headers.set('x-ordaris-demo-session', sessionId);
+      headers.set('x-aegis-demo-session', sessionId);
       return fetch(url, {
         ...init,
         headers,
@@ -908,7 +919,7 @@ export function App() {
         body: JSON.stringify({
           name: newAgentName.trim(),
           slug: newAgentSlug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-          description: 'Created via Ordaris Agent Studio',
+          description: 'Created via Aegis Agent Studio',
           draftSystemPrompt: newAgentPrompt.trim(),
           draftToolAllowlist: ['calculator', 'knowledge_search'],
         }),
@@ -1061,7 +1072,7 @@ export function App() {
   const configuredByokCount = byokProviders.filter((p) => p.configured).length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-200 ordaris-comfortable">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-200 aegis-comfortable">
       {/* TOP FLOATING POPUP NOTIFICATION WITH STRUCTURED DETAILS */}
       {toast && (
         <div
@@ -1214,7 +1225,7 @@ export function App() {
             <div>
               <div className="flex items-center gap-2.5">
                 <span className="text-lg font-extrabold tracking-tight text-white">
-                  Ordaris
+                  Aegis Runtime
                 </span>
                 <span className="px-2 py-0.5 text-[11px] font-mono font-bold uppercase tracking-wider rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                   v1.0.0-demo
@@ -2116,7 +2127,7 @@ export function App() {
         )}
 
         {activeTab === 'rag' && (
-          <OrdarisRagKnowledgePanel
+          <AegisRagKnowledgePanel
             activeActorId={activeActorId}
             activeActorRole={activePersona.role}
             activeOrgSlug={activePersona.orgSlug}
@@ -2138,7 +2149,7 @@ export function App() {
         )}
 
         {activeTab === 'workflow' && (
-          <OrdarisWorkflowAndHitl
+          <AegisWorkflowAndHitl
             activeActorId={activeActorId}
             activeActorRole={activePersona.role}
             activeOrgSlug={activePersona.orgSlug}
@@ -2157,7 +2168,7 @@ export function App() {
         )}
 
         {activeTab === 'governance' && (
-          <OrdarisGovernanceAndFinopsPanel
+          <AegisGovernanceAndFinopsPanel
             activeActorId={activeActorId}
             activeActorRole={activePersona.role}
             activeOrgSlug={activePersona.orgSlug}
@@ -2178,7 +2189,7 @@ export function App() {
         )}
 
         {activeTab === 'engines' && (
-          <OrdarisEngineMatrixAndLogsPanel
+          <AegisEngineMatrixAndLogsPanel
             sessionId={sessionId}
             providers={byokProviders}
             selectedEngine={selectedEngine}
@@ -2202,7 +2213,7 @@ export function App() {
         <div className="max-w-[1640px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300 font-mono">
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-white font-bold">
-              Ordaris v1.0.0-demo
+              Aegis Runtime v1.0.0-demo
             </span>
             <span>•</span>
             <span>Session Scope: {sessionId}</span>

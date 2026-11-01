@@ -3,12 +3,12 @@ import type { Request } from 'express';
 import type { TenantRole } from '../db/schema/tenant';
 
 /**
- * Cryptographic Authentication & Session Token Verification (`src/server/http/auth.ts`)
+ * Aegis Cryptographic Authentication & Session Token Verification (`src/server/http/auth.ts`)
  *
  * Implements:
  * 1. RFC 7519 / HS256 JWT signing and constant-time verification using `AUTH_SECRET`.
- * 2. Request token extraction from `Authorization: Bearer <token>`, `x-ordaris-auth-token`,
- *    or `Cookie: ordaris_session=<token>`.
+ * 2. Request token extraction from `Authorization: Bearer <token>`, `x-aegis-auth-token`,
+ *    or `Cookie: aegis_session=<token>`.
  * 3. Signed CSRF `state` tokens for GitHub OAuth 2.0 (`AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET`).
  */
 
@@ -19,7 +19,7 @@ export interface AuthTokenClaims {
   personaId?: string;
   iat: number;
   exp: number;
-  iss: 'ordaris-auth';
+  iss: 'aegis-auth';
 }
 
 export interface SignAuthTokenInput {
@@ -78,7 +78,7 @@ export function signAuthToken(
     ...(input.personaId ? { personaId: input.personaId } : {}),
     iat: nowSeconds,
     exp: nowSeconds + ttl,
-    iss: 'ordaris-auth',
+    iss: 'aegis-auth',
   };
 
   const payloadB64 = Buffer.from(JSON.stringify(claims), 'utf8').toString(
@@ -129,7 +129,7 @@ export function verifyAuthToken(
       !claims.org ||
       typeof claims.role !== 'string' ||
       typeof claims.exp !== 'number' ||
-      claims.iss !== 'ordaris-auth'
+      claims.iss !== 'aegis-auth'
     ) {
       return null;
     }
@@ -235,7 +235,7 @@ export interface ExtractedRequestToken {
 
 /**
  * Extracts a session token from `Authorization: Bearer <token>`,
- * `x-ordaris-auth-token`, or `Cookie: ordaris_session=<token>`.
+ * `x-aegis-auth-token`, or `Cookie: aegis_session=<token>`.
  */
 export function extractTokenFromRequest(req: Request): ExtractedRequestToken {
   const authHeader = req.header('authorization')?.trim();
@@ -255,7 +255,7 @@ export function extractTokenFromRequest(req: Request): ExtractedRequestToken {
     };
   }
 
-  const customTokenHeader = req.header('x-ordaris-auth-token')?.trim();
+  const customTokenHeader = req.header('x-aegis-auth-token')?.trim();
   if (customTokenHeader) {
     return {
       token: customTokenHeader,
@@ -265,9 +265,9 @@ export function extractTokenFromRequest(req: Request): ExtractedRequestToken {
   }
 
   const cookies = parseCookies(req.header('cookie'));
-  if (cookies.ordaris_session) {
+  if (cookies.aegis_session) {
     return {
-      token: cookies.ordaris_session,
+      token: cookies.aegis_session,
       source: 'cookie',
       hadExplicitAuthAttempt: true,
     };

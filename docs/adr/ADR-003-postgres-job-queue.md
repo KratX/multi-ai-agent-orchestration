@@ -8,7 +8,7 @@
 
 ## 1. Context
 
-When an operator in **Ordaris (`v1.0.0-demo`)** starts an agent run (`POST /api/v1/agents/:agentId/runs`), launches a 2-engine Arena comparison (`POST /api/v1/agents/:agentId/arena`), or triggers a gated workflow DAG (`POST /api/v1/workflows/:workflowId/runs`), execution spans multiple bounded steps:
+When an operator in **Aegis Runtime (`v1.0.0-demo`)** starts an agent run (`POST /api/v1/agents/:agentId/runs`), launches a 2-engine Arena comparison (`POST /api/v1/agents/:agentId/arena`), or triggers a gated workflow DAG (`POST /api/v1/workflows/:workflowId/runs`), execution spans multiple bounded steps:
 - Calling a cloud or deterministic model provider across up to `8` iterations.
 - Validating and executing up to `6` tool calls (`calculator`, `knowledge_search`).
 - Pausing at Human-in-the-Loop (`approval`) gates (`waiting_approval`) until an `owner` or `admin` submits a decision.
