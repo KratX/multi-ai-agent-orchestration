@@ -26,7 +26,7 @@ import { parseEnv } from '../config/env';
  * versioned SQL migrations (`0001`..`0006`) idempotently.
  */
 
-export const aegisSchema = {
+export const ordarisSchema = {
   ...tenantSchema,
   ...agentsSchema,
   ...runsSchema,
@@ -35,11 +35,15 @@ export const aegisSchema = {
   ...evalsSchema,
 };
 
-export type AegisDatabase = PgliteDatabase<typeof aegisSchema>;
+export type OrdarisDatabase = PgliteDatabase<typeof ordarisSchema>;
+
+// Backward-compatible schema and database type aliases
+export const aegisSchema = ordarisSchema;
+export type AegisDatabase = OrdarisDatabase;
 
 export interface DatabaseContext {
   pg: PGlite;
-  db: AegisDatabase;
+  db: OrdarisDatabase;
   storageMode: 'file' | 'memory';
   dataDir?: string;
   close: () => Promise<void>;
@@ -83,7 +87,7 @@ export async function createDatabaseClient(options?: {
     await applyTenantMigrations(pg);
   }
 
-  const db = drizzle(pg, { schema: aegisSchema });
+  const db = drizzle(pg, { schema: ordarisSchema });
 
   return {
     pg,
@@ -102,7 +106,7 @@ let sharedContextPromise: Promise<DatabaseContext> | null = null;
 
 /**
  * Returns a process-wide singleton PostgreSQL + Drizzle context for runtime routes and workers.
- * Uses file-backed persistence (`PGLITE_DATA_DIR`, default `.local/aegis-db`) in development/production,
+ * Uses file-backed persistence (`PGLITE_DATA_DIR`, default `.local/ordaris-db`) in development/production,
  * or in-memory storage when `PGLITE_DATA_DIR="memory://"` or `NODE_ENV="test"`.
  */
 export function getSharedDatabase(options?: { dataDir?: string }): Promise<DatabaseContext> {
@@ -118,7 +122,7 @@ export function getSharedDatabase(options?: { dataDir?: string }): Promise<Datab
             ? 'memory://'
             : env.PGLITE_DATA_DIR;
       } catch {
-        targetDir = '.local/aegis-db';
+        targetDir = '.local/ordaris-db';
       }
     }
     sharedContextPromise = createDatabaseClient({

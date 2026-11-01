@@ -1,4 +1,4 @@
-import type { AegisDatabase } from '../../db/client';
+import type { OrdarisDatabase } from '../../db/client';
 import type { RunEventRow, RunStatus } from '../../db/schema/runs';
 import {
   AuthorizationError,
@@ -148,7 +148,7 @@ export interface StreamRunEventsRequest {
  * `run_events` after the client's `Last-Event-ID` / `afterSequence` cursor (`SSE-001`).
  */
 export async function createRunEventsSseResponse(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   request: StreamRunEventsRequest
 ): Promise<Response> {
@@ -222,7 +222,7 @@ export async function createRunEventsSseResponse(
     if (err instanceof InvalidSseCursorError) {
       return Response.json(
         {
-          type: 'https://aegis.runtime/errors/invalid-sse-cursor',
+          type: 'https://ordaris.runtime/errors/invalid-sse-cursor',
           title: 'Invalid SSE Sequence Cursor',
           status: 400,
           detail: err.message,
@@ -236,7 +236,7 @@ export async function createRunEventsSseResponse(
       const status = err.statusCode;
       return Response.json(
         {
-          type: 'https://aegis.runtime/errors/authorization',
+          type: 'https://ordaris.runtime/errors/authorization',
           title: status === 404 ? 'Resource Not Found' : 'Access Denied',
           status,
           detail: err.message,
@@ -249,7 +249,7 @@ export async function createRunEventsSseResponse(
     if (err instanceof RunConstraintError) {
       return Response.json(
         {
-          type: 'https://aegis.runtime/errors/run-not-found',
+          type: 'https://ordaris.runtime/errors/run-not-found',
           title: 'Run Not Found',
           status: err.statusCode,
           detail: err.message,

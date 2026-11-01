@@ -49,6 +49,11 @@ export interface EncryptedSecretRecord {
 
 export interface PublicByokProviderStatus {
   provider: ByokProviderId;
+  label: string;
+  envVarName: string;
+  modelName: string;
+  docsUrl: string;
+  configured: boolean;
   configuredInVault: boolean;
   configuredInEnv: boolean;
   effectiveActive: boolean;
@@ -63,6 +68,47 @@ export interface PublicByokProviderStatus {
   lastVerifyStatus: 'verified' | 'failed' | null;
   lastVerifyMessage: string | null;
 }
+
+export const BYOK_PROVIDER_METADATA: Record<
+  ByokProviderId,
+  {
+    label: string;
+    envVarName: string;
+    modelName: string;
+    docsUrl: string;
+  }
+> = {
+  gemini: {
+    label: 'Google Gemini 3 Flash',
+    envVarName: 'GEMINI_API_KEY',
+    modelName: 'gemini-3-flash-preview',
+    docsUrl: 'https://aistudio.google.com/apikey',
+  },
+  openrouter: {
+    label: 'OpenRouter Free Router',
+    envVarName: 'OPENROUTER_API_KEY',
+    modelName: 'openrouter/free',
+    docsUrl: 'https://openrouter.ai/settings/keys',
+  },
+  chatgpt: {
+    label: 'OpenAI ChatGPT (gpt-4o-mini)',
+    envVarName: 'OPENAI_API_KEY',
+    modelName: 'gpt-4o-mini',
+    docsUrl: 'https://platform.openai.com/api-keys',
+  },
+  claude: {
+    label: 'Anthropic Claude 3.5 Haiku',
+    envVarName: 'ANTHROPIC_API_KEY',
+    modelName: 'claude-3-5-haiku-latest',
+    docsUrl: 'https://console.anthropic.com/settings/keys',
+  },
+  grok: {
+    label: 'xAI Grok 2 Latest',
+    envVarName: 'XAI_API_KEY',
+    modelName: 'grok-2-latest',
+    docsUrl: 'https://console.x.ai/',
+  },
+};
 
 export class ByokSessionValidationError extends Error {
   public readonly code = 'INVALID_BYOK_SESSION_TOKEN' as const;
@@ -368,8 +414,11 @@ export function saveByokProviderKey(input: {
     if (Object.keys(scopeRecords).length === 0) {
       inMemoryScopes.delete(scope);
     }
+    const meta = BYOK_PROVIDER_METADATA[input.provider];
     return {
       provider: input.provider,
+      ...meta,
+      configured: false,
       configuredInVault: false,
       configuredInEnv: false,
       effectiveActive: false,
@@ -404,9 +453,12 @@ export function saveByokProviderKey(input: {
   };
 
   scopeRecords[input.provider] = record;
+  const meta = BYOK_PROVIDER_METADATA[input.provider];
 
   return {
     provider: input.provider,
+    ...meta,
+    configured: true,
     configuredInVault: true,
     configuredInEnv: false,
     effectiveActive: true,
@@ -543,10 +595,10 @@ export function listByokProviderStatuses(
 
   const providers: ByokProviderId[] = [
     'gemini',
+    'openrouter',
     'chatgpt',
     'claude',
     'grok',
-    'openrouter',
   ];
 
   return providers.map((provider) => {
@@ -554,6 +606,7 @@ export function listByokProviderStatuses(
     const hasVault = Boolean(rec && decryptSecret(rec) !== null);
     const envRaw = envMap[provider];
     const hasEnv = isCleanEnvKey(envRaw);
+    const meta = BYOK_PROVIDER_METADATA[provider];
 
     const resolutionTier: ByokResolutionTier = hasVault
       ? 'session_byok'
@@ -570,6 +623,8 @@ export function listByokProviderStatuses(
 
     return {
       provider,
+      ...meta,
+      configured: hasVault || hasEnv,
       configuredInVault: hasVault,
       configuredInEnv: hasEnv,
       effectiveActive: hasVault || hasEnv,

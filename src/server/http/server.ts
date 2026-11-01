@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
-import { startAegisServer } from '../../../server';
+import { startOrdarisServer, startAegisServer } from '../../../server';
 
-export { startAegisServer };
+export { startOrdarisServer, startAegisServer };
 
 const isDirectExecution =
   process.argv[1] &&
@@ -10,9 +10,9 @@ const isDirectExecution =
 
 if (isDirectExecution) {
   const port = Number(process.env.PORT ?? 3000) || 3000;
-  startAegisServer(port).catch((error) => {
+  startOrdarisServer(port).catch((error) => {
     process.stderr.write(
-      `Failed to start Aegis API server: ${error instanceof Error ? error.message : String(error)}\n`
+      `Failed to start Ordaris API server: ${error instanceof Error ? error.message : String(error)}\n`
     );
     process.exit(1);
   });

@@ -53,7 +53,7 @@ export async function GET(
     if (!dbStatus.databaseReady) {
       return Response.json(
         {
-          type: 'https://aegis-runtime.dev/problems/dependency-unready',
+          type: 'https://ordaris-runtime.dev/problems/dependency-unready',
           title: 'Service dependency not ready',
           status: 503,
           code: 'DATABASE_UNREADY',
@@ -74,7 +74,7 @@ export async function GET(
       {
         data: {
           status: 'ok',
-          service: 'aegis-runtime',
+          service: 'ordaris-runtime',
           version: '0.1.0',
           timestamp,
           requestId,
@@ -102,7 +102,7 @@ export async function GET(
 
     return Response.json(
       {
-        type: 'https://aegis-runtime.dev/problems/health-check-failed',
+        type: 'https://ordaris-runtime.dev/problems/health-check-failed',
         title: 'Health check failed',
         status: 503,
         code: 'HEALTH_CHECK_FAILED',

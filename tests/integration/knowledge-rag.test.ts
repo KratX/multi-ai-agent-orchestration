@@ -36,14 +36,14 @@ describe('RAG-001 & RAG-003: Tenant-Isolated Knowledge Base Ingestion & Retrieva
     try {
       const user = await ensureUser(ctx.db, {
         authSubject: 'sub_rag_author_1',
-        email: 'author@aegis-rag.io',
+        email: 'author@ordaris-rag.io',
         displayName: 'Knowledge Author',
       });
       const { organization, membership } = await createOrganizationWithOwner(
         ctx.db,
         {
-          name: 'Aegis Knowledge Org',
-          slug: 'aegis-knowledge-org',
+          name: 'Ordaris Knowledge Org',
+          slug: 'ordaris-knowledge-org',
           creatorUserId: user.id,
         }
       );
@@ -252,14 +252,14 @@ describe('RAG-001 & RAG-003: Tenant-Isolated Knowledge Base Ingestion & Retrieva
     try {
       const user = await ensureUser(ctx.db, {
         authSubject: 'sub_rag_runtime_op',
-        email: 'runtime@aegis-cloud.io',
+        email: 'runtime@ordaris-cloud.io',
         displayName: 'Runtime Operator',
       });
       const { organization, membership } = await createOrganizationWithOwner(
         ctx.db,
         {
-          name: 'Aegis Runtime RAG Org',
-          slug: 'aegis-runtime-rag-org',
+          name: 'Ordaris Runtime RAG Org',
+          slug: 'ordaris-runtime-rag-org',
           creatorUserId: user.id,
         }
       );
@@ -295,7 +295,7 @@ describe('RAG-001 & RAG-003: Tenant-Isolated Knowledge Base Ingestion & Retrieva
         draftToolAllowlist: ['knowledge_search'],
         draftModelConfig: {
           provider: 'mock',
-          model: 'aegis-mock-v1',
+          model: 'ordaris-mock-v1',
           temperature: 0,
           maxSteps: 6,
           maxToolCalls: 3,

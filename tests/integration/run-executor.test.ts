@@ -62,7 +62,7 @@ describe('RUN-001 & RUN-002 & QUEUE-001: Bounded Agent Runtime & PostgreSQL Job 
         draftToolAllowlist: ['calculator', 'knowledge_search'],
         draftModelConfig: {
           provider: 'mock',
-          model: 'aegis-mock-v1',
+          model: 'ordaris-mock-v1',
           temperature: 0,
           maxSteps: 8,
           maxToolCalls: 4,
@@ -212,7 +212,7 @@ describe('RUN-001 & RUN-002 & QUEUE-001: Bounded Agent Runtime & PostgreSQL Job 
         draftToolAllowlist: ['calculator'],
         draftModelConfig: {
           provider: 'mock',
-          model: 'aegis-mock-v1',
+          model: 'ordaris-mock-v1',
           temperature: 0,
           maxSteps: 3,
           maxToolCalls: 4,
@@ -254,7 +254,7 @@ describe('RUN-001 & RUN-002 & QUEUE-001: Bounded Agent Runtime & PostgreSQL Job 
     try {
       const userA = await ensureUser(ctx.db, {
         authSubject: 'sub_tenant_a_owner',
-        email: 'tenant-a@aegis.io',
+        email: 'tenant-a@ordaris.io',
         displayName: 'Tenant A Owner',
       });
       const orgA = await createOrganizationWithOwner(ctx.db, {
@@ -270,7 +270,7 @@ describe('RUN-001 & RUN-002 & QUEUE-001: Bounded Agent Runtime & PostgreSQL Job 
 
       const userB = await ensureUser(ctx.db, {
         authSubject: 'sub_tenant_b_owner',
-        email: 'tenant-b@aegis.io',
+        email: 'tenant-b@ordaris.io',
         displayName: 'Tenant B Owner',
       });
       const orgB = await createOrganizationWithOwner(ctx.db, {

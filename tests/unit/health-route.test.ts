@@ -27,7 +27,7 @@ test('REPO-004: GET /api/v1/health returns 200 OK with { data } envelope and red
 
   const body = await res.json();
   assert.equal(body.data.status, 'ok');
-  assert.equal(body.data.service, 'aegis-runtime');
+  assert.equal(body.data.service, 'ordaris-runtime');
   assert.equal(body.data.requestId, 'req-health-test-001');
   assert.equal(body.data.readiness.database, 'ready');
   assert.equal(body.data.readiness.engine, 'pglite');
@@ -86,4 +86,3 @@ test('REPO-004: GET /api/v1/health returns 503 Problem Details when environment 
   assert.equal(problem.code, 'HEALTH_CHECK_FAILED');
   assert.match(problem.detail, /Invalid environment configuration/);
 });
-

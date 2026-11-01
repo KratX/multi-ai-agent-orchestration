@@ -48,7 +48,7 @@ describe('REPO-005: Foundational Multi-Tenant PostgreSQL Schema', () => {
       .insert(users)
       .values({
         authSubject: 'demo:user_alice',
-        email: 'alice@aegis.local',
+        email: 'alice@ordaris.local',
         displayName: 'Alice Founder',
       })
       .returning();
@@ -121,7 +121,7 @@ describe('REPO-005: Foundational Multi-Tenant PostgreSQL Schema', () => {
   it('rejects invalid membership roles via PostgreSQL CHECK constraint', async () => {
     const [user] = await ctx.db
       .insert(users)
-      .values({ authSubject: 'demo:user_bob', email: 'bob@aegis.local' })
+      .values({ authSubject: 'demo:user_bob', email: 'bob@ordaris.local' })
       .returning();
 
     const [org] = await ctx.db

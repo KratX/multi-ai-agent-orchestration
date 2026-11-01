@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
-import type { AegisDatabase } from '../../db/client';
+import type { OrdarisDatabase } from '../../db/client';
 import {
   agentVersions,
   type AllowedToolName,
@@ -95,7 +95,7 @@ export interface RecordAuditEventInput {
  * Appends an immutable security/governance event to `audit_events` (`AUDIT-001`).
  */
 export async function recordAuditEvent(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   input: RecordAuditEventInput
 ): Promise<AuditEventRow> {
   const [created] = await db
@@ -119,7 +119,7 @@ export async function recordAuditEvent(
  * Lists tenant-scoped audit events. Restricted to `owner` and `admin` roles (`audit.view`).
  */
 export async function listAuditEvents(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   options?: { organizationId?: string; limit?: number }
 ): Promise<AuditEventRow[]> {
@@ -156,7 +156,7 @@ export interface RecordUsageEventInput {
  * Records an honest token and tool invocation usage ledger entry (`USAGE-001`).
  */
 export async function recordUsageEvent(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   input: RecordUsageEventInput
 ): Promise<UsageEventRow> {
   const totalTokens =
@@ -210,7 +210,7 @@ export interface OrganizationUsageSummary {
  * simulated `mock` usage and real `live` provider usage (`USAGE-001`).
  */
 export async function getOrganizationUsageSummary(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   targetOrganizationId?: string
 ): Promise<OrganizationUsageSummary> {
@@ -269,7 +269,7 @@ export interface CreateWorkflowDraftInput {
  * Creates a validated workflow draft (`workflows`) and logs an audit event.
  */
 export async function createWorkflowDraft(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   input: CreateWorkflowDraftInput
 ): Promise<WorkflowRow> {
@@ -320,7 +320,7 @@ export interface UpdateWorkflowDraftInput {
  * Updates a mutable workflow draft without mutating any published `workflow_versions` rows.
  */
 export async function updateWorkflowDraft(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   input: UpdateWorkflowDraftInput
 ): Promise<WorkflowRow> {
@@ -384,7 +384,7 @@ export async function updateWorkflowDraft(
  * Publishes an immutable `workflow_versions` snapshot from the current workflow draft (`WORKFLOW-001`).
  */
 export async function publishWorkflowVersion(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   input: { organizationId: string; workflowId: string }
 ): Promise<{ workflow: WorkflowRow; version: WorkflowVersionRow }> {
@@ -486,7 +486,7 @@ export interface StartWorkflowRunInput {
 }
 
 async function appendWorkflowRunEvent(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   organizationId: string,
   runId: string,
   eventType: RunEventType,
@@ -515,7 +515,7 @@ async function appendWorkflowRunEvent(
 }
 
 async function nextRunStepIndex(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   organizationId: string,
   runId: string
 ): Promise<number> {
@@ -539,7 +539,7 @@ async function nextRunStepIndex(
  * or an `end` node (completing at `succeeded`).
  */
 export async function startWorkflowRun(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   input: StartWorkflowRunInput
 ): Promise<WorkflowRunExecutionResult> {
@@ -647,7 +647,7 @@ export async function startWorkflowRun(
 }
 
 interface AdvanceWorkflowParams {
-  db: AegisDatabase;
+  db: OrdarisDatabase;
   actor: AuthenticatedActor;
   run: RunRow;
   workflowVersion: WorkflowVersionRow;
@@ -1045,7 +1045,7 @@ async function advanceWorkflowExecution(
         agentVersionId: completedRun.agentVersionId,
         providerMode,
         modelId:
-          providerMode === 'live' ? 'gemini-2.5-flash' : 'aegis-mock-v1',
+          providerMode === 'live' ? 'gemini-2.5-flash' : 'ordaris-mock-v1',
         inputTokens: completedRun.promptTokens,
         outputTokens: completedRun.completionTokens,
         totalTokens: completedRun.totalTokens,
@@ -1077,7 +1077,7 @@ export interface DecideApprovalRequestInput {
  * - Authorized `'rejected'` decisions transition the run to `'cancelled'`.
  */
 export async function decideApprovalRequest(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   input: DecideApprovalRequestInput
 ): Promise<{ approval: ApprovalRequestRow; run: RunRow }> {
@@ -1222,7 +1222,7 @@ export async function decideApprovalRequest(
       workflowVersionId: approval.workflowVersionId,
       agentVersionId: cancelledRun.agentVersionId,
       providerMode,
-      modelId: providerMode === 'live' ? 'gemini-2.5-flash' : 'aegis-mock-v1',
+      modelId: providerMode === 'live' ? 'gemini-2.5-flash' : 'ordaris-mock-v1',
       inputTokens: cancelledRun.promptTokens,
       outputTokens: cancelledRun.completionTokens,
       totalTokens: cancelledRun.totalTokens,
@@ -1312,7 +1312,7 @@ export async function decideApprovalRequest(
  * Lists approval requests for an organization (`approval.view`).
  */
 export async function listApprovalRequests(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   organizationId?: string
 ): Promise<ApprovalRequestRow[]> {

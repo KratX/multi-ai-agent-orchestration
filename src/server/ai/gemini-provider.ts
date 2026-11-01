@@ -14,7 +14,7 @@ import {
 } from './model-provider';
 
 /**
- * Phase F+: Ordaris (v1.0.0-demo) Server-Side Free-Tier Cloud AI Providers
+ * Phase F+: Ordaris Runtime (v1.0.0-demo) Server-Side Free-Tier Cloud AI Providers
  *
  * Implements official server-side adapters for:
  * 1. Google Gemini Free Tier (`GeminiModelProvider` — `gemini-3-flash-preview` via `@google/genai`)
@@ -321,7 +321,7 @@ export class GeminiModelProvider implements ModelProvider {
     const configuredModel = input.modelConfig.model;
     const modelName =
       configuredModel &&
-      !configuredModel.startsWith('aegis-mock') &&
+      !configuredModel.startsWith('ordaris-mock') &&
       configuredModel !== 'gemini-3.8-flash'
         ? configuredModel
         : this.defaultModel;
@@ -958,11 +958,11 @@ export class LiveOnlineModelProvider implements ModelProvider {
       component: 'LiveOnlineModelProvider',
       message:
         orderedCandidates.length === 0
-          ? `No Session BYOK or .env API key configured for engine "${this.preferEngine}". Executing via Tier 3 Deterministic Simulation Engine (aegis-mock-v1).`
+          ? `No Session BYOK or .env API key configured for engine "${this.preferEngine}". Executing via Tier 3 Deterministic Simulation Engine (ordaris-mock-v1).`
           : `All configured cloud providers failed (${lastErrorMsg}). Executing via Tier 3 Deterministic Simulation Engine so the run completes safely.`,
       details: {
         requestedEngine: this.preferEngine,
-        executedEngine: 'aegis-mock',
+        executedEngine: 'ordaris-mock',
         resolutionTier: 'deterministic_fallback' satisfies AiResolutionTier,
         configuredProvidersCount: orderedCandidates.length,
       },

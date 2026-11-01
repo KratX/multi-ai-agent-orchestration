@@ -25,7 +25,7 @@ import {
  */
 
 test('Phase B: file-backed PGlite retains organizations, agents, and published versions across restart', async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aegis-pglite-persist-'));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ordaris-pglite-persist-'));
 
   try {
     // Session 1: Create organization, draft agent, and publish v1
@@ -275,7 +275,7 @@ test('Phase E: PostgreSQL composite foreign keys reject direct SQL cross-tenant 
         await ctx.pg.query(
           `INSERT INTO usage_events (
             organization_id, run_id, provider_mode, model_id
-          ) VALUES ($1, $2, 'mock', 'aegis-mock-v1')`,
+          ) VALUES ($1, $2, 'mock', 'ordaris-mock-v1')`,
           [orgB.id, runAId]
         );
       },

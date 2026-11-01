@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -1269,6 +1271,87 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
           req.body ?? {}
         );
         res.status(201).json({ data: imported });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // 9. Complete Self-Contained Repository Export (`GET /api/v1/demo/export-files`)
+  app.get(
+    '/api/v1/demo/export-files',
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const rootDir = process.cwd();
+        const collected: Array<{ path: string; content: string }> = [];
+
+        const stripPreviewMarkers = (raw: string): string =>
+          raw
+            .replace(
+              /[ \t]*\/\* __PREVIEW_ZIP_START__ \*\/[\s\S]*?\/\* __PREVIEW_ZIP_END__ \*\/[ \t]*\r?\n?/g,
+              ''
+            )
+            .replace(
+              /[ \t]*\{\/\* __PREVIEW_ZIP_START__ \*\/\}[\s\S]*?\{\/\* __PREVIEW_ZIP_END__ \*\/\}[ \t]*\r?\n?/g,
+              ''
+            );
+
+        const rootFiles = [
+          'package.json',
+          'tsconfig.json',
+          'vite.config.ts',
+          'index.html',
+          'server.ts',
+          '.env.example',
+          'README.md',
+          'metadata.json',
+        ];
+
+        for (const rel of rootFiles) {
+          const full = path.join(rootDir, rel);
+          if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+            const content = fs.readFileSync(full, 'utf8');
+            collected.push({ path: rel, content });
+          }
+        }
+
+        const walkDir = (dirRel: string) => {
+          const absDir = path.join(rootDir, dirRel);
+          if (!fs.existsSync(absDir)) return;
+          const entries = fs.readdirSync(absDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.name.startsWith('.')) continue;
+            const childRel = path.posix.join(dirRel, entry.name);
+            if (entry.isDirectory()) {
+              walkDir(childRel);
+            } else if (
+              entry.isFile() &&
+              /\.(ts|tsx|css|md|json|sql|html)$/i.test(entry.name)
+            ) {
+              if (childRel === 'src/utils/zip.ts') continue;
+              const rawContent = fs.readFileSync(
+                path.join(rootDir, childRel),
+                'utf8'
+              );
+              const content =
+                childRel === 'src/App.tsx'
+                  ? stripPreviewMarkers(rawContent)
+                  : rawContent;
+              collected.push({ path: childRel, content });
+            }
+          }
+        };
+
+        walkDir('src');
+        walkDir('tests');
+        walkDir('docs');
+
+        res.status(200).json({
+          data: {
+            count: collected.length,
+            files: collected,
+          },
+        });
       } catch (err) {
         next(err);
       }

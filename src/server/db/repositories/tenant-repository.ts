@@ -1,5 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
-import type { AegisDatabase } from '../client';
+import type { OrdarisDatabase } from '../client';
 import {
   organizations,
   users,
@@ -83,7 +83,7 @@ export interface OrganizationMemberDetail {
  * Idempotently provisions or updates a user record by `authSubject`.
  */
 export async function ensureUser(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   input: EnsureUserInput
 ): Promise<UserRow> {
   const trimmedSubject = input.authSubject.trim();
@@ -137,7 +137,7 @@ export async function ensureUser(
  * atomic PostgreSQL transaction.
  */
 export async function createOrganizationWithOwner(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   input: CreateOrganizationInput
 ): Promise<{ organization: OrganizationRow; membership: MembershipRow }> {
   const cleanName = input.name.trim();
@@ -200,7 +200,7 @@ export async function createOrganizationWithOwner(
  * and returns a trusted `AuthenticatedActor` context. Returns `null` if no membership exists.
  */
 export async function resolveActorContext(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   userId: string,
   organizationId: string
 ): Promise<AuthenticatedActor | null> {
@@ -230,7 +230,7 @@ export async function resolveActorContext(
  * Lists all organizations that `userId` belongs to, ordered by creation time.
  */
 export async function listUserOrganizations(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   userId: string
 ): Promise<OrganizationWithRole[]> {
   const rows = await db
@@ -250,7 +250,7 @@ export async function listUserOrganizations(
  * Fetches an organization by ID only if `actor` is authorized for `org.view` on that tenant.
  */
 export async function getOrganizationForActor(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   targetOrganizationId: string
 ): Promise<OrganizationRow> {
@@ -281,7 +281,7 @@ export async function getOrganizationForActor(
  * Lists all members of `organizationId` after verifying `actor` has `member.view` permission.
  */
 export async function listOrganizationMembers(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string
 ): Promise<OrganizationMemberDetail[]> {
@@ -308,7 +308,7 @@ export async function listOrganizationMembers(
 }
 
 async function countOrganizationOwners(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   organizationId: string
 ): Promise<number> {
   const [result] = await db
@@ -333,7 +333,7 @@ async function countOrganizationOwners(
  * 2. Last-owner safeguard: blocks demoting the last remaining `owner` of an organization.
  */
 export async function upsertMembership(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   input: {
     organizationId: string;
@@ -412,7 +412,7 @@ export async function upsertMembership(
  * 2. Last-owner safeguard: blocks removing the last remaining `owner` of an organization.
  */
 export async function removeMembership(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   targetUserId: string

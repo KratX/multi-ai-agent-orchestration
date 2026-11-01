@@ -18,11 +18,11 @@ import {
 import { RuntimeWorker } from './src/server/worker/main';
 
 /**
- * Full-Stack Aegis Runtime Server (`server.ts`)
+ * Full-Stack Ordaris Runtime Server (`server.ts`)
  *
  * Starts on port 3000 (`0.0.0.0`):
  * 1. Loads `.env` automatically via `dotenv/config` and validates configuration (`parseEnv`).
- * 2. Initializes persistent PGlite PostgreSQL (`PGLITE_DATA_DIR`, default `.local/aegis-db`).
+ * 2. Initializes persistent PGlite PostgreSQL (`PGLITE_DATA_DIR`, default `.local/ordaris-db`).
  * 3. Seeds the Flagship Multi-Tenant Workspace on first boot if empty.
  * 4. Starts the background `RuntimeWorker` polling loop (`FOR UPDATE SKIP LOCKED`) wired to
  *    free-tier cloud AI (`Gemini 3 Flash`, `ChatGPT gpt-4o-mini`, `Claude 3.5 Haiku`, `Grok 2`)
@@ -30,7 +30,7 @@ import { RuntimeWorker } from './src/server/worker/main';
  * 5. Mounts all `/api/v1/*` routes (including `/api/v1/logs`) and serves the Vite React UI.
  */
 
-export async function startAegisServer(port = 3000) {
+export async function startOrdarisServer(port = 3000) {
   const env = parseEnv(process.env);
   const dbContext = await getSharedDatabase({ dataDir: env.PGLITE_DATA_DIR });
 
@@ -44,8 +44,8 @@ export async function startAegisServer(port = 3000) {
     level: keyStatus.anyConfigured ? 'INFO' : 'WARN',
     component: 'server.ts',
     message: keyStatus.anyConfigured
-      ? `Aegis Runtime booted with active cloud AI provider (${modelProvider.providerName}).`
-      : `Aegis Runtime booted with 0 cloud API keys in .env; using local fallback until GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or XAI_API_KEY is added to .env.`,
+      ? `Ordaris Runtime booted with active cloud AI provider (${modelProvider.providerName}).`
+      : `Ordaris Runtime booted with 0 cloud API keys in .env; using local fallback until GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or XAI_API_KEY is added to .env.`,
     details: {
       storageMode: dbContext.storageMode,
       logFilePath: LOG_FILE_PATH,
@@ -83,7 +83,7 @@ export async function startAegisServer(port = 3000) {
 
   const httpServer = app.listen(port, '0.0.0.0', () => {
     process.stdout.write(
-      `Aegis Runtime server listening on http://localhost:${port} (AI=${modelProvider.providerName}, storage=${dbContext.storageMode}, logs=${LOG_FILE_PATH})\n`
+      `Ordaris Runtime server listening on http://localhost:${port} (AI=${modelProvider.providerName}, storage=${dbContext.storageMode}, logs=${LOG_FILE_PATH})\n`
     );
   });
 
@@ -99,15 +99,17 @@ export async function startAegisServer(port = 3000) {
   return { app, httpServer, worker, dbContext, shutdown };
 }
 
+export const startAegisServer = startOrdarisServer;
+
 const isDirectExecution =
   process.argv[1] &&
   fileURLToPath(import.meta.url).endsWith(process.argv[1].replace(/^file:\/\//, ''));
 
 if (isDirectExecution) {
   const port = Number(process.env.PORT ?? 3000) || 3000;
-  startAegisServer(port).catch((error) => {
+  startOrdarisServer(port).catch((error) => {
     process.stderr.write(
-      `Failed to start Aegis Runtime server: ${error instanceof Error ? error.message : String(error)}\n`
+      `Failed to start Ordaris Runtime server: ${error instanceof Error ? error.message : String(error)}\n`
     );
     process.exit(1);
   });

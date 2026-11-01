@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
-import type { AegisDatabase } from '../client';
+import type { OrdarisDatabase } from '../client';
 import {
   agents,
   agentVersions,
@@ -173,7 +173,7 @@ export function computeAgentSnapshotHash(snapshot: {
  * Creates a new mutable Agent draft in `organizationId`.
  */
 export async function createAgentDraft(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   input: CreateAgentDraftInput
 ): Promise<AgentRow> {
@@ -246,7 +246,7 @@ export async function createAgentDraft(
  * Fetches a single agent scoped to `organizationId` after verifying `agent.view` permission.
  */
 export async function getAgentForActor(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   agentId: string
@@ -278,7 +278,7 @@ export async function getAgentForActor(
  * Lists all agents belonging to `organizationId`, ordered by most recently updated.
  */
 export async function listOrganizationAgents(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string
 ): Promise<AgentRow[]> {
@@ -299,7 +299,7 @@ export async function listOrganizationAgents(
  * previously published `agent_versions` snapshots.
  */
 export async function updateAgentDraft(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   input: UpdateAgentDraftInput
 ): Promise<AgentRow> {
@@ -378,7 +378,7 @@ export async function updateAgentDraft(
  * row (`version_number = latest_version_number + 1`) and marks the agent `'active'`.
  */
 export async function publishAgentVersion(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   agentId: string
@@ -472,7 +472,7 @@ export async function publishAgentVersion(
  * Active runs call this so they never read mutable draft columns on `agents`.
  */
 export async function getAgentVersionForActor(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   agentVersionId: string
@@ -509,7 +509,7 @@ export async function getAgentVersionForActor(
  * Lists all immutable published versions for `agentId` in descending version order (`v3, v2, v1`).
  */
 export async function listAgentVersions(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   agentId: string
@@ -539,7 +539,7 @@ export async function listAgentVersions(
  * Archives an agent (`status = 'archived'`). Requires `agent.delete` permission (`owner` or `admin`).
  */
 export async function archiveAgent(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   agentId: string

@@ -47,7 +47,7 @@ test('RAG-002: chunkDocumentText splits Markdown deterministically with overlap 
   const markdown = [
     '# Security Architecture',
     '',
-    'Aegis Runtime enforces strict multi-tenant isolation on every PostgreSQL query and composite foreign key.',
+    'Ordaris Runtime enforces strict multi-tenant isolation on every PostgreSQL query and composite foreign key.',
     '',
     '## Tool Gateway Controls',
     '',

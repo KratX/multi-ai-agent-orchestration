@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseEnv, getPublicEnvSummary } from '../../src/server/config/env';
+import {
+  signAuthToken,
+  verifyAuthToken,
+  signOAuthState,
+  verifyOAuthState,
+} from '../../src/server/http/auth';
 
 test('REPO-003: parseEnv succeeds in default AI_MODE="demo" with zero API keys', () => {
   const env = parseEnv({
@@ -72,6 +78,79 @@ test('REPO-003: parseEnv rejects default AUTH_SECRET in production mode', () => 
   );
 });
 
+test('REPO-003: parseEnv blocks DEMO_MODE="true" in production mode and defaults DEMO_MODE to false in production', () => {
+  assert.throws(
+    () =>
+      parseEnv({
+        NODE_ENV: 'production',
+        AI_MODE: 'demo',
+        AUTH_SECRET: 'prod-strong-random-auth-secret-9999',
+        DEMO_MODE: 'true',
+      }),
+    /DEMO_MODE authentication bypass cannot be enabled when NODE_ENV="production"/
+  );
+
+  const prodEnv = parseEnv({
+    NODE_ENV: 'production',
+    AI_MODE: 'demo',
+    AUTH_SECRET: 'prod-strong-random-auth-secret-9999',
+  });
+  assert.equal(prodEnv.NODE_ENV, 'production');
+  assert.equal(prodEnv.DEMO_MODE, false);
+});
+
+test('AUTH-001: signAuthToken and verifyAuthToken enforce HMAC-SHA256 signature and expiration with AUTH_SECRET', () => {
+  const secret = 'production-auth-secret-at-least-16-chars';
+  const token = signAuthToken(
+    {
+      userId: 'user-uuid-1',
+      organizationId: 'org-uuid-1',
+      role: 'owner',
+      personaId: 'acme-owner',
+      expiresInSeconds: 3600,
+    },
+    secret
+  );
+
+  const verified = verifyAuthToken(token, secret);
+  assert.ok(verified);
+  assert.equal(verified.sub, 'user-uuid-1');
+  assert.equal(verified.org, 'org-uuid-1');
+  assert.equal(verified.role, 'owner');
+
+  // Wrong secret must fail verification
+  assert.equal(verifyAuthToken(token, 'wrong-secret-at-least-16-chars'), null);
+
+  // Tampered payload must fail verification
+  const parts = token.split('.');
+  const tamperedPayload = Buffer.from(
+    JSON.stringify({ ...verified, org: 'org-uuid-2' }),
+    'utf8'
+  ).toString('base64url');
+  assert.equal(
+    verifyAuthToken(`${parts[0]}.${tamperedPayload}.${parts[2]}`, secret),
+    null
+  );
+
+  // Expired token must fail verification
+  const expiredToken = signAuthToken(
+    {
+      userId: 'user-uuid-1',
+      organizationId: 'org-uuid-1',
+      role: 'owner',
+      expiresInSeconds: -10,
+    },
+    secret
+  );
+  assert.equal(verifyAuthToken(expiredToken, secret), null);
+
+  // OAuth CSRF state signing & verification
+  const state = signOAuthState('/studio', secret);
+  const verifiedState = verifyOAuthState(state, secret);
+  assert.deepEqual(verifiedState, { redirectAfter: '/studio' });
+  assert.equal(verifyOAuthState(state, 'wrong-secret'), null);
+});
+
 test('REPO-003: getPublicEnvSummary redacts raw secret values and exposes only safe booleans and limits', () => {
   const env = parseEnv({
     AI_MODE: 'provider',
@@ -90,4 +169,3 @@ test('REPO-003: getPublicEnvSummary redacts raw secret values and exposes only s
   assert.equal(serialized.includes('custom-secret-with-at-least-16-chars'), false);
   assert.equal(serialized.includes('secret_pass'), false);
 });
-

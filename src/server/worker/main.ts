@@ -5,7 +5,7 @@ import { createModelProvider, type ModelProvider } from '../ai/model-provider';
 import {
   closeSharedDatabase,
   getSharedDatabase,
-  type AegisDatabase,
+  type OrdarisDatabase,
 } from '../db/client';
 import {
   processNextQueuedJob,
@@ -26,7 +26,7 @@ import type { JobQueueRow, RunRow } from '../db/schema/runs';
  */
 
 export interface RuntimeWorkerOptions {
-  db: AegisDatabase;
+  db: OrdarisDatabase;
   workerId?: string;
   pollIntervalMs?: number;
   leaseDurationMs?: number;
@@ -39,7 +39,7 @@ export interface RuntimeWorkerOptions {
 
 export class RuntimeWorker {
   public readonly workerId: string;
-  private readonly db: AegisDatabase;
+  private readonly db: OrdarisDatabase;
   private readonly pollIntervalMs: number;
   private readonly leaseDurationMs: number;
   private readonly concurrency: number;

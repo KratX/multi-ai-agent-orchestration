@@ -11,7 +11,7 @@ import type { ReadinessCheckResult } from '../../../app/api/v1/health/route';
 
 export interface LivenessPayload {
   status: 'alive';
-  service: 'aegis-runtime';
+  service: 'ordaris-runtime';
   version: string;
   timestamp: string;
   uptimeSeconds: number;
@@ -20,7 +20,7 @@ export interface LivenessPayload {
 export function evaluateLiveness(): LivenessPayload {
   return {
     status: 'alive',
-    service: 'aegis-runtime',
+    service: 'ordaris-runtime',
     version: '0.1.0',
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),

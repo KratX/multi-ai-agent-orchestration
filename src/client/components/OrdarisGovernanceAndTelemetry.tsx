@@ -42,10 +42,14 @@ export interface EvalSuiteItem {
     caseResults?: Array<{
       caseId?: string;
       name?: string;
+      prompt?: string;
+      assertionType?: string;
+      expectedValue?: string;
       passed: boolean;
       score: number;
       runId?: string;
       details?: string;
+      reason?: string;
       assertionResults?: Array<{
         type: string;
         passed: boolean;
@@ -117,29 +121,27 @@ const RBAC_23_ACTIONS: Array<{
   developer: boolean;
   viewer: boolean;
 }> = [
-  { action: 'org:read', category: 'Organization', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'org:update', category: 'Organization', owner: true, admin: true, developer: false, viewer: false },
-  { action: 'org:delete', category: 'Organization', owner: true, admin: false, developer: false, viewer: false },
-  { action: 'members:read', category: 'RBAC & Team', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'members:invite', category: 'RBAC & Team', owner: true, admin: true, developer: false, viewer: false },
-  { action: 'members:update_role', category: 'RBAC & Team', owner: true, admin: false, developer: false, viewer: false },
-  { action: 'members:remove', category: 'RBAC & Team', owner: true, admin: true, developer: false, viewer: false },
-  { action: 'agents:read', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'agents:create', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'agents:update', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'agents:publish', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'agents:delete', category: 'Agent Studio', owner: true, admin: true, developer: false, viewer: false },
-  { action: 'runs:read', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'runs:create', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'runs:cancel', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'knowledge:read', category: 'Hybrid RAG', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'knowledge:upload', category: 'Hybrid RAG', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'knowledge:delete', category: 'Hybrid RAG', owner: true, admin: true, developer: false, viewer: false },
-  { action: 'workflows:read', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'workflows:execute', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: false },
-  { action: 'approvals:read', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: true },
-  { action: 'approvals:decide', category: 'DAG & HITL', owner: true, admin: true, developer: false, viewer: false },
-  { action: 'audit:read', category: 'Governance & Evals', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'org.view', category: 'Organization', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'org.manage', category: 'Organization', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'org.delete', category: 'Organization', owner: true, admin: false, developer: false, viewer: false },
+  { action: 'member.view', category: 'RBAC & Team', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'member.manage', category: 'RBAC & Team', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'agent.view', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'agent.create', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'agent.edit', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'agent.publish', category: 'Agent Studio', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'agent.delete', category: 'Agent Studio', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'run.view', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'run.execute', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'run.cancel', category: 'Execution & SSE', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'knowledge.view', category: 'Hybrid RAG', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'knowledge.manage', category: 'Hybrid RAG', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'workflow.view', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: true },
+  { action: 'workflow.manage', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'workflow.execute', category: 'DAG & HITL', owner: true, admin: true, developer: true, viewer: false },
+  { action: 'workflow.approve', category: 'DAG & HITL', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'audit.view', category: 'Governance & Evals', owner: true, admin: true, developer: false, viewer: false },
+  { action: 'eval.manage', category: 'Governance & Evals', owner: true, admin: true, developer: true, viewer: false },
 ];
 
 function computeAuditSeal(evt: AuditLedgerEvent): string {
@@ -179,6 +181,7 @@ interface OrdarisGovernanceAndFinopsProps {
 
 export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinopsProps> = ({
   activeActorRole,
+  activeOrgSlug,
   activeOrgName,
   evalSuites,
   usageSummary,
@@ -234,7 +237,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         onNotify(
           `Eval Run Blocked (HTTP ${res.status}): ${json?.error?.message || json?.detail || 'Forbidden'}`,
           'error',
-          `Active Role: ${activeActorRole.toUpperCase()} • Required Permission: evals:run • Logged to Security Audit Ledger.`
+          `Active Role: ${activeActorRole.toUpperCase()} • Required Permission: eval.manage • Logged to Security Audit Ledger.`
         );
         await onWorkspaceRefresh();
         return;
@@ -259,6 +262,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
     emailOverride?: string,
     nameOverride?: string,
     roleOverride?: 'owner' | 'admin' | 'developer' | 'viewer',
+    personaOverride?: string,
   ) => {
     setSavingMember(true);
     try {
@@ -267,8 +271,14 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         displayName: (nameOverride ?? newMemberName).trim(),
         role: roleOverride ?? newMemberRole,
       };
+      const headers: Record<string, string> = {};
+      if (personaOverride) {
+        headers['x-actor-id'] = personaOverride;
+        headers['x-demo-actor'] = personaOverride;
+      }
       const res = await apiFetch('/api/v1/members', {
         method: 'POST',
+        headers,
         body: JSON.stringify(payload),
       });
       const json = await res.json();
@@ -276,7 +286,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         onNotify(
           `RBAC / Governance Safeguard Blocked (HTTP ${res.status})`,
           'error',
-          `${json?.error?.message || json?.detail || 'Operation denied'} • Active Role: ${activeActorRole.toUpperCase()}`
+          `${json?.error?.message || json?.detail || 'Operation denied'} • Tested Actor: ${personaOverride ? personaOverride.toUpperCase() : activeActorRole.toUpperCase()}`
         );
         await onWorkspaceRefresh();
         return;
@@ -411,57 +421,57 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
   return (
     <div className="space-y-6">
       {/* Top Sub-Tab Selector Bar */}
-      <div className="rounded-2xl border border-slate-800/90 bg-slate-900/75 p-4 flex flex-wrap items-center justify-between gap-3.5 shadow-xl">
-        <div className="flex flex-wrap items-center gap-2.5">
+      <div className="rounded-2xl border border-slate-800/90 bg-slate-900/75 p-3.5 flex flex-wrap xl:flex-nowrap items-center justify-between gap-2.5 shadow-xl">
+        <div className="flex flex-wrap xl:flex-nowrap items-center gap-2">
           <button
             type="button"
             onClick={() => setSubTab('evals')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
               subTab === 'evals'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
                 : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 border border-slate-800'
             }`}
           >
-            <Award className="w-4 h-4" />
+            <Award className="w-4 h-4 shrink-0" />
             <span>1. Evals &amp; Regression Gate</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('finops')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
               subTab === 'finops'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
                 : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 border border-slate-800'
             }`}
           >
-            <DollarSign className="w-4 h-4" />
+            <DollarSign className="w-4 h-4 shrink-0" />
             <span>2. FinOps Ledger &amp; Scale Calculator</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('rbac')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
               subTab === 'rbac'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
                 : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 border border-slate-800'
             }`}
           >
-            <Users className="w-4 h-4" />
-            <span>3. Team RBAC &amp; 23-Action Matrix ({members.length})</span>
+            <Users className="w-4 h-4 shrink-0" />
+            <span>3. Team RBAC &amp; Policy Matrix ({members.length})</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('audit')}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
               subTab === 'audit'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
                 : 'bg-slate-950/80 text-slate-300 hover:bg-slate-800 border border-slate-800'
             }`}
           >
-            <ShieldCheck className="w-4 h-4" />
+            <ShieldCheck className="w-4 h-4 shrink-0" />
             <span>
               4. Security Audit Ledger ({auditEvents.filter((e) => e.outcome === 'denied').length} Denied)
             </span>
@@ -471,9 +481,9 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         <button
           type="button"
           onClick={handleRunIsolationVerifier}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs sm:text-sm font-bold transition-all"
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-bold whitespace-nowrap shrink-0 transition-all"
         >
-          <ShieldCheck className="w-4 h-4" />
+          <ShieldCheck className="w-4 h-4 shrink-0" />
           <span>Verify 4-Point Tenant Isolation</span>
         </button>
       </div>
@@ -594,14 +604,14 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                           <div className="flex items-start justify-between gap-2">
                             <div>
                               <div className="text-xs font-bold text-white">
-                                Case #{idx + 1}: {c.name || `Golden Assertion Case ${idx + 1}`}
+                                Case #{idx + 1}: {c.name || c.prompt || `Golden Assertion Case ${idx + 1}`}
                               </div>
-                              <div className="text-[11px] text-slate-400 mt-0.5">
-                                {c.details || 'Verified tool invocation, grounded citation quote, and domain keywords.'}
+                              <div className="text-[11px] text-slate-400 mt-0.5 font-mono">
+                                {c.details || c.reason || 'Verified tool invocation, grounded citation quote, and domain keywords.'}
                               </div>
                             </div>
                             <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold shrink-0 ${
                                 c.passed
                                   ? 'bg-emerald-500/20 text-emerald-300'
                                   : 'bg-rose-500/20 text-rose-300'
@@ -613,15 +623,23 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
 
                           <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/60">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="px-1.5 py-0.5 rounded bg-slate-950 text-[10px] font-mono text-emerald-300 border border-slate-800">
-                                ✓ tool_called
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded bg-slate-950 text-[10px] font-mono text-emerald-300 border border-slate-800">
-                                ✓ citation_required
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded bg-slate-950 text-[10px] font-mono text-emerald-300 border border-slate-800">
-                                ✓ contains
-                              </span>
+                              {c.assertionType ? (
+                                <span className="px-1.5 py-0.5 rounded bg-slate-950 text-[10px] font-mono text-emerald-300 border border-slate-800">
+                                  ✓ {c.assertionType}{c.expectedValue ? ` (${c.expectedValue})` : ''}
+                                </span>
+                              ) : (
+                                <>
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-950 text-[10px] font-mono text-emerald-300 border border-slate-800">
+                                    ✓ tool_called
+                                  </span>
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-950 text-[10px] font-mono text-emerald-300 border border-slate-800">
+                                    ✓ citation_required
+                                  </span>
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-950 text-[10px] font-mono text-emerald-300 border border-slate-800">
+                                    ✓ contains
+                                  </span>
+                                </>
+                              )}
                             </div>
 
                             {c.runId && onSelectRunToInspect && (
@@ -775,7 +793,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
               {[
                 {
-                  name: 'Gemini 2.5 Flash',
+                  name: 'Gemini 3 Flash',
                   ratePerMillion: 0.15,
                   badge: 'Recommended Production',
                 },
@@ -868,7 +886,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         </div>
       )}
 
-      {/* SUB-TAB 4C: TEAM & RBAC MEMBERSHIP + 23-ACTION POLICY MATRIX */}
+      {/* SUB-TAB 4C: TEAM & RBAC MEMBERSHIP + 21-ACTION POLICY MATRIX */}
       {subTab === 'rbac' && (
         <div className="space-y-5">
           <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 space-y-4">
@@ -890,7 +908,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-indigo-300 text-xs font-bold transition-all"
                 >
                   <Eye className="w-3.5 h-3.5" />
-                  <span>Inspect 23-Action RBAC Policy Matrix</span>
+                  <span>Inspect 21-Action RBAC Policy Matrix</span>
                 </button>
               </div>
             </div>
@@ -903,7 +921,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                     Boundary Test 1: Privilege Escalation Guard (`403 Forbidden`)
                   </div>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Attempts to grant `owner` privileges as the current persona (`{activeActorRole}`). Only `Owner` can assign `Owner`.
+                    Simulates a non-owner (`Admin` / `{activeActorRole === 'owner' ? 'admin' : activeActorRole}`) attempting to grant `owner` privileges. Only `Owner` can assign `Owner`.
                   </p>
                 </div>
                 <button
@@ -914,11 +932,16 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                       'escalation.probe@ordaris.runtime',
                       'Escalation Probe',
                       'owner',
+                      activeActorRole === 'owner'
+                        ? activeOrgSlug === 'beta-logistics'
+                          ? 'beta-admin'
+                          : 'acme-admin'
+                        : undefined,
                     )
                   }
                   className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-mono font-bold shrink-0"
                 >
-                  Test Owner Grant
+                  Test Owner Grant (403)
                 </button>
               </div>
 
@@ -984,10 +1007,10 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   }
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono"
                 >
-                  <option value="developer">developer (16/23 perms)</option>
-                  <option value="viewer">viewer (9/23 perms)</option>
-                  <option value="admin">admin (21/23 perms)</option>
-                  <option value="owner">owner (23/23 perms)</option>
+                  <option value="developer">developer (14/21 perms)</option>
+                  <option value="viewer">viewer (8/21 perms)</option>
+                  <option value="admin">admin (19/21 perms)</option>
+                  <option value="owner">owner (21/21 perms)</option>
                 </select>
               </div>
               <button
@@ -1178,14 +1201,14 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         </div>
       )}
 
-      {/* MODAL 1: 23-Action RBAC Policy Matrix */}
+      {/* MODAL 1: 21-Action RBAC Policy Matrix */}
       {showPolicyMatrixModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl">
             <div className="p-4 border-b border-slate-800 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-white">
-                  Ordaris 23-Action Enterprise RBAC Policy Matrix
+                  Ordaris 21-Action Enterprise RBAC Policy Matrix
                 </h3>
                 <p className="text-xs text-slate-400">
                   Enforced centrally by `src/server/policies/authorization.ts` across all HTTP routes.
@@ -1205,10 +1228,10 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   <tr className="border-b border-slate-800 text-slate-400">
                     <th className="py-2">Permission Action</th>
                     <th className="py-2">Domain</th>
-                    <th className="py-2 text-center">Owner (23/23)</th>
-                    <th className="py-2 text-center">Admin (21/23)</th>
-                    <th className="py-2 text-center">Developer (16/23)</th>
-                    <th className="py-2 text-center">Viewer (9/23)</th>
+                    <th className="py-2 text-center">Owner (21/21)</th>
+                    <th className="py-2 text-center">Admin (19/21)</th>
+                    <th className="py-2 text-center">Developer (14/21)</th>
+                    <th className="py-2 text-center">Viewer (8/21)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">

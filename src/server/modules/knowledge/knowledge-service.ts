@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
-import type { AegisDatabase } from '../../db/client';
+import type { OrdarisDatabase } from '../../db/client';
 import {
   ALLOWED_DOCUMENT_MIME_TYPES,
   documentChunks,
@@ -181,7 +181,7 @@ function computeLexicalOverlapScore(
  * an atomic PostgreSQL transaction.
  */
 export async function ingestKnowledgeDocument(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   input: IngestKnowledgeDocumentInput,
   options: IngestKnowledgeDocumentOptions = {}
@@ -353,7 +353,7 @@ export async function ingestKnowledgeDocument(
  * Strictly enforces `WHERE document_chunks.organization_id = $1 AND knowledge_documents.organization_id = $1`.
  */
 export async function searchKnowledgeChunks(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   params: SearchKnowledgeChunksParams,
   options: SearchKnowledgeChunksOptions = {}
 ): Promise<RankedKnowledgeChunk[]> {
@@ -473,11 +473,11 @@ export async function searchKnowledgeChunks(
 }
 
 /**
- * Creates a `KnowledgeSearchRetriever` function bound to PostgreSQL (`AegisDatabase`)
+ * Creates a `KnowledgeSearchRetriever` function bound to PostgreSQL (`OrdarisDatabase`)
  * for injection into `ToolGateway` (`knowledge_search` tool).
  */
 export function createTenantKnowledgeRetriever(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   options: SearchKnowledgeChunksOptions & {
     wrapUntrustedDelimiters?: boolean;
     minScore?: number;
@@ -510,7 +510,7 @@ export function createTenantKnowledgeRetriever(
  * Lists all knowledge documents belonging to `organizationId` (newest first).
  */
 export async function listKnowledgeDocuments(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   organizationId: string
 ): Promise<KnowledgeDocumentRow[]> {
@@ -531,7 +531,7 @@ export async function listKnowledgeDocuments(
  * Enforces cross-tenant `404` anti-enumeration (`Threat T-01`).
  */
 export async function getKnowledgeDocumentWithChunks(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   organizationId: string,
   documentId: string
@@ -586,7 +586,7 @@ export async function getKnowledgeDocumentWithChunks(
  * Enforces `document.delete` RBAC and returns `404` if the document belongs to another tenant.
  */
 export async function deleteKnowledgeDocument(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor,
   organizationId: string,
   documentId: string

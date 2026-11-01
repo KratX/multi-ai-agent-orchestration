@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
 import { appendRuntimeLog } from '../../config/env';
-import type { AegisDatabase } from '../../db/client';
+import type { OrdarisDatabase } from '../../db/client';
 import {
   agents,
   agentVersions,
@@ -127,7 +127,7 @@ export interface RunDetailsResult {
 }
 
 async function appendRunEvent(
-  txOrDb: AegisDatabase,
+  txOrDb: OrdarisDatabase,
   params: {
     organizationId: string;
     runId: string;
@@ -164,7 +164,7 @@ async function appendRunEvent(
  * and idempotent deduplication when `(organizationId, idempotencyKey)` is repeated.
  */
 export async function enqueueAgentRun(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   input: EnqueueAgentRunInput
 ): Promise<EnqueueAgentRunResult> {
@@ -345,7 +345,7 @@ export async function enqueueAgentRun(
  * Increments `attempts`, sets `status = 'locked'`, and assigns a lease expiration timestamp.
  */
 export async function claimNextPendingJob(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   workerId = 'worker-local-1',
   leaseDurationMs = DEFAULT_JOB_LEASE_MS
 ): Promise<JobQueueRow | null> {
@@ -390,7 +390,7 @@ export async function claimNextPendingJob(
  * Transitions jobs with remaining attempts back to `'pending'` and exhausted jobs to `'dead_letter'`.
  */
 export async function recoverExpiredJobLeases(
-  db: AegisDatabase
+  db: OrdarisDatabase
 ): Promise<{ requeuedCount: number; deadLetteredCount: number }> {
   const requeued = await db.execute(sql`
     UPDATE job_queue
@@ -438,7 +438,7 @@ export async function recoverExpiredJobLeases(
  * (`status = 'pending'`) or transitions it to `'dead_letter'` when `attempts >= maxAttempts`.
  */
 export async function failClaimedJob(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   jobId: string,
   errorMessage: string,
   retryBackoffMs = 0
@@ -486,7 +486,7 @@ export async function failClaimedJob(
  * - Records every step in `run_steps` and emits monotonic `run_events`.
  */
 export async function executeAgentRun(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   runId: string,
   options: ExecuteAgentRunOptions = {}
 ): Promise<RunRow> {
@@ -1035,7 +1035,7 @@ export async function executeAgentRun(
  * and executes its associated `runs` record (`QUEUE-002`).
  */
 export async function processNextQueuedJob(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   options: ProcessNextJobOptions = {}
 ): Promise<{ job: JobQueueRow; run: RunRow } | null> {
   const claimedJob = await claimNextPendingJob(
@@ -1066,7 +1066,7 @@ export async function processNextQueuedJob(
  * Cancels an active or queued run (`run.cancel` RBAC action).
  */
 export async function cancelAgentRun(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   runId: string
@@ -1146,7 +1146,7 @@ export async function cancelAgentRun(
  * and ordered `run_events`. Strictly scoped to `organizationId` (`Threat T-01`).
  */
 export async function getRunDetailsForActor(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   runId: string
@@ -1218,7 +1218,7 @@ export async function getRunDetailsForActor(
  * Lists `run_events` with `sequence_no > afterSequence` for SSE reconnect replay (`Last-Event-ID`).
  */
 export async function listRunEventsAfterSequence(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   runId: string,
@@ -1261,7 +1261,7 @@ export async function listRunEventsAfterSequence(
  * Lists recent runs for an organization in descending creation order.
  */
 export async function listOrganizationRuns(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   limit = 50

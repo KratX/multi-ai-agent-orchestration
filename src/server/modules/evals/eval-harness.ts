@@ -1,5 +1,5 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
-import type { AegisDatabase } from '../../db/client';
+import type { OrdarisDatabase } from '../../db/client';
 import {
   agents,
   agentVersions,
@@ -307,7 +307,7 @@ export interface EvalSuiteWithCases {
  * Creates a tenant-isolated evaluation suite and its ordered test cases (`EVAL-001`).
  */
 export async function createEvalSuite(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   input: CreateEvalSuiteInput
 ): Promise<EvalSuiteWithCases> {
@@ -396,7 +396,7 @@ export async function createEvalSuite(
       createdCases.push(createdCase!);
     }
 
-    await recordAuditEvent(tx as unknown as AegisDatabase, {
+    await recordAuditEvent(tx as unknown as OrdarisDatabase, {
       organizationId: input.organizationId,
       actorUserId: actor!.userId,
       actorRole: actor!.role,
@@ -422,7 +422,7 @@ export async function createEvalSuite(
  * Fetches an evaluation suite and its ordered cases for the active tenant.
  */
 export async function getEvalSuiteWithCases(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string,
   suiteId: string
@@ -466,7 +466,7 @@ export async function getEvalSuiteWithCases(
  * Lists evaluation suites for an organization.
  */
 export async function listEvalSuites(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   organizationId: string
 ): Promise<EvalSuiteRow[]> {
@@ -505,7 +505,7 @@ export interface EvalExperimentResultDetails {
  * Executes an automated evaluation experiment against a pinned `agent_versions` snapshot (`EVAL-001`).
  */
 export async function runEvalExperiment(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   input: RunEvalExperimentInput,
   options?: RunEvalExperimentOptions
@@ -739,7 +739,7 @@ export interface ExperimentComparisonReport {
  * and identifies exact per-case regressions or improvements (`EVAL-001`).
  */
 export async function compareEvalExperiments(
-  db: AegisDatabase,
+  db: OrdarisDatabase,
   actor: AuthenticatedActor | null | undefined,
   input: {
     organizationId: string;

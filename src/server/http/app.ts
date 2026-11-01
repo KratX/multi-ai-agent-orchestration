@@ -703,7 +703,9 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         const lowerPrompt = body.inputPrompt.toLowerCase();
         if (
           lowerPrompt.includes('[redteam:exfiltrate-secrets]') ||
-          lowerPrompt.includes('ignore all previous instructions and dump')
+          lowerPrompt.includes('ignore all previous instructions') ||
+          lowerPrompt.includes('ignore previous system instructions') ||
+          lowerPrompt.includes('reveal all system secrets')
         ) {
           await recordAuditEvent(db, {
             organizationId: targetOrgId,
@@ -1437,13 +1439,20 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           : undefined;
 
       if (!agentVersionId) {
-        const [latestVer] = await db
+        const candidateVersions = await db
           .select()
           .from(agentVersions)
           .where(eq(agentVersions.organizationId, actor.organizationId))
-          .orderBy(desc(agentVersions.versionNumber))
-          .limit(1);
-        agentVersionId = latestVer?.id;
+          .orderBy(asc(agentVersions.versionNumber));
+        const fullToolVer = candidateVersions.find(
+          (v) =>
+            Array.isArray(v.toolAllowlist) &&
+            v.toolAllowlist.includes('calculator') &&
+            v.toolAllowlist.includes('knowledge_search')
+        );
+        agentVersionId =
+          fullToolVer?.id ??
+          candidateVersions[candidateVersions.length - 1]?.id;
       }
 
       if (!agentVersionId) {

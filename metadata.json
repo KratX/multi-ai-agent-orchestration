@@ -1,0 +1,6 @@
+{
+  "name": "Ordaris Runtime — Observable AI Agent Platform",
+  "description": "A local-first, multi-tenant AI Agent Platform featuring immutable agent versioning, server-authorized tools, PostgreSQL job leases, full-text RAG citations, and an interactive execution debugger.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

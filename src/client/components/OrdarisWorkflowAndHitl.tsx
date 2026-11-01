@@ -376,7 +376,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
         onNotify(
           `RBAC Guardrail Blocked HITL Decision (HTTP ${res.status})`,
           'error',
-          `Role "${activeActorRole.toUpperCase()}" lacks permission "approvals:decide" (Owner or Admin required). Logged to Audit Ledger.`
+          `Role "${activeActorRole.toUpperCase()}" lacks permission "workflow.approve" (Owner or Admin required). Logged to Audit Ledger.`
         );
         await onWorkspaceRefresh();
         return;
@@ -419,7 +419,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
           onNotify(
             `Batch Approval Halted (HTTP ${res.status})`,
             'error',
-            `Role "${activeActorRole.toUpperCase()}" is not authorized for approvals:decide (${json?.error?.message || json?.detail || 'Forbidden'}).`
+            `Role "${activeActorRole.toUpperCase()}" is not authorized for workflow.approve (${json?.error?.message || json?.detail || 'Forbidden'}).`
           );
           await onWorkspaceRefresh();
           return;

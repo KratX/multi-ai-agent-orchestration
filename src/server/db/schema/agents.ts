@@ -38,7 +38,7 @@ export interface AgentModelConfig {
 
 export const DEFAULT_AGENT_MODEL_CONFIG: AgentModelConfig = {
   provider: 'mock',
-  model: 'aegis-mock-v1',
+  model: 'ordaris-mock-v1',
   temperature: 0,
   maxSteps: 6,
   maxToolCalls: 4,
