@@ -38,7 +38,7 @@
 ### B. Ordaris Runtime `v1.0.0-demo` Interactive Enterprise Sandbox (Checkpoints `1`–`12`)
 1. **Checkpoint 1 — Session-Scoped AES-256-GCM BYOK Vault (`src/server/security/session-key-vault.ts`)**:
    - Encrypts visitor-supplied cloud API keys in server RAM using `aes-256-gcm` with an ephemeral 256-bit CSPRNG master key (`crypto.randomBytes(32)`), 96-bit random IV, and 128-bit authentication tag.
-   - Enforces a 2-hour sliding TTL per `x-ordaris-demo-session` (CSPRNG `crypto.getRandomValues` minimum 16-char high-entropy token, failing closed when unavailable and rejecting static/ephemeral fallback strings), returns only masked previews (`AIza...9xQp`), and never writes raw keys to disk or logs (`Threat T-08`).
+   - Enforces a 2-hour sliding TTL per `x-ordaris-demo-session` (CSPRNG `crypto.getRandomValues` minimum 16-char high-entropy token, failing closed when unavailable and rejecting static/ephemeral fallback strings), returns only prefix-redacted masked previews (`••••••••9xQp` / `•••••••• (server env)`), and never writes raw keys to disk or logs (`Threat T-08`).
 2. **Checkpoint 2 — 28-Permission RBAC Policy Matrix (`src/server/policies/authorization.ts`)**:
    - Fine-grained RBAC across `owner` (`28/28`), `admin` (`26/28`), `developer` (`18/28`), and `viewer` (`9/28`), plus `assertNotRemovingLastOwner()` (`409 Conflict` `LAST_OWNER_PROTECTED`).
 3. **Checkpoint 3 — 3-Tier Multi-Provider AI Factory (`src/server/ai/provider-factory.ts`)**:

@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, type GenerateContentParameters, type GenerateContentResponse } from '@google/genai';
-import { appendRuntimeLog } from '../config/env';
+import { appendRuntimeLog, redactSecretsFromText } from '../config/env';
 import {
   extractRetrievedChunksFromMessages,
   MockModelProvider,
@@ -445,6 +445,9 @@ export class GeminiModelProvider implements ModelProvider {
         this.sdkClient.models.generateContent(params),
         timeoutPromise,
       ]);
+    } catch (err) {
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(redactSecretsFromText(rawMsg));
     } finally {
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
@@ -521,7 +524,9 @@ export class OpenAIChatGPTModelProvider implements ModelProvider {
       if (!response.ok) {
         const errBody = await response.text().catch(() => '');
         throw new Error(
-          `${this.providerName} HTTP ${response.status}: ${errBody.slice(0, 240)}`
+          redactSecretsFromText(
+            `${this.providerName} HTTP ${response.status}: ${errBody.slice(0, 240)}`
+          )
         );
       }
 
@@ -654,7 +659,9 @@ export class AnthropicClaudeModelProvider implements ModelProvider {
       if (!response.ok) {
         const errBody = await response.text().catch(() => '');
         throw new Error(
-          `anthropic-claude HTTP ${response.status}: ${errBody.slice(0, 240)}`
+          redactSecretsFromText(
+            `anthropic-claude HTTP ${response.status}: ${errBody.slice(0, 240)}`
+          )
         );
       }
 
@@ -925,7 +932,9 @@ export class LiveOnlineModelProvider implements ModelProvider {
         };
       } catch (err) {
         lastError = err;
-        const errMessage = err instanceof Error ? err.message : String(err);
+        const errMessage = redactSecretsFromText(
+          err instanceof Error ? err.message : String(err)
+        );
         const isBillingOrQuotaError =
           /credit balance is too low|insufficient_quota|billing|payment required|402/i.test(
             errMessage
@@ -947,8 +956,9 @@ export class LiveOnlineModelProvider implements ModelProvider {
       }
     }
 
-    const lastErrorMsg =
-      lastError instanceof Error ? lastError.message : 'unknown error';
+    const lastErrorMsg = redactSecretsFromText(
+      lastError instanceof Error ? lastError.message : 'unknown error'
+    );
 
     // Tier 3: Zero-key or all-providers-exhausted graceful deterministic fallback
     // Returns 100% clean output text without raw "[Local Fallback...]" prefixes;

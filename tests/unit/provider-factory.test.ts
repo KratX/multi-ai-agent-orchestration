@@ -26,14 +26,14 @@ test('Provider Factory: resolves Tier 1 (session_byok) when an active key exists
   saveByokProviderKey({
     scopeKey,
     provider: 'gemini',
-    apiKey: 'AIzaSyTierOneSessionByokKey123456',
+    apiKey: 'gm_test_tier_one_session_byok_key_123456',
   });
 
   const envWithServerKey = parseEnv({
     NODE_ENV: 'test',
     AI_MODE: 'demo',
     DEMO_MODE: 'true',
-    GEMINI_API_KEY: 'AIzaSyTierTwoServerEnvKey999999',
+    GEMINI_API_KEY: 'gm_test_tier_two_server_env_key_999999',
   });
 
   const resolution = resolveThreeTierProvider(envWithServerKey, {
@@ -43,7 +43,10 @@ test('Provider Factory: resolves Tier 1 (session_byok) when an active key exists
 
   assert.equal(resolution.resolutionTier, 'session_byok');
   assert.equal(resolution.requestedEngine, 'gemini-free');
-  assert.equal(resolution.effectiveEnv.GEMINI_API_KEY, 'AIzaSyTierOneSessionByokKey123456');
+  assert.equal(
+    resolution.effectiveEnv.GEMINI_API_KEY,
+    'gm_test_tier_one_session_byok_key_123456'
+  );
 });
 
 test('Provider Factory: falls back to Tier 2 (server_env) when the Session BYOK Vault has no key for the engine', () => {
@@ -163,7 +166,7 @@ test('Provider Factory: resolves engine-specific provider status across gemini, 
     NODE_ENV: 'test',
     AI_MODE: 'demo',
     DEMO_MODE: 'true',
-    GEMINI_API_KEY: 'AIzaSyEnvGeminiKey123456789',
+    GEMINI_API_KEY: 'gm_test_env_gemini_key_123456789',
   });
 
   const claudeResolution = resolveThreeTierProvider(mixedEnv, {
@@ -206,7 +209,7 @@ test('Provider Factory: executes testProviderConnection() and records verificati
   saveByokProviderKey({
     scopeKey,
     provider: 'gemini',
-    apiKey: 'AIzaSyTestVaultVerificationKey000',
+    apiKey: 'gm_test_vault_verification_key_000',
   });
   const vaultResult = await testProviderConnection(emptyEnv, {
     provider: 'gemini',

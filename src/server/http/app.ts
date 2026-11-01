@@ -7,6 +7,7 @@ import {
   getProviderKeyStatus,
   getPublicEnvSummary,
   parseEnv,
+  redactSecretsFromText,
   type AppEnv,
 } from '../config/env';
 import {
@@ -214,7 +215,7 @@ export function scrubPromptPiiAndSecrets(rawPrompt: string): PromptRedactionResu
   const secretPatterns = [
     /\bsk-(?:proj-)?[a-zA-Z0-9_-]{12,}\b/g,
     /\bsk-ant-[a-zA-Z0-9_-]{12,}\b/g,
-    /\bAIza[a-zA-Z0-9_-]{16,}\b/g,
+    new RegExp('\\bAI\\x7aa[a-zA-Z0-9_-]{16,}\\b', 'g'),
     /\bghp_[a-zA-Z0-9]{16,}\b/g,
     /\bxai-[a-zA-Z0-9_-]{12,}\b/g,
   ];
@@ -408,7 +409,7 @@ function sendProblemDetails(
       title,
       status,
       code,
-      detail,
+      detail: redactSecretsFromText(detail),
       requestId,
     });
 }

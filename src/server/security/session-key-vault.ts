@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { AppEnv } from '../config/env';
+import { redactSecretsFromText, type AppEnv } from '../config/env';
 
 /**
  * Ordaris Session-Scoped AES-256-GCM In-Memory BYOK Vault (`src/server/security/session-key-vault.ts`)
@@ -291,10 +291,13 @@ export function resolveByokScopeKey(input?: {
 
 export function maskApiKey(rawKey: string): string {
   const trimmed = rawKey.trim();
-  if (trimmed.length <= 8) {
-    return `${trimmed.slice(0, 2)}••••`;
+  if (!trimmed) {
+    return '';
   }
-  return `${trimmed.slice(0, 5)}••••${trimmed.slice(-4)}`;
+  if (trimmed.length <= 8) {
+    return '••••••••';
+  }
+  return `••••••••${trimmed.slice(-4)}`;
 }
 
 /**
@@ -536,7 +539,7 @@ export function recordByokVerificationResult(input: {
   if (existing) {
     existing.lastVerifiedAt = new Date(nowMs).toISOString();
     existing.lastVerifyStatus = input.verified ? 'verified' : 'failed';
-    existing.lastVerifyMessage = input.message.slice(0, 240);
+    existing.lastVerifyMessage = redactSecretsFromText(input.message).slice(0, 240);
     existing.lastAccessedAtMs = nowMs;
     existing.expiresAtMs = nowMs + existing.ttlMs;
   }
@@ -648,7 +651,7 @@ export function listByokProviderStatuses(
       maskedPreview: hasVault
         ? rec!.maskedPreview
         : hasEnv
-          ? maskApiKey(envRaw!)
+          ? '•••••••• (server env)'
           : null,
       updatedAt: hasVault ? rec!.updatedAt : null,
       expiresAt: hasVault ? new Date(rec!.expiresAtMs).toISOString() : null,

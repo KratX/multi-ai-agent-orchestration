@@ -37,7 +37,7 @@ test('Session BYOK Vault: encrypts and decrypts BYOK keys in RAM using AES-256-G
   const status = saveByokProviderKey({
     scopeKey,
     provider: 'gemini',
-    apiKey: 'AIzaSyTestEphemeralRamKey987654321',
+    apiKey: 'gm_test_ephemeral_ram_key_987654321',
   });
 
   assert.equal(status.provider, 'gemini');
@@ -47,7 +47,7 @@ test('Session BYOK Vault: encrypts and decrypts BYOK keys in RAM using AES-256-G
   assert.ok(status.expiresAt);
 
   const effectiveEnv = resolveEffectiveEnvWithByok(baseEnv, scopeKey);
-  assert.equal(effectiveEnv.GEMINI_API_KEY, 'AIzaSyTestEphemeralRamKey987654321');
+  assert.equal(effectiveEnv.GEMINI_API_KEY, 'gm_test_ephemeral_ram_key_987654321');
 });
 
 test('Session BYOK Vault: never writes .local/byok-vault.json or any file to disk during key storage, status check, or deletion', () => {
@@ -170,21 +170,21 @@ test('Session BYOK Vault: strictly isolates keys between distinct high-entropy b
   saveByokProviderKey({
     scopeKey: scopeAlpha,
     provider: 'gemini',
-    apiKey: 'AIzaSyAlphaPrivateKey111111111',
+    apiKey: 'gm_test_alpha_private_key_111111111',
   });
   saveByokProviderKey({
     scopeKey: scopeBeta,
     provider: 'gemini',
-    apiKey: 'AIzaSyBetaPrivateKey222222222',
+    apiKey: 'gm_test_beta_private_key_222222222',
   });
 
   assert.equal(
     resolveEffectiveEnvWithByok(baseEnv, scopeAlpha).GEMINI_API_KEY,
-    'AIzaSyAlphaPrivateKey111111111'
+    'gm_test_alpha_private_key_111111111'
   );
   assert.equal(
     resolveEffectiveEnvWithByok(baseEnv, scopeBeta).GEMINI_API_KEY,
-    'AIzaSyBetaPrivateKey222222222'
+    'gm_test_beta_private_key_222222222'
   );
 
   saveByokProviderKey({
@@ -195,17 +195,17 @@ test('Session BYOK Vault: strictly isolates keys between distinct high-entropy b
   assert.equal(resolveEffectiveEnvWithByok(baseEnv, scopeAlpha).GEMINI_API_KEY, '');
   assert.equal(
     resolveEffectiveEnvWithByok(baseEnv, scopeBeta).GEMINI_API_KEY,
-    'AIzaSyBetaPrivateKey222222222'
+    'gm_test_beta_private_key_222222222'
   );
 });
 
-test('Session BYOK Vault: masks API keys one-way so plaintext keys are never exposed in status summaries', () => {
+test('Session BYOK Vault: masks API keys one-way without prefix exposure and never leaks characters of server .env keys', () => {
   clearByokScope('global', { clearAllDemoScopes: true });
   const scopeAlpha = resolveByokScopeKey({
     sessionId: SESSION_ALPHA,
     strictSessionValidation: true,
   });
-  const rawKey = 'AIzaSySecretPlaintextKey9988776655';
+  const rawKey = 'gm_test_secret_plaintext_key_9988776655';
 
   saveByokProviderKey({
     scopeKey: scopeAlpha,
@@ -218,7 +218,25 @@ test('Session BYOK Vault: masks API keys one-way so plaintext keys are never exp
 
   assert.equal(geminiSummary?.configuredInVault, true);
   assert.equal(geminiSummary?.maskedPreview, maskApiKey(rawKey));
-  assert.equal(geminiSummary?.maskedPreview?.includes('SecretPlaintextKey'), false);
+  assert.equal(geminiSummary?.maskedPreview?.includes('secret_plaintext_key'), false);
+  assert.equal(geminiSummary?.maskedPreview?.startsWith('••••••••'), true);
+
+  // Verify server .env keys never expose even prefix/suffix characters in maskedPreview
+  const envWithServerGemini = parseEnv({
+    NODE_ENV: 'test',
+    AI_MODE: 'demo',
+    DEMO_MODE: 'true',
+    GEMINI_API_KEY: 'gm_server_env_private_credential_9999',
+  });
+  const scopeBeta = resolveByokScopeKey({
+    sessionId: SESSION_BETA,
+    strictSessionValidation: true,
+  });
+  const betaSummaries = listByokProviderStatuses(envWithServerGemini, scopeBeta);
+  const betaGemini = betaSummaries.find((item) => item.provider === 'gemini');
+  assert.equal(betaGemini?.configuredInEnv, true);
+  assert.equal(betaGemini?.maskedPreview, '•••••••• (server env)');
+  assert.equal(betaGemini?.maskedPreview?.includes('9999'), false);
 });
 
 test('Session BYOK Vault: invalidates previously encrypted in-RAM records when rotateEphemeralMasterKey() is called', () => {
@@ -244,7 +262,7 @@ test('Session BYOK Vault: supports targeted provider deletion and scoped or glob
   saveByokProviderKey({
     scopeKey: scopeAlpha,
     provider: 'gemini',
-    apiKey: 'AIzaSyAlphaKey1234567890',
+    apiKey: 'gm_test_alpha_key_1234567890',
   });
   saveByokProviderKey({
     scopeKey: scopeAlpha,
@@ -254,7 +272,7 @@ test('Session BYOK Vault: supports targeted provider deletion and scoped or glob
   saveByokProviderKey({
     scopeKey: scopeBeta,
     provider: 'gemini',
-    apiKey: 'AIzaSyBetaKey1234567890',
+    apiKey: 'gm_test_beta_key_1234567890',
   });
 
   // Delete single provider from scopeAlpha
@@ -274,6 +292,6 @@ test('Session BYOK Vault: supports targeted provider deletion and scoped or glob
   assert.equal(resolveEffectiveEnvWithByok(baseEnv, scopeAlpha).OPENROUTER_API_KEY, '');
   assert.equal(
     resolveEffectiveEnvWithByok(baseEnv, scopeBeta).GEMINI_API_KEY,
-    'AIzaSyBetaKey1234567890'
+    'gm_test_beta_key_1234567890'
   );
 });

@@ -779,7 +779,7 @@ test('Production-Mode & Cryptographic Authentication Hardening: rejects unauthen
         },
         body: JSON.stringify({
           provider: 'gemini',
-          rawKey: 'AIzaSyTestStaticSessionCollisionBlocked',
+          rawKey: 'gm_test_static_session_collision_blocked_key',
         }),
       }
     );

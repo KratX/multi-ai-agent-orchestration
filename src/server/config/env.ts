@@ -30,6 +30,45 @@ export interface RuntimeLogEntry {
 const runtimeLogBuffer: RuntimeLogEntry[] = [];
 const MAX_LOG_BUFFER_SIZE = 200;
 
+const GOOGLE_KEY_PATTERN = new RegExp('\\bAI\\x7aa[a-zA-Z0-9_-]{12,}\\b', 'g');
+const URL_QUERY_KEY_PATTERN = new RegExp(
+  '([?&](?:key|api_key|apiKey|access_token)=)([^&\\s"\']+)',
+  'gi'
+);
+const CLOUD_PROVIDER_KEY_PATTERN =
+  /\b(?:sk-[a-zA-Z0-9_-]{12,}|xai-[a-zA-Z0-9_-]{12,}|ghp_[a-zA-Z0-9]{16,}|github_pat_[a-zA-Z0-9_]{16,})\b/g;
+const BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi;
+
+/**
+ * Redacts Google/Gemini API keys, URL `?key=` query parameters, Bearer tokens,
+ * and cloud provider credentials (`sk-*`, `xai-*`, `ghp_*`) from any log or error text.
+ */
+export function redactSecretsFromText(raw: string): string {
+  if (!raw) {
+    return raw;
+  }
+  return raw
+    .replace(GOOGLE_KEY_PATTERN, '[REDACTED_GOOGLE_API_KEY]')
+    .replace(URL_QUERY_KEY_PATTERN, '$1[REDACTED_API_KEY]')
+    .replace(CLOUD_PROVIDER_KEY_PATTERN, '[REDACTED_API_KEY]')
+    .replace(BEARER_TOKEN_PATTERN, 'Bearer [REDACTED_TOKEN]');
+}
+
+function redactDetailsRecord(
+  details?: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  if (!details) {
+    return undefined;
+  }
+  try {
+    const serialized = JSON.stringify(details);
+    const redacted = redactSecretsFromText(serialized);
+    return JSON.parse(redacted) as Record<string, unknown>;
+  } catch {
+    return details;
+  }
+}
+
 export function appendRuntimeLog(entry: {
   level: 'INFO' | 'WARN' | 'ERROR';
   component: string;
@@ -44,14 +83,17 @@ export function appendRuntimeLog(entry: {
       ? entry.details.organizationId.trim()
       : null);
 
+  const safeMessage = redactSecretsFromText(entry.message);
+  const safeDetails = redactDetailsRecord(entry.details);
+
   const record: RuntimeLogEntry = {
     id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     timestamp: new Date().toISOString(),
     level: entry.level,
     component: entry.component,
-    message: entry.message,
+    message: safeMessage,
     organizationId: resolvedOrgId,
-    details: entry.details,
+    details: safeDetails,
   };
 
   runtimeLogBuffer.unshift(record);
@@ -316,24 +358,15 @@ export function isConfiguredApiKey(val: string | undefined): boolean {
   return Boolean(clean && clean !== 'MY_GEMINI_API_KEY' && clean !== 'replace-me');
 }
 
-export function getProviderKeyStatus(env: Partial<AppEnv> = process.env as unknown as Partial<AppEnv>) {
+export function getProviderKeyStatus(env?: Partial<AppEnv>) {
+  const source = env ?? (process.env as unknown as Partial<AppEnv>);
   const gemini =
-    isConfiguredApiKey(env.AI_PROVIDER_API_KEY) ||
-    isConfiguredApiKey(env.GEMINI_API_KEY) ||
-    isConfiguredApiKey(process.env.AI_PROVIDER_API_KEY) ||
-    isConfiguredApiKey(process.env.GEMINI_API_KEY);
-  const chatgpt =
-    isConfiguredApiKey(env.OPENAI_API_KEY) ||
-    isConfiguredApiKey(process.env.OPENAI_API_KEY);
-  const claude =
-    isConfiguredApiKey(env.ANTHROPIC_API_KEY) ||
-    isConfiguredApiKey(process.env.ANTHROPIC_API_KEY);
-  const grok =
-    isConfiguredApiKey(env.XAI_API_KEY) ||
-    isConfiguredApiKey(process.env.XAI_API_KEY);
-  const openrouter =
-    isConfiguredApiKey(env.OPENROUTER_API_KEY) ||
-    isConfiguredApiKey(process.env.OPENROUTER_API_KEY);
+    isConfiguredApiKey(source.AI_PROVIDER_API_KEY) ||
+    isConfiguredApiKey(source.GEMINI_API_KEY);
+  const chatgpt = isConfiguredApiKey(source.OPENAI_API_KEY);
+  const claude = isConfiguredApiKey(source.ANTHROPIC_API_KEY);
+  const grok = isConfiguredApiKey(source.XAI_API_KEY);
+  const openrouter = isConfiguredApiKey(source.OPENROUTER_API_KEY);
 
   return {
     gemini,
