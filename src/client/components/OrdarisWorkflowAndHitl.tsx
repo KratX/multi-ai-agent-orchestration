@@ -50,57 +50,57 @@ export interface DagNodeSpec {
 const STANDARD_6_NODE_DAG: DagNodeSpec[] = [
   {
     id: 'input-sanitize',
-    label: '1. Input Sanitize',
+    label: '1. Clean Input',
     type: 'transform',
     dependsOn: [],
-    description: 'Normalizes incoming incident/shipment telemetry and strips untrusted control sequences.',
-    configSummary: 'transform: trim + normalize whitespace + validate schema envelope',
-    securityControl: 'Threat T-03 Input Boundary Normalization',
+    description: 'Cleans up the incoming request text and removes any unsafe formatting.',
+    configSummary: 'transform: trim whitespace + check input format',
+    securityControl: 'Threat T-03 Input Safety Check',
   },
   {
     id: 'calc-risk',
-    label: '2. Deterministic Risk Math',
+    label: '2. Calculate Risk Score',
     type: 'tool',
     dependsOn: ['input-sanitize'],
-    description: 'Evaluates quantitative risk score via sandboxed arithmetic tool (`calc_math`).',
-    configSummary: 'toolId: "calc_math", expression: riskOverrideExpression || "25 * 6"',
-    securityControl: 'Threat T-04 Sandboxed Tool Allowlist + Zod Schema',
+    description: 'Uses the calculator tool (e.g., 25 * 6 = 150) to calculate a risk score.',
+    configSummary: 'toolId: "calculator", expression: riskOverrideExpression || "25 * 6"',
+    securityControl: 'Threat T-04 Safe Calculator Tool',
   },
   {
     id: 'branch-risk',
-    label: '3. Conditional Risk Router',
+    label: '3. Check Score Limit (>= 100)',
     type: 'condition',
     dependsOn: ['calc-risk'],
-    description: 'Routes execution based on quantitative risk threshold (`risk_score >= 100`).',
-    configSummary: 'condition: calc_risk.output >= 100 ? "approval-high-risk" : "agent-summary"',
-    securityControl: 'Deterministic Policy Gate Routing',
+    description: 'Checks if the risk score is 100 or higher to decide if manager approval is needed.',
+    configSummary: 'condition: score >= 100 ? "approval-high-risk" : "agent-summary"',
+    securityControl: 'Automatic Score Routing Rule',
   },
   {
     id: 'approval-high-risk',
-    label: '4. HITL Governance Gate',
+    label: '4. Manager Approval Gate',
     type: 'approval',
     dependsOn: ['branch-risk'],
-    description: 'Pauses workflow execution in `waiting_approval` until an Owner or Admin signs off.',
+    description: 'Pauses the workflow when score >= 100 until an Owner or Admin clicks Approve.',
     configSummary: 'requiredRole: ["owner", "admin"], timeoutMinutes: 60',
-    securityControl: 'RBAC `approvals:decide` + Immutable Audit Event',
+    securityControl: 'RBAC Owner/Admin Approval Required',
   },
   {
     id: 'agent-summary',
-    label: '5. Agent Remediation Plan',
+    label: '5. Write AI Summary',
     type: 'agent',
     dependsOn: ['approval-high-risk'],
-    description: 'Executes pinned agent snapshot with grounded RAG citations to produce the final action plan.',
-    configSummary: 'agentSlug: tenant primary agent, untrustedContextTagging: true',
-    securityControl: 'Pinned Agent Snapshot Hash + Citation Verification',
+    description: 'Runs the company AI assistant to write a clear summary of the completed request.',
+    configSummary: 'agentSlug: tenant primary assistant, citations: enabled',
+    securityControl: 'Pinned Agent Version + Verified Citations',
   },
   {
     id: 'notify-audit',
-    label: '6. Cryptographic Audit Seal',
+    label: '6. Save Audit Record',
     type: 'transform',
     dependsOn: ['agent-summary'],
-    description: 'Records final state transition and SHA-256 event hash into the append-only audit ledger.',
+    description: 'Saves a permanent record of who ran and approved the request in the Audit Log.',
     configSummary: 'auditEvent: "workflow.execution.completed", outcome: "allowed"',
-    securityControl: 'Append-Only Audit Ledger + Tenant FK',
+    securityControl: 'Permanent Security Audit Log',
   },
 ];
 
@@ -147,8 +147,8 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
   const [customRiskExpr, setCustomRiskExpr] = useState<string>('25 * 6');
   const [workflowTriggerNote, setWorkflowTriggerNote] = useState<string>(
     isLogistics
-      ? 'Reefer container BIO-4429 temperature excursion (+6.4C for 47 mins) at Port of Rotterdam.'
-      : 'Production containment: Isolate compromised edge subnet 10.42.8.0/24 after anomalous lateral movement.',
+      ? 'Approve express air shipping for Chilled Box #402 due to port delay.'
+      : 'Approve $1,500 server upgrade for the customer support team.',
   );
   const [executingWorkflow, setExecutingWorkflow] = useState(false);
   const [lastWorkflowResult, setLastWorkflowResult] = useState<{
@@ -199,15 +199,15 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
       setCustomRiskExpr('25 * 6');
       setWorkflowTriggerNote(
         isLogistics
-          ? 'HIGH-RISK EXCURSION (Score 150): Biologics container BIO-4429 exceeded +6.0C threshold. Requires QA Director HITL sign-off.'
-          : 'HIGH-RISK CONTAINMENT (Score 150): Isolate production subnet 10.42.8.0/24 and revoke service tokens. Requires CISO HITL sign-off.',
+          ? 'High-Risk Request (Score 150): Approve express air shipping for Chilled Box #402. Needs Owner/Admin approval.'
+          : 'High-Risk Request (Score 150): Approve $1,500 server upgrade for the support team. Needs Owner/Admin approval.',
       );
     } else {
       setCustomRiskExpr('20 * 3');
       setWorkflowTriggerNote(
         isLogistics
-          ? 'LOW-RISK TELEMETRY CHECK (Score 60): Routine cold-chain sensor calibration verify on Reefers #104-#108. Auto-bypasses HITL gate.'
-          : 'LOW-RISK DIAGNOSTIC SCAN (Score 60): Read-only perimeter egress firewall drift verification. Auto-bypasses HITL gate.',
+          ? 'Low-Risk Request (Score 60): Routine daily thermometer check on Warehouse Fridge #2. Finishes automatically.'
+          : 'Low-Risk Request (Score 60): Routine daily backup check. Finishes automatically without waiting for approval.',
       );
     }
   };

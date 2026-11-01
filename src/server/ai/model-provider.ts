@@ -270,6 +270,26 @@ function extractSearchQuery(prompt: string): string | null {
     'pallet',
     'quarantine',
     'telemetry',
+    'rule',
+    'rules',
+    'support',
+    'help',
+    'company',
+    'team',
+    'role',
+    'roles',
+    'privacy',
+    'backup',
+    'outage',
+    'urgent',
+    'notify',
+    'response',
+    'shipping',
+    'box',
+    'boxes',
+    'chilled',
+    'cold',
+    'storage',
   ];
 
   const hasKeyword = knowledgeKeywords.some((kw) => normalized.includes(kw));
@@ -477,7 +497,11 @@ export class MockModelProvider implements ModelProvider {
 
     if (retrievedChunks.length > 0) {
       const summaries = retrievedChunks.map((chunk) => {
-        const snippet = chunk.content.trim().slice(0, 140);
+        const cleanText = chunk.content
+          .replace(/^#+\s*/gm, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const snippet = cleanText.slice(0, 260);
         proposedCitations.push({
           chunkId: chunk.chunkId,
           documentId: chunk.documentId,

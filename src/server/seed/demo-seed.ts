@@ -113,35 +113,36 @@ export interface FlagshipSeedReport {
 
 export const FLAGSHIP_HITL_WORKFLOW_GRAPH: WorkflowGraphSpec = {
   nodes: [
-    { id: 'start-1', kind: 'start', label: 'Start Trigger' },
+    { id: 'start-1', kind: 'start', label: 'Start Request' },
     {
       id: 'calc-risk',
       kind: 'tool',
-      label: 'Compute Change Risk Score',
+      label: 'Calculate Risk Score (50 * 3)',
       toolName: 'calculator',
       toolInput: { expression: '50 * 3' },
     },
     {
       id: 'cond-risk',
       kind: 'condition',
-      label: 'Risk Score > 100?',
+      label: 'Is Score > 100?',
       condition: { field: 'lastOutput', operator: 'gt', value: 100 },
     },
     {
       id: 'approval-gate-1',
       kind: 'approval',
-      label: 'Production Release Gate',
-      approvalTitle: 'Approve High-Impact Production Rollout',
-      approvalReason: 'Calculated change risk score (150) exceeds threshold (100).',
+      label: 'Manager Approval Step',
+      approvalTitle: 'Approve $1,500 Server Upgrade Request',
+      approvalReason:
+        'Risk score is 150 (above the 100 limit). Waiting for an Owner or Admin to approve.',
       allowDeveloperDecision: false,
     },
     {
       id: 'agent-summary',
       kind: 'agent',
-      label: 'Release Readiness Summarizer',
-      promptTemplate: 'Summarize approved production deployment readiness.',
+      label: 'Write Short Summary',
+      promptTemplate: 'Write a short summary confirming the approved request is ready.',
     },
-    { id: 'end-1', kind: 'end', label: 'Completed' },
+    { id: 'end-1', kind: 'end', label: 'Done' },
   ],
   edges: [
     { id: 'e1', source: 'start-1', target: 'calc-risk' },
@@ -165,37 +166,37 @@ export const FLAGSHIP_HITL_WORKFLOW_GRAPH: WorkflowGraphSpec = {
 
 export const BETA_LOGISTICS_HITL_WORKFLOW_GRAPH: WorkflowGraphSpec = {
   nodes: [
-    { id: 'start-1', kind: 'start', label: 'Start Trigger' },
+    { id: 'start-1', kind: 'start', label: 'Start Request' },
     {
       id: 'calc-risk',
       kind: 'tool',
-      label: 'Compute Excursion Tariff Exposure',
+      label: 'Calculate Shipping Cost Score (45 * 4)',
       toolName: 'calculator',
       toolInput: { expression: '45 * 4' },
     },
     {
       id: 'cond-risk',
       kind: 'condition',
-      label: 'Exposure Score > 100?',
+      label: 'Is Score > 100?',
       condition: { field: 'lastOutput', operator: 'gt', value: 100 },
     },
     {
       id: 'approval-gate-1',
       kind: 'approval',
-      label: 'Priority Air-Freight Charter Gate',
-      approvalTitle: 'Authorize Priority Cold-Chain Air-Freight Reroute',
+      label: 'Manager Approval Step',
+      approvalTitle: 'Approve Express Air Shipping Reroute',
       approvalReason:
-        'Calculated cold-chain excursion exposure score (180) exceeds automated charter threshold (100).',
+        'Shipping cost score is 180 (above the 100 limit). Waiting for an Owner or Admin to approve.',
       allowDeveloperDecision: false,
     },
     {
       id: 'agent-summary',
       kind: 'agent',
-      label: 'Customs & Charter Dispatch Summarizer',
+      label: 'Write Shipping Summary',
       promptTemplate:
-        'Summarize cold-chain biologics charter dispatch and customs clearance instructions.',
+        'Write a short summary confirming the express air shipping request.',
     },
-    { id: 'end-1', kind: 'end', label: 'Completed' },
+    { id: 'end-1', kind: 'end', label: 'Done' },
   ],
   edges: [
     { id: 'e1', source: 'start-1', target: 'calc-risk' },
@@ -220,7 +221,7 @@ export const BETA_LOGISTICS_HITL_WORKFLOW_GRAPH: WorkflowGraphSpec = {
 /**
  * Ticket SEED-001: Ordaris (v1.0.0-demo) Deterministic Flagship Workspace Seed & Verification Runner.
  * Provisions two isolated organizations (`Acme Cyber Defense` & `Beta Logistics`),
- * all 8 RBAC personas (4 roles per tenant), grounded RAG playbooks, immutable Agent v1/v2 snapshots,
+ * all 8 RBAC personas (4 roles per tenant), simple plain-English RAG guides, immutable Agent v1/v2 snapshots,
  * 6-node HITL workflows (with both completed and active pending approval gates),
  * v1-vs-v2 evaluation regression experiments, and SSE cursor replay verification.
  */
@@ -246,7 +247,7 @@ export async function seedFlagshipWorkspace(
   const acmeViewer = await ensureUser(db, {
     authSubject: 'seed_acme_viewer',
     email: 'viewer@acme-cyber.example',
-    displayName: 'Lucas Meyer (Acme Auditor)',
+    displayName: 'Lucas Meyer (Acme Viewer)',
   });
 
   const betaOwner = await ensureUser(db, {
@@ -267,7 +268,7 @@ export async function seedFlagshipWorkspace(
   const betaViewer = await ensureUser(db, {
     authSubject: 'seed_beta_viewer',
     email: 'viewer@beta-logistics.example',
-    displayName: 'Omar Farooq (Beta Auditor)',
+    displayName: 'Omar Farooq (Beta Viewer)',
   });
 
   const { organization: acmeOrg } = await createOrganizationWithOwner(db, {
@@ -333,50 +334,47 @@ export async function seedFlagshipWorkspace(
   };
 
   // ==========================================================================
-  // TENANT 1: ACME CYBER DEFENSE — KNOWLEDGE, AGENTS, WORKFLOWS, EVALS
+  // TENANT 1: ACME CYBER DEFENSE — SIMPLE, EASY-TO-READ MOCK DATA
   // ==========================================================================
 
-  // 2A. Ingest Tenant-Scoped Knowledge Documents for Acme Cyber Defense
+  // 2A. Ingest Simple Plain-English Knowledge Documents for Acme
   const ingestedDoc = await ingestKnowledgeDocument(db, acmeOwnerActor, {
     organizationId: acmeOrg.id,
-    title: 'Incident Escalation & FinOps Policy Runbook',
-    sourceFilename: 'incident-finops-runbook.md',
+    title: 'Company Support & Security Guide',
+    sourceFilename: 'company-support-guide.md',
     mimeType: 'text/markdown',
     content: [
-      '# Severity 1 Production Incident Escalation',
-      'Severity 1 production incidents require notifying the On-Call Commander within 15 minutes and opening bridge channel #sev1-incident.',
+      '# Urgent Incident Response (Severity 1)',
+      'For any Severity 1 production incidents, notify the On-Call Commander within 15 minutes in #urgent-help.',
       '',
-      '## Database Encryption & Key Rotation Standard',
-      'All tenant PostgreSQL backups are encrypted at rest with AES-256-GCM and envelope keys rotated every 90 days.',
+      '## Data Backup & Security Rule',
+      'All customer backups are encrypted with AES-256-GCM and keys are rotated every 90 days.',
     ].join('\n'),
   });
 
   const acmeSecondaryDoc = await ingestKnowledgeDocument(db, acmeOwnerActor, {
     organizationId: acmeOrg.id,
-    title: 'Zero-Trust IAM, SOC2 Audit & Secret Hygiene Playbook',
-    sourceFilename: 'zero-trust-iam-soc2-playbook.md',
+    title: 'Team Roles & Privacy Rules',
+    sourceFilename: 'team-roles-privacy.md',
     mimeType: 'text/markdown',
     content: [
-      '# Zero-Trust Identity & Access Governance',
-      'Every API request in Ordaris enforces server-verified RBAC across 23 granular permissions for Owner, Admin, Developer, and Viewer personas.',
+      '# Team Access Roles',
+      'Owners and Admins can approve high-risk actions, Developers can run AI agents, and Viewers have read-only access.',
       '',
-      '## PII & Secret Scrubbing Standard',
-      'All outbound model prompts automatically redact sensitive credentials ([REDACTED:SECRET_KEY]) and personal identifiers ([REDACTED:PII_SSN]) prior to provider dispatch.',
-      '',
-      '## Untrusted RAG Context Isolation',
-      'Retrieved knowledge chunks are wrapped in <untrusted_knowledge_context> delimiters and verified against server provenance before citations are attached.',
+      '## Private Data Protection',
+      'Secret API keys and SSNs are automatically hidden before any message is sent to an AI model.',
     ].join('\n'),
   });
 
-  // 3A. Create Acme Primary Agent (v1 Full Tools, v2 Regression Candidate) + Secondary Agent
+  // 3A. Create Simple, Relatable Acme Agents (v1 Full Tools, v2 Regression Candidate)
   const copilotDraft = await createAgentDraft(db, acmeOwnerActor, {
     organizationId: acmeOrg.id,
-    name: 'SRE & FinOps Reliability Copilot',
-    slug: 'sre-finops-copilot',
+    name: 'Support & Math Assistant',
+    slug: 'support-math-assistant',
     description:
-      'Executes deterministic error-budget arithmetic and grounded incident runbook retrieval.',
+      'Answers company policy questions and solves math problems using the calculator.',
     draftSystemPrompt:
-      'You are the Acme SRE & FinOps Reliability Copilot. Use calculator for arithmetic and knowledge_search for runbook policies.',
+      'You are a friendly company assistant. Use calculator for math questions and knowledge_search to look up company rules.',
     draftToolAllowlist: ['calculator', 'knowledge_search'],
   });
 
@@ -410,24 +408,24 @@ export async function seedFlagshipWorkspace(
 
   const acmeAuditorAgent = await createAgentDraft(db, acmeOwnerActor, {
     organizationId: acmeOrg.id,
-    name: 'Zero-Trust IAM & SOC2 Compliance Auditor',
-    slug: 'zero-trust-soc2-auditor',
+    name: 'Team Roles & Privacy Helper',
+    slug: 'team-privacy-helper',
     description:
-      'Audits zero-trust RBAC policies, encryption standards, and SOC2 compliance controls.',
+      'Explains team access roles (Owner, Admin, Developer, Viewer) and data privacy rules.',
     draftSystemPrompt:
-      'You are the Acme Zero-Trust IAM & SOC2 Compliance Auditor. Use knowledge_search to verify encryption and RBAC policies and calculator to compute compliance SLA metrics.',
+      'You explain team roles and privacy policies in simple English using knowledge_search and calculator.',
     draftToolAllowlist: ['calculator', 'knowledge_search'],
   });
 
   await publishAgentVersion(db, acmeOwnerActor, acmeOrg.id, acmeAuditorAgent.id);
 
-  // 4A. Create & Publish Directed Acyclic Workflow with HITL Approval Gate for Acme
+  // 4A. Create & Publish Simple Approval Workflow for Acme
   const workflowDraft = await createWorkflowDraft(db, acmeOwnerActor, {
     organizationId: acmeOrg.id,
-    slug: 'prod-release-risk-gate',
-    name: 'Production Release & Risk Gate',
+    slug: 'high-value-approval-workflow',
+    name: 'High-Value Action Approval Workflow',
     description:
-      'Computes deployment risk score via calculator, pauses at human approval when score > 100, and summarizes rollout.',
+      'Calculates a risk score. If the score is over 100, it pauses and waits for an Admin or Owner to approve.',
     graph: FLAGSHIP_HITL_WORKFLOW_GRAPH,
   });
 
@@ -444,7 +442,7 @@ export async function seedFlagshipWorkspace(
     organizationId: acmeOrg.id,
     workflowVersionId: workflowV1.id,
     defaultAgentVersionId: agentV1.id,
-    inputPrompt: 'Deploy v3.2.0 to production cluster us-east-1',
+    inputPrompt: 'Approve software update v3.2 for main server',
   });
 
   const initialWorkflowStatus = startedWf.run.status;
@@ -453,7 +451,7 @@ export async function seedFlagshipWorkspace(
   const decidedWf = await decideApprovalRequest(db, acmeAdminActor, {
     approvalRequestId,
     decision: 'approved',
-    note: 'Canary error budget verified by Marcus Sterling; approved for production rollout.',
+    note: 'Approved by Marcus Sterling (Admin) — everything looks good.',
   });
 
   // Start a second workflow run that remains in `waiting_approval` for live interactive HITL demo
@@ -461,21 +459,20 @@ export async function seedFlagshipWorkspace(
     organizationId: acmeOrg.id,
     workflowVersionId: workflowV1.id,
     defaultAgentVersionId: agentV1.id,
-    inputPrompt:
-      'Deploy v3.3.0-rc1 zero-trust edge proxy to production cluster eu-central-1',
+    inputPrompt: 'Approve $1,500 server upgrade for US-East support team',
   });
 
-  // 5A. Create Evaluation Suite & Compare Baseline (Agent v1) vs Candidate (Agent v2)
+  // 5A. Create Simple Evaluation Suite & Compare Baseline (Agent v1) vs Candidate (Agent v2)
   const { suite } = await createEvalSuite(db, acmeOwnerActor, {
     organizationId: acmeOrg.id,
     agentId: copilotDraft.id,
-    name: 'SRE & FinOps Release Readiness Benchmark',
+    name: 'Basic Math & Policy Accuracy Check',
     description:
-      'Verifies deterministic arithmetic via calculator and grounded incident runbook citations via knowledge_search.',
+      'Checks that our assistant can solve simple math (12 * 12 = 144) and find our 15-minute urgent incident rule.',
     cases: [
       {
         name: 'Error Budget Burn Calculation',
-        inputPrompt: 'Calculate 12 * 12 using calculator',
+        inputPrompt: 'What is 12 * 12? Use the calculator.',
         assertions: [
           { type: 'tool_called', toolName: 'calculator' },
           { type: 'contains', expectedSubstring: '144' },
@@ -484,7 +481,7 @@ export async function seedFlagshipWorkspace(
       {
         name: 'SEV-1 Runbook Citation Grounding',
         inputPrompt:
-          'Search knowledge base for Severity 1 production incidents escalation policy',
+          'What is our policy for Severity 1 production incidents and who do we notify?',
         assertions: [
           { type: 'tool_called', toolName: 'knowledge_search' },
           {
@@ -523,48 +520,48 @@ export async function seedFlagshipWorkspace(
   const sampleEvalRunId = baselineExp.caseResults[0]!.resultRow.runId!;
 
   // ==========================================================================
-  // TENANT 2: BETA LOGISTICS — FULL MULTI-TENANT SYMMETRY SEED
+  // TENANT 2: BETA LOGISTICS — SIMPLE, EASY-TO-READ SHIPPING MOCK DATA
   // (Carefully avoids tokens in 'Severity 1 On-Call Commander AES-256-GCM')
   // ==========================================================================
 
-  // 2B. Ingest 2 Cold-Chain & Customs Playbooks for Beta Logistics
+  // 2B. Ingest 2 Simple Shipping Guides for Beta Logistics
   const betaPrimaryDoc = await ingestKnowledgeDocument(db, betaOwnerActor, {
     organizationId: betaOrg.id,
-    title: 'Cold-Chain Biologics Excursion & Quarantine Playbook',
-    sourceFilename: 'cold-chain-biologics-playbook.md',
+    title: 'Cold Storage Shipping Rules',
+    sourceFilename: 'cold-storage-rules.md',
     mimeType: 'text/markdown',
     content: [
-      '# Biologics Cold-Chain Thermal Excursion Procedure',
-      'Refrigerated pharmaceutical pallets must remain between two degrees and eight degrees Celsius throughout transit across maritime and air hubs.',
+      '# Cold Storage Temperature Rule',
+      'Chilled medical boxes must stay between two degrees and eight degrees Celsius during transit.',
       '',
-      '## Quarantine Hold & Quality Inspection Protocol',
-      'If glycol probe telemetry exceeds eight degrees Celsius for more than thirty minutes, place the freight lot under quarantine hold and notify the Lead Quality Pharmacist immediately.',
+      '## Warm Box Quarantine Step',
+      'If a cold-chain box gets warmer than eight degrees Celsius for more than thirty minutes, place it on quarantine hold and notify the Lead Quality Pharmacist right away.',
     ].join('\n'),
   });
 
   const betaSecondaryDoc = await ingestKnowledgeDocument(db, betaOwnerActor, {
     organizationId: betaOrg.id,
-    title: 'Cross-Border Customs Tariff & Maritime Manifest Guide',
-    sourceFilename: 'customs-tariff-manifest-guide.md',
+    title: 'Customs & Express Shipping Guide',
+    sourceFilename: 'customs-shipping-guide.md',
     mimeType: 'text/markdown',
     content: [
-      '# Harmonized Customs Clearance & Bonded Warehouse Rules',
-      'International biologics manifests require verified certificate-of-origin declarations and harmonized tariff schedule codes before port release.',
+      '# Customs Paperwork Rule',
+      'International shipments need a signed certificate of origin and tariff code before leaving the port.',
       '',
-      '## Priority Air-Freight Charter Escalation',
-      'When port demurrage or customs delay threatens cold-chain stability, dispatchers may request priority air-freight charter routing via Frankfurt or Singapore hubs.',
+      '## Express Air Reroute',
+      'When port delays threaten chilled goods, dispatchers can book priority air-freight shipping through Frankfurt.',
     ].join('\n'),
   });
 
-  // 3B. Create 2 Domain Agents for Beta Logistics (with v1 and v2 snapshots)
+  // 3B. Create 2 Simple Shipping Agents for Beta Logistics (with v1 and v2 snapshots)
   const betaCopilotDraft = await createAgentDraft(db, betaOwnerActor, {
     organizationId: betaOrg.id,
-    name: 'Cold-Chain Freight & Customs Copilot',
-    slug: 'cold-chain-customs-copilot',
+    name: 'Shipping & Customs Assistant',
+    slug: 'shipping-customs-assistant',
     description:
-      'Computes cold-chain tariff duties and retrieves biologics quarantine and customs clearance playbooks.',
+      'Calculates shipping costs and answers cold storage and customs rules.',
     draftSystemPrompt:
-      'You are the Beta Logistics Cold-Chain Freight & Customs Copilot. Use calculator for tariff/demurrage math and knowledge_search for cold-chain and customs playbooks.',
+      'You are a helpful shipping assistant. Use calculator for shipping math and knowledge_search for cold storage and customs guides.',
     draftToolAllowlist: ['calculator', 'knowledge_search'],
   });
 
@@ -596,12 +593,12 @@ export async function seedFlagshipWorkspace(
 
   const betaRouteOptimizer = await createAgentDraft(db, betaOwnerActor, {
     organizationId: betaOrg.id,
-    name: 'Global Supply-Chain FinOps & Route Optimizer',
-    slug: 'supply-chain-route-optimizer',
+    name: 'Delivery Route Cost Helper',
+    slug: 'delivery-route-helper',
     description:
-      'Analyzes air-freight charter surcharges, port demurrage penalties, and bonded warehouse routing.',
+      'Helps compare delivery routes and shipping fees.',
     draftSystemPrompt:
-      'You are the Beta Logistics Global Supply-Chain Route Optimizer. Use calculator for freight cost modeling and knowledge_search for manifest procedures.',
+      'You help calculate shipping fees using calculator and check customs guides using knowledge_search.',
     draftToolAllowlist: ['calculator', 'knowledge_search'],
   });
 
@@ -612,13 +609,13 @@ export async function seedFlagshipWorkspace(
     betaRouteOptimizer.id
   );
 
-  // 4B. Create & Publish Beta Logistics DAG Workflow with Active Pending HITL Approval Gate
+  // 4B. Create & Publish Beta Logistics Workflow with Active Pending Approval Gate
   const betaWorkflowDraft = await createWorkflowDraft(db, betaOwnerActor, {
     organizationId: betaOrg.id,
-    slug: 'cold-chain-air-charter-gate',
-    name: 'Cold-Chain Air-Freight Charter & Customs Gate',
+    slug: 'express-shipping-approval',
+    name: 'Express Air Shipping Approval Workflow',
     description:
-      'Computes cold-chain excursion tariff exposure via calculator, pauses for human approval when score > 100, and dispatches charter instructions.',
+      'Calculates shipping cost score. If score is over 100, pauses for Manager approval before booking express air freight.',
     graph: BETA_LOGISTICS_HITL_WORKFLOW_GRAPH,
   });
 
@@ -636,29 +633,29 @@ export async function seedFlagshipWorkspace(
     workflowVersionId: betaWorkflowV1.id,
     defaultAgentVersionId: betaAgentV1.id,
     inputPrompt:
-      'Reroute Biologics Lot BL-904 via priority air-freight hub Frankfurt due to port customs delay',
+      'Approve express air shipping for Chilled Box Lot BL-904 due to port delay',
   });
 
-  // 5B. Create & Run Evaluation Suite for Beta Logistics (v1 100% vs v2 50%)
+  // 5B. Create & Run Simple Evaluation Suite for Beta Logistics (v1 100% vs v2 50%)
   const { suite: betaSuite } = await createEvalSuite(db, betaOwnerActor, {
     organizationId: betaOrg.id,
     agentId: betaCopilotDraft.id,
-    name: 'Cold-Chain Excursion & Tariff Compliance Benchmark',
+    name: 'Shipping Math & Rules Check',
     description:
-      'Verifies deterministic customs tariff arithmetic via calculator and grounded cold-chain playbook citations via knowledge_search.',
+      'Checks that our shipping assistant can calculate fees ((45 * 4) + 20 = 200) and find the cold storage quarantine rule.',
     cases: [
       {
-        name: 'Customs Tariff & Reefer Surcharge Calculation',
-        inputPrompt: 'Calculate (45 * 4) + 20 for the cold-chain customs surcharge',
+        name: 'Shipping Fee Calculation',
+        inputPrompt: 'What is (45 * 4) + 20 for the shipping fee?',
         assertions: [
           { type: 'tool_called', toolName: 'calculator' },
           { type: 'contains', expectedSubstring: '200' },
         ],
       },
       {
-        name: 'Cold-Chain Quarantine Playbook Citation Grounding',
+        name: 'Cold Storage Quarantine Rule Check',
         inputPrompt:
-          'Search knowledge playbook for cold-chain quarantine hold and glycol probe temperature excursion procedure',
+          'What is our cold-chain quarantine hold rule when a box gets too warm?',
         assertions: [
           { type: 'tool_called', toolName: 'knowledge_search' },
           {
