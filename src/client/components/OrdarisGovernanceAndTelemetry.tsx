@@ -82,8 +82,10 @@ export interface AuditLedgerEvent {
   actorUserId: string | null;
   actorRole: string | null;
   action: string;
-  targetType: string;
-  targetId: string;
+  targetType?: string;
+  targetId?: string | null;
+  resourceType?: string;
+  resourceId?: string | null;
   outcome: 'allowed' | 'denied' | string;
   metadata?: Record<string, unknown>;
   createdAt: string;
@@ -141,7 +143,8 @@ const RBAC_23_ACTIONS: Array<{
 ];
 
 function computeAuditSeal(evt: AuditLedgerEvent): string {
-  const raw = `${evt.id}:${evt.action}:${evt.outcome}:${evt.targetId}:${evt.createdAt}`;
+  const tId = evt.targetId ?? evt.resourceId ?? '';
+  const raw = `${evt.id}:${evt.action}:${evt.outcome}:${tId}:${evt.createdAt}`;
   let h1 = 0xdeadbeef ^ raw.length;
   let h2 = 0x41c6ce57 ^ raw.length;
   for (let i = 0; i < raw.length; i++) {
@@ -355,10 +358,12 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
     }
     if (!auditSearch.trim()) return true;
     const q = auditSearch.toLowerCase();
+    const tType = (evt.targetType ?? evt.resourceType ?? '').toLowerCase();
+    const tId = (evt.targetId ?? evt.resourceId ?? '').toLowerCase();
     return (
-      evt.action.toLowerCase().includes(q) ||
-      evt.targetType.toLowerCase().includes(q) ||
-      evt.targetId.toLowerCase().includes(q) ||
+      (evt.action || '').toLowerCase().includes(q) ||
+      tType.includes(q) ||
+      tId.includes(q) ||
       (evt.actorRole || '').toLowerCase().includes(q)
     );
   });
@@ -378,7 +383,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
             'id,createdAt,actorRole,action,targetType,targetId,outcome,integritySeal',
             ...filteredAuditEvents.map(
               (e) =>
-                `"${e.id}","${e.createdAt}","${e.actorRole || ''}","${e.action}","${e.targetType}","${e.targetId}","${e.outcome}","${computeAuditSeal(e)}"`,
+                `"${e.id}","${e.createdAt}","${e.actorRole || ''}","${e.action}","${e.targetType ?? e.resourceType ?? ''}","${e.targetId ?? e.resourceId ?? ''}","${e.outcome}","${computeAuditSeal(e)}"`,
             ),
           ].join('\n');
 
@@ -1148,7 +1153,8 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                       {evt.action}
                     </td>
                     <td className="py-2 px-3 text-slate-400">
-                      {evt.targetType}:{evt.targetId.slice(0, 14)}
+                      {evt.targetType ?? evt.resourceType ?? 'resource'}:
+                      {String(evt.targetId ?? evt.resourceId ?? 'workspace').slice(0, 14)}
                     </td>
                     <td className="py-2 px-3">
                       <span

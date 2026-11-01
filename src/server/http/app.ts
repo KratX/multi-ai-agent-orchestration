@@ -199,6 +199,7 @@ const approvalDecisionBodySchema = z.object({
   decision: z.enum(['approved', 'rejected']),
   note: z.string().max(1000).optional(),
   aiEngine: AI_ENGINE_ENUM.optional(),
+  engine: AI_ENGINE_ENUM.optional(),
 });
 
 const ingestDocumentBodySchema = z.object({
@@ -218,9 +219,11 @@ const startWorkflowRunBodySchema = z.object({
     .trim()
     .min(1)
     .default('Evaluate production deployment risk score 150'),
+  triggerNote: z.string().trim().optional(),
   initialVariables: z.record(z.string(), z.unknown()).optional(),
   riskOverrideExpression: z.string().trim().optional(),
   aiEngine: AI_ENGINE_ENUM.optional(),
+  engine: AI_ENGINE_ENUM.optional(),
 });
 
 const ACTOR_AUTH_SUBJECT_MAP: Record<
@@ -951,12 +954,20 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     const rawEnv = parseEnv(deps.rawEnv ?? process.env);
     const byokScopeKey = getRequestByokScope(req, 'global');
     const effectiveEnv = resolveEffectiveEnvWithByok(rawEnv, byokScopeKey);
+    const rawLogs = getRuntimeLogs(120);
+    const entries = rawLogs.map((l) => ({
+      timestamp: l.timestamp,
+      level: String(l.level || 'info').toLowerCase(),
+      event: `[${l.component}] ${l.message}`,
+      context: l.details,
+    }));
     res.status(200).json({
       data: {
         logFilePath: LOG_FILE_PATH,
         providerKeys: getProviderKeyStatus(effectiveEnv),
         byokProviders: listByokProviderStatuses(rawEnv, byokScopeKey),
-        logs: getRuntimeLogs(120),
+        logs: rawLogs,
+        entries,
       },
     });
   });
@@ -968,10 +979,17 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
       component: 'diagnostic-logger',
       message: 'Cleared in-memory runtime log buffer via Ordaris Log Explorer.',
     });
+    const rawLogs = getRuntimeLogs(50);
     res.status(200).json({
       data: {
         cleared: true,
-        logs: getRuntimeLogs(50),
+        logs: rawLogs,
+        entries: rawLogs.map((l) => ({
+          timestamp: l.timestamp,
+          level: String(l.level || 'info').toLowerCase(),
+          event: `[${l.component}] ${l.message}`,
+          context: l.details,
+        })),
       },
     });
   });
@@ -1506,9 +1524,10 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         const body = approvalDecisionBodySchema.parse(req.body);
         const byokScopeKey = getRequestByokScope(req, actor.organizationId);
         const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
-        const activeProvider = body.aiEngine
+        const chosenEngine = body.aiEngine ?? body.engine;
+        const activeProvider = chosenEngine
           ? createLiveRuntimeModelProvider(effectiveEnv, {
-              engine: body.aiEngine as LiveAiEngineMode,
+              engine: chosenEngine as LiveAiEngineMode,
             })
           : deps.modelProvider ?? createModelProvider(effectiveEnv);
         const outcome = await decideApprovalRequest(db, actor, {
@@ -1715,13 +1734,81 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     '/api/v1/workflows/validate-dag',
     async (req: Request, res: Response) => {
       try {
-        const graph = req.body?.graph;
+        let graph = req.body?.graph;
+        if (!graph && Array.isArray(req.body?.nodes)) {
+          const rawNodes = req.body.nodes as Array<{
+            id: string;
+            label?: string;
+            type?: string;
+            kind?: string;
+            dependsOn?: string[];
+          }>;
+          const edges: Array<{ id: string; source: string; target: string }> = [];
+          for (const n of rawNodes) {
+            if (Array.isArray(n.dependsOn)) {
+              for (const dep of n.dependsOn) {
+                edges.push({
+                  id: `e_${dep}_${n.id}`,
+                  source: String(dep),
+                  target: String(n.id),
+                });
+              }
+            }
+          }
+          const incomingCount = new Map<string, number>();
+          const outgoingCount = new Map<string, number>();
+          for (const n of rawNodes) {
+            incomingCount.set(n.id, 0);
+            outgoingCount.set(n.id, 0);
+          }
+          for (const e of edges) {
+            incomingCount.set(e.target, (incomingCount.get(e.target) ?? 0) + 1);
+            outgoingCount.set(e.source, (outgoingCount.get(e.source) ?? 0) + 1);
+          }
+          const mappedNodes = rawNodes.map((n, idx) => {
+            const rawKind = n.kind ?? n.type ?? 'tool';
+            let kind = String(rawKind);
+            if (kind === 'human_approval') {
+              kind = 'approval';
+            }
+            if (!['start', 'end', 'agent', 'tool', 'approval'].includes(kind)) {
+              kind = 'tool';
+            }
+            const label = String(n.label ?? n.id ?? `Node ${idx + 1}`);
+            return {
+              id: String(n.id),
+              kind,
+              label,
+              ...(kind === 'approval' ? { approvalTitle: label } : {}),
+            };
+          });
+          if (!mappedNodes.some((n) => n.kind === 'start') && mappedNodes.length > 0) {
+            const rootCandidate =
+              mappedNodes.find((n) => (incomingCount.get(n.id) ?? 0) === 0) ??
+              mappedNodes[0]!;
+            rootCandidate.kind = 'start';
+          }
+          if (!mappedNodes.some((n) => n.kind === 'end') && mappedNodes.length > 1) {
+            const leafCandidates = mappedNodes.filter(
+              (n) => n.kind !== 'start' && (outgoingCount.get(n.id) ?? 0) === 0
+            );
+            const leaf =
+              leafCandidates[leafCandidates.length - 1] ??
+              mappedNodes[mappedNodes.length - 1]!;
+            if (leaf.kind !== 'start') {
+              leaf.kind = 'end';
+            }
+          }
+          graph = { nodes: mappedNodes, edges };
+        }
+
         const result = validateWorkflowDag(graph);
         res.status(200).json({
           data: {
             valid: result.valid,
             topologicalOrder: result.topologicalOrder,
             errors: result.errors,
+            error: result.errors?.[0] ?? null,
             cyclePath: result.cyclePath,
             nodeCount: Array.isArray(graph?.nodes) ? graph.nodes.length : 0,
             edgeCount: Array.isArray(graph?.edges) ? graph.edges.length : 0,
@@ -1734,6 +1821,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
               valid: false,
               code: err.code,
               message: err.message,
+              error: err.message,
               errors: err.errors,
               cyclePath: err.cyclePath,
             },
@@ -1744,6 +1832,8 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           data: {
             valid: false,
             code: 'INVALID_DAG_INPUT',
+            error:
+              err instanceof Error ? err.message : 'Invalid workflow DAG payload.',
             message:
               err instanceof Error ? err.message : 'Invalid workflow DAG payload.',
           },
@@ -1797,191 +1887,217 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
     }
   );
 
-  app.post(
-    '/api/v1/workflows/:id/runs',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-        const body = startWorkflowRunBodySchema.parse(req.body ?? {});
-        const workflowId = String(req.params.id);
+  const handleStartWorkflowRunRoute = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const env = parseEnv(deps.rawEnv ?? process.env);
+      const { db } = await contextProvider();
+      const actor = await resolveActorFromRequest(req, db, env);
+      if (!actor) {
+        throw unauthenticatedError();
+      }
+      const body = startWorkflowRunBodySchema.parse(req.body ?? {});
+      const workflowId = String(req.params.id);
 
-        let workflowVersionId = body.workflowVersionId;
+      let workflowVersionId = body.workflowVersionId;
 
-        // If user requested a Low-Risk branch override (e.g. expression "20 * 3" = 60 <= 100),
-        // create or reuse a published low-risk version so they can watch the condition node auto-bypass the HITL gate!
-        if (body.riskOverrideExpression) {
-          const [wfRow] = await db
-            .select()
-            .from(workflows)
-            .where(
-              and(
-                eq(workflows.id, workflowId),
-                eq(workflows.organizationId, actor.organizationId)
-              )
+      // If user requested a Low-Risk branch override (e.g. expression "20 * 3" = 60 <= 100),
+      // create or reuse a published low-risk version so they can watch the condition node auto-bypass the HITL gate!
+      if (body.riskOverrideExpression) {
+        const [wfRow] = await db
+          .select()
+          .from(workflows)
+          .where(
+            and(
+              eq(workflows.id, workflowId),
+              eq(workflows.organizationId, actor.organizationId)
             )
-            .limit(1);
+          )
+          .limit(1);
 
-          if (wfRow) {
-            const mutatedGraph = {
-              ...wfRow.draftGraphJson,
-              nodes: wfRow.draftGraphJson.nodes.map((n) =>
-                n.kind === 'tool' && n.toolName === 'calculator'
-                  ? {
-                      ...n,
-                      toolInput: { expression: body.riskOverrideExpression },
-                    }
-                  : n
-              ),
-            };
-            await db
-              .update(workflows)
-              .set({ draftGraphJson: mutatedGraph, updatedAt: new Date() })
-              .where(eq(workflows.id, workflowId));
-            const publishedOverride = await publishWorkflowVersion(db, actor, {
-              organizationId: actor.organizationId,
-              workflowId,
-            });
-            workflowVersionId = publishedOverride.version.id;
-          }
-        }
-
-        if (!workflowVersionId) {
-          const [latestWfVer] = await db
-            .select()
-            .from(workflowVersions)
-            .where(eq(workflowVersions.workflowId, workflowId))
-            .orderBy(desc(workflowVersions.versionNumber))
-            .limit(1);
-          workflowVersionId = latestWfVer?.id;
-        }
-
-        let agentVersionId = body.agentVersionId;
-        if (!agentVersionId) {
-          const [latestAgentVer] = await db
-            .select()
-            .from(agentVersions)
-            .where(eq(agentVersions.organizationId, actor.organizationId))
-            .orderBy(asc(agentVersions.versionNumber))
-            .limit(1);
-          agentVersionId = latestAgentVer?.id;
-        }
-
-        if (!workflowVersionId || !agentVersionId) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            400,
-            'MISSING_WORKFLOW_OR_AGENT_VERSION',
-            'Missing published workflow or agent version',
-            'Publish a workflow version and an agent version before starting a workflow run.'
-          );
-          return;
-        }
-
-        const byokScopeKey = getRequestByokScope(req, actor.organizationId);
-        const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
-        const activeProvider = body.aiEngine
-          ? createLiveRuntimeModelProvider(effectiveEnv, {
-              engine: body.aiEngine as LiveAiEngineMode,
-            })
-          : deps.modelProvider ?? createModelProvider(effectiveEnv);
-
-        const started = await startWorkflowRun(db, actor, {
-          organizationId: actor.organizationId,
-          workflowVersionId,
-          defaultAgentVersionId: agentVersionId,
-          inputPrompt: body.inputPrompt,
-          initialVariables: body.initialVariables,
-          modelProvider: activeProvider,
-        });
-
-        res.status(201).json({ data: started });
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  // 11b. Evaluation Suites & Experiments (`POST /api/v1/eval-suites/:id/experiments`)
-  app.post(
-    '/api/v1/eval-suites/:id/experiments',
-    async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const env = parseEnv(deps.rawEnv ?? process.env);
-        const { db } = await contextProvider();
-        const actor = await resolveActorFromRequest(req, db, env);
-        if (!actor) {
-          throw unauthenticatedError();
-        }
-        const suiteId = String(req.params.id);
-        let agentVersionId =
-          typeof req.body?.agentVersionId === 'string' &&
-          req.body.agentVersionId.trim()
-            ? req.body.agentVersionId.trim()
-            : undefined;
-
-        if (!agentVersionId) {
-          const [latestVer] = await db
-            .select()
-            .from(agentVersions)
-            .where(eq(agentVersions.organizationId, actor.organizationId))
-            .orderBy(desc(agentVersions.versionNumber))
-            .limit(1);
-          agentVersionId = latestVer?.id;
-        }
-
-        if (!agentVersionId) {
-          sendProblemDetails(
-            res,
-            getReqId(req),
-            400,
-            'MISSING_AGENT_VERSION',
-            'Missing agent version',
-            'Publish at least one agent version before running an evaluation experiment.'
-          );
-          return;
-        }
-
-        const requestedEngine =
-          typeof req.body?.aiEngine === 'string'
-            ? (req.body.aiEngine as LiveAiEngineMode)
-            : 'mock';
-
-        const byokScopeKey = getRequestByokScope(req, actor.organizationId);
-        const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
-
-        const customProvider =
-          requestedEngine && requestedEngine !== 'mock'
-            ? createLiveRuntimeModelProvider(effectiveEnv, {
-                engine: requestedEngine,
-              })
-            : undefined;
-
-        const result = await runEvalExperiment(
-          db,
-          actor,
-          {
+        if (wfRow) {
+          const mutatedGraph = {
+            ...wfRow.draftGraphJson,
+            nodes: wfRow.draftGraphJson.nodes.map((n) =>
+              n.kind === 'tool' && n.toolName === 'calculator'
+                ? {
+                    ...n,
+                    toolInput: { expression: body.riskOverrideExpression },
+                  }
+                : n
+            ),
+          };
+          await db
+            .update(workflows)
+            .set({ draftGraphJson: mutatedGraph, updatedAt: new Date() })
+            .where(eq(workflows.id, workflowId));
+          const publishedOverride = await publishWorkflowVersion(db, actor, {
             organizationId: actor.organizationId,
-            suiteId,
-            agentVersionId,
-            providerMode: customProvider ? 'live' : 'mock',
-          },
-          {
-            modelProvider: customProvider,
-          }
-        );
-
-        res.status(201).json({ data: result });
-      } catch (err) {
-        next(err);
+            workflowId,
+          });
+          workflowVersionId = publishedOverride.version.id;
+        }
       }
+
+      if (!workflowVersionId) {
+        const [latestWfVer] = await db
+          .select()
+          .from(workflowVersions)
+          .where(eq(workflowVersions.workflowId, workflowId))
+          .orderBy(desc(workflowVersions.versionNumber))
+          .limit(1);
+        workflowVersionId = latestWfVer?.id;
+      }
+
+      let agentVersionId = body.agentVersionId;
+      if (!agentVersionId) {
+        const [latestAgentVer] = await db
+          .select()
+          .from(agentVersions)
+          .where(eq(agentVersions.organizationId, actor.organizationId))
+          .orderBy(asc(agentVersions.versionNumber))
+          .limit(1);
+        agentVersionId = latestAgentVer?.id;
+      }
+
+      if (!workflowVersionId || !agentVersionId) {
+        sendProblemDetails(
+          res,
+          getReqId(req),
+          400,
+          'MISSING_WORKFLOW_OR_AGENT_VERSION',
+          'Missing published workflow or agent version',
+          'Publish a workflow version and an agent version before starting a workflow run.'
+        );
+        return;
+      }
+
+      const byokScopeKey = getRequestByokScope(req, actor.organizationId);
+      const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
+      const chosenEngine = body.aiEngine ?? body.engine;
+      const activeProvider = chosenEngine
+        ? createLiveRuntimeModelProvider(effectiveEnv, {
+            engine: chosenEngine as LiveAiEngineMode,
+          })
+        : deps.modelProvider ?? createModelProvider(effectiveEnv);
+
+      const started = await startWorkflowRun(db, actor, {
+        organizationId: actor.organizationId,
+        workflowVersionId,
+        defaultAgentVersionId: agentVersionId,
+        inputPrompt: body.triggerNote || body.inputPrompt,
+        initialVariables: body.initialVariables,
+        modelProvider: activeProvider,
+      });
+
+      res.status(201).json({
+        data: {
+          ...started,
+          status: started.run.status,
+          runId: started.run.id,
+          pausedAtNodeId: started.pendingApproval?.nodeId ?? null,
+          approvalRequestId: started.pendingApproval?.id ?? null,
+        },
+      });
+    } catch (err) {
+      next(err);
     }
-  );
+  };
+
+  app.post('/api/v1/workflows/:id/runs', handleStartWorkflowRunRoute);
+  app.post('/api/v1/workflows/:id/execute', handleStartWorkflowRunRoute);
+
+  // 11b. Evaluation Suites & Experiments (`POST /api/v1/eval-suites/:id/experiments` & `POST /api/v1/evals/suites/:id/run`)
+  const handleRunEvalExperimentRoute = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const env = parseEnv(deps.rawEnv ?? process.env);
+      const { db } = await contextProvider();
+      const actor = await resolveActorFromRequest(req, db, env);
+      if (!actor) {
+        throw unauthenticatedError();
+      }
+      const suiteId = String(req.params.id);
+      let agentVersionId =
+        typeof req.body?.agentVersionId === 'string' &&
+        req.body.agentVersionId.trim()
+          ? req.body.agentVersionId.trim()
+          : undefined;
+
+      if (!agentVersionId) {
+        const [latestVer] = await db
+          .select()
+          .from(agentVersions)
+          .where(eq(agentVersions.organizationId, actor.organizationId))
+          .orderBy(desc(agentVersions.versionNumber))
+          .limit(1);
+        agentVersionId = latestVer?.id;
+      }
+
+      if (!agentVersionId) {
+        sendProblemDetails(
+          res,
+          getReqId(req),
+          400,
+          'MISSING_AGENT_VERSION',
+          'Missing agent version',
+          'Publish at least one agent version before running an evaluation experiment.'
+        );
+        return;
+      }
+
+      const rawEngineInput = req.body?.aiEngine ?? req.body?.engine;
+      const requestedEngine =
+        typeof rawEngineInput === 'string'
+          ? (rawEngineInput as LiveAiEngineMode)
+          : 'mock';
+
+      const byokScopeKey = getRequestByokScope(req, actor.organizationId);
+      const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
+
+      const customProvider =
+        requestedEngine && requestedEngine !== 'mock'
+          ? createLiveRuntimeModelProvider(effectiveEnv, {
+              engine: requestedEngine,
+            })
+          : undefined;
+
+      const result = await runEvalExperiment(
+        db,
+        actor,
+        {
+          organizationId: actor.organizationId,
+          suiteId,
+          agentVersionId,
+          providerMode: customProvider ? 'live' : 'mock',
+        },
+        {
+          modelProvider: customProvider,
+        }
+      );
+
+      const rawPassRate = Number(result.experiment.passRate ?? 1);
+      res.status(201).json({
+        data: {
+          ...result,
+          passRate: rawPassRate > 1 ? rawPassRate / 100 : rawPassRate,
+          passedCases: result.experiment.passedCases,
+          totalCases: result.experiment.totalCases,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  app.post('/api/v1/eval-suites/:id/experiments', handleRunEvalExperimentRoute);
+  app.post('/api/v1/evals/suites/:id/run', handleRunEvalExperimentRoute);
 
   // 12. Usage & Audit Ledgers (`GET /api/v1/usage` & `GET /api/v1/audit-events`)
   app.get('/api/v1/usage', async (req: Request, res: Response, next: NextFunction) => {

@@ -102,6 +102,10 @@ export interface IsolationCheckItem {
   httpStatus: number;
   passed: boolean;
   durationMs: number;
+  description?: string;
+  expectedStatus?: number;
+  actualStatus?: number;
+  evidence?: string;
 }
 
 export interface MultiTenantIsolationReport {
@@ -109,6 +113,9 @@ export interface MultiTenantIsolationReport {
   overallPassed: boolean;
   checksCount: number;
   passedCount: number;
+  verified?: boolean;
+  passedChecks?: number;
+  totalChecks?: number;
   checks: IsolationCheckItem[];
 }
 
@@ -249,6 +256,10 @@ export async function verifyMultiTenantIsolation(
     httpStatus: 200,
     passed: c1Passed,
     durationMs: Math.max(1, Date.now() - t1),
+    description: 'searchKnowledgeChunks(betaOrgId, "Severity 1 On-Call Commander AES-256-GCM")',
+    expectedStatus: 200,
+    actualStatus: 200,
+    evidence: `${betaSearch.length} Acme chunks returned (expected 0 across FTS + 64-d Cosine scan)`,
   });
 
   // Check 2: Document & Chunk Anti-Enumeration (404 Threat T-01)
@@ -287,6 +298,10 @@ export async function verifyMultiTenantIsolation(
     httpStatus: c2Status,
     passed: c2Status === 404,
     durationMs: Math.max(1, Date.now() - t2),
+    description: `GET /api/v1/knowledge/documents/${acmeDoc?.id.slice(0, 8) ?? 'acme_doc'} as Beta Logistics`,
+    expectedStatus: 404,
+    actualStatus: c2Status,
+    evidence: c2Outcome,
   });
 
   // Check 3: Evaluation Suite Cross-Tenant Boundary (404 TENANT_MISMATCH)
@@ -325,6 +340,10 @@ export async function verifyMultiTenantIsolation(
     httpStatus: c3Status,
     passed: c3Status === 404,
     durationMs: Math.max(1, Date.now() - t3),
+    description: `getEvalSuiteWithCases(betaActor, acmeOrgId, "${acmeSuite?.id.slice(0, 8) ?? 'suite'}")`,
+    expectedStatus: 404,
+    actualStatus: c3Status,
+    evidence: c3Outcome,
   });
 
   // Check 4: SSE Event Stream Cross-Tenant Boundary (404)
@@ -350,6 +369,10 @@ export async function verifyMultiTenantIsolation(
     httpStatus: c4Status,
     passed: c4Status === 404,
     durationMs: Math.max(1, Date.now() - t4),
+    description: `GET /api/v1/runs/${acmeRun?.id.slice(0, 8) ?? 'acme_run'}/stream as Beta Logistics`,
+    expectedStatus: 404,
+    actualStatus: c4Status,
+    evidence: c4Outcome,
   });
 
   const passedCount = checks.filter((c) => c.passed).length;
@@ -359,6 +382,9 @@ export async function verifyMultiTenantIsolation(
     overallPassed: passedCount === checks.length,
     checksCount: checks.length,
     passedCount,
+    verified: passedCount === checks.length,
+    passedChecks: passedCount,
+    totalChecks: checks.length,
     checks,
   };
 }
