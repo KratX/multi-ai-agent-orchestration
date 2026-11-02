@@ -21,10 +21,10 @@ services:
       - key: DB_DRIVER
         value: pglite
       - key: PGLITE_DATA_DIR
-        value: .local/ordaris-db
+        value: dist/ordaris-db
       - key: UPLOAD_DIR
         value: .local/uploads
       - key: NODE_OPTIONS
-        value: "--max-old-space-size=256"
+        value: "--expose-gc --max-old-space-size=256"
       - key: AUTH_SECRET
         generateValue: true
