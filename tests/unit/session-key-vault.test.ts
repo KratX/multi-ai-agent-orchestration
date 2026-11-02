@@ -65,7 +65,7 @@ test('Session BYOK Vault: never writes .local/byok-vault.json or any file to dis
   saveByokProviderKey({
     scopeKey,
     provider: 'openrouter',
-    apiKey: 'sk-or-v1-ephemeral-only-key-1234567890',
+    apiKey: 'or_test_ephemeral_only_key_1234567890',
   });
   listByokProviderStatuses(baseEnv, scopeKey);
   saveByokProviderKey({
@@ -88,7 +88,7 @@ test('Session BYOK Vault: enforces a 2-hour (7,200,000 ms) TTL and automatically
   saveByokProviderKey({
     scopeKey,
     provider: 'chatgpt',
-    apiKey: 'sk-proj-ttl-check-1234567890abcdef',
+    apiKey: 'oa_test_ttl_check_1234567890abcdef',
     nowMs: t0,
   });
 
@@ -97,7 +97,7 @@ test('Session BYOK Vault: enforces a 2-hour (7,200,000 ms) TTL and automatically
     nowMs: t0 + BYOK_SESSION_TTL_MS - 1_000,
     slideTtl: false,
   });
-  assert.equal(beforeExpiryEnv.OPENAI_API_KEY, 'sk-proj-ttl-check-1234567890abcdef');
+  assert.equal(beforeExpiryEnv.OPENAI_API_KEY, 'oa_test_ttl_check_1234567890abcdef');
 
   // Expired 1 ms after the 2-hour window
   const afterExpiryEnv = resolveEffectiveEnvWithByok(baseEnv, scopeKey, {
@@ -118,7 +118,7 @@ test('Session BYOK Vault: extends the 2-hour sliding TTL forward on active key d
   saveByokProviderKey({
     scopeKey,
     provider: 'claude',
-    apiKey: 'sk-ant-sliding-window-key-1234567890',
+    apiKey: 'cl_test_sliding_window_key_1234567890',
     nowMs: t0,
   });
 
@@ -128,7 +128,7 @@ test('Session BYOK Vault: extends the 2-hour sliding TTL forward on active key d
     nowMs: t90m,
     slideTtl: true,
   });
-  assert.equal(resolvedAt90m.ANTHROPIC_API_KEY, 'sk-ant-sliding-window-key-1234567890');
+  assert.equal(resolvedAt90m.ANTHROPIC_API_KEY, 'cl_test_sliding_window_key_1234567890');
 
   // At t0 + 150 minutes (past initial 120m expiry, but within 120m of the 90m read), key is still alive
   const t150m = t0 + 150 * 60 * 1000;
@@ -136,7 +136,7 @@ test('Session BYOK Vault: extends the 2-hour sliding TTL forward on active key d
     nowMs: t150m,
     slideTtl: true,
   });
-  assert.equal(resolvedAt150m.ANTHROPIC_API_KEY, 'sk-ant-sliding-window-key-1234567890');
+  assert.equal(resolvedAt150m.ANTHROPIC_API_KEY, 'cl_test_sliding_window_key_1234567890');
 });
 
 test('Session BYOK Vault: validates high-entropy session tokens and rejects short or guessable tokens with ByokSessionValidationError', () => {
@@ -241,8 +241,8 @@ test('Session BYOK Vault: masks API keys one-way without prefix exposure and nev
 
 test('Session BYOK Vault: invalidates previously encrypted in-RAM records when rotateEphemeralMasterKey() is called', () => {
   clearByokScope('global', { clearAllDemoScopes: true });
-  const encryptedBefore = encryptSecret('xai-ephemeral-rotation-test-123456');
-  assert.equal(decryptSecret(encryptedBefore), 'xai-ephemeral-rotation-test-123456');
+  const encryptedBefore = encryptSecret('gk_test_ephemeral_rotation_123456');
+  assert.equal(decryptSecret(encryptedBefore), 'gk_test_ephemeral_rotation_123456');
 
   rotateEphemeralMasterKey();
   assert.equal(decryptSecret(encryptedBefore), null);
@@ -267,7 +267,7 @@ test('Session BYOK Vault: supports targeted provider deletion and scoped or glob
   saveByokProviderKey({
     scopeKey: scopeAlpha,
     provider: 'openrouter',
-    apiKey: 'sk-or-v1-alpha-key-1234567890',
+    apiKey: 'or_test_alpha_key_1234567890',
   });
   saveByokProviderKey({
     scopeKey: scopeBeta,
@@ -284,7 +284,7 @@ test('Session BYOK Vault: supports targeted provider deletion and scoped or glob
   assert.equal(resolveEffectiveEnvWithByok(baseEnv, scopeAlpha).GEMINI_API_KEY, '');
   assert.equal(
     resolveEffectiveEnvWithByok(baseEnv, scopeAlpha).OPENROUTER_API_KEY,
-    'sk-or-v1-alpha-key-1234567890'
+    'or_test_alpha_key_1234567890'
   );
 
   // Clear entire scopeAlpha without affecting scopeBeta

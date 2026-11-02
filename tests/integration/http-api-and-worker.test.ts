@@ -346,7 +346,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
       },
       body: JSON.stringify({
         provider: 'openrouter',
-        rawKey: 'sk-or-v1-alpha-session-secret-key-9999',
+        rawKey: 'or_test_alpha_session_secret_key_9999',
       }),
     });
     assert.equal(weakSessionRes.status, 400);
@@ -360,7 +360,7 @@ test('v1.0.0-demo Enterprise Control Plane: 8-Persona RBAC, Session-Scoped BYOK 
       },
       body: JSON.stringify({
         provider: 'openrouter',
-        rawKey: 'sk-or-v1-alpha-session-secret-key-9999',
+        rawKey: 'or_test_alpha_session_secret_key_9999',
       }),
     });
     assert.equal(saveKeyAlphaRes.status, 200);

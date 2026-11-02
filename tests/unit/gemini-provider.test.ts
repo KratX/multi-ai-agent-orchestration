@@ -185,7 +185,7 @@ test('Phase F+: OpenAIChatGPTModelProvider, AnthropicClaudeModelProvider, and Xa
   assert.equal(chatgptOut.usage.source, 'provider');
 
   const grok = new XaiGrokModelProvider({
-    apiKey: 'xai-test-grok-key',
+    apiKey: 'gk_test_grok_key',
     fetchImpl: mockOpenAiFetch,
   });
   const grokOut = await grok.generate({
@@ -219,7 +219,7 @@ test('Phase F+: OpenAIChatGPTModelProvider, AnthropicClaudeModelProvider, and Xa
     )) as unknown as typeof fetch;
 
   const claude = new AnthropicClaudeModelProvider({
-    apiKey: 'sk-ant-test-claude-key',
+    apiKey: 'cl_test_claude_key',
     fetchImpl: mockAnthropicFetch,
   });
   const claudeOut = await claude.generate({

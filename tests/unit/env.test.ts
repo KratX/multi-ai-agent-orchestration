@@ -257,3 +257,57 @@ test('BYOK-002 & LOG-001: rejects static/ephemeral BYOK session fallback tokens 
   );
 });
 
+test('CI-001 & SEC-SCAN-001: repository files contain zero secret-scanner-triggering API keys and CI workflow uses Ordaris Runtime', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const rootDir = process.cwd();
+
+  const legacyBrandRegex = new RegExp('ae' + 'gis', 'i');
+  const ciWorkflowPath = path.join(rootDir, '.github/workflows/ci.yml');
+  assert.equal(fs.existsSync(ciWorkflowPath), true, 'Expected .github/workflows/ci.yml to exist');
+  const ciContent = fs.readFileSync(ciWorkflowPath, 'utf8');
+  assert.match(ciContent, /^name:\s*Ordaris Runtime CI/m);
+  assert.equal(legacyBrandRegex.test(ciContent), false, 'CI workflow must not reference legacy branding');
+
+  const secretScanningPath = path.join(rootDir, '.github/secret_scanning.yml');
+  assert.equal(fs.existsSync(secretScanningPath), true, 'Expected .github/secret_scanning.yml to exist');
+  const secretScanningContent = fs.readFileSync(secretScanningPath, 'utf8');
+  assert.match(secretScanningContent, /paths-ignore:/);
+  assert.match(secretScanningContent, /tests\/\*\*/);
+
+  const gitignoreContent = fs.readFileSync(path.join(rootDir, '.gitignore'), 'utf8');
+  assert.equal(legacyBrandRegex.test(gitignoreContent), false, '.gitignore must not reference legacy branding');
+
+  // Construct scanner pattern dynamically so the test itself never embeds a literal prefix
+  const googlePrefix = 'AI' + 'za';
+  const scannerRegex = new RegExp(
+    `(${googlePrefix}[0-9A-Za-z_-]{10,}|sk-proj-[0-9A-Za-z_-]{8,}|sk-ant-[0-9A-Za-z_-]{8,}|sk-or-v1-[0-9A-Za-z_-]{8,}|xai-[0-9A-Za-z_-]{8,})`
+  );
+
+  const scanDir = (relDir: string): string[] => {
+    const violations: string[] = [];
+    const absDir = path.join(rootDir, relDir);
+    if (!fs.existsSync(absDir)) return violations;
+    for (const entry of fs.readdirSync(absDir, { withFileTypes: true })) {
+      const childRel = path.posix.join(relDir, entry.name);
+      if (entry.isDirectory()) {
+        violations.push(...scanDir(childRel));
+      } else if (entry.isFile() && /\.(ts|tsx|md|json|yml|yaml)$/i.test(entry.name)) {
+        const text = fs.readFileSync(path.join(rootDir, childRel), 'utf8');
+        if (scannerRegex.test(text)) {
+          violations.push(childRel);
+        }
+      }
+    }
+    return violations;
+  };
+
+  const detected = [...scanDir('src'), ...scanDir('tests'), ...scanDir('docs')];
+  assert.deepEqual(
+    detected,
+    [],
+    `Found secret-scanner-triggering key pattern in: ${detected.join(', ')}`
+  );
+});
+
+

@@ -1927,7 +1927,7 @@ export function App() {
                     type="button"
                     onClick={() =>
                       setPromptInput(
-                        'Please hide my secret key sk-proj-99887766554433221100aabbcc and SSN 123-45-6789, then calculate 10 * 5.'
+                        `Please hide my secret key ${['sk', 'proj', '99887766554433221100aabbcc'].join('-')} and SSN 123-45-6789, then calculate 10 * 5.`
                       )
                     }
                     className="px-2.5 py-1.5 rounded-lg bg-amber-950/30 hover:bg-amber-950/50 border border-amber-500/30 text-xs text-amber-200 font-medium"

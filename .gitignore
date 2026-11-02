@@ -1,5 +1,5 @@
 # ============================================================================
-# Aegis Cloud — Production & Local-First .gitignore
+# Ordaris Runtime — Production & Local-First .gitignore
 # ============================================================================
 
 # Dependencies
@@ -10,6 +10,7 @@ node_modules/
 
 # Build & TypeScript outputs
 dist/
+server.js
 build/
 out/
 .next/
@@ -52,8 +53,8 @@ lerna-debug.log*
 *.pid.lock
 
 # Companion step-sync archives (prevent accidental commit when unzipping)
-aegis-current-step-batch.zip
-aegis-cloud-full-workspace.zip
+ordaris-current-step-batch.zip
+ordaris-runtime-full-workspace.zip
 *.zip
 
 # OS & Editor files

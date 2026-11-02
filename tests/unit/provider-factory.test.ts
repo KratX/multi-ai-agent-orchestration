@@ -60,7 +60,7 @@ test('Provider Factory: falls back to Tier 2 (server_env) when the Session BYOK 
     NODE_ENV: 'test',
     AI_MODE: 'demo',
     DEMO_MODE: 'true',
-    OPENROUTER_API_KEY: 'sk-or-v1-server-env-fallback-key-12345',
+    OPENROUTER_API_KEY: 'or_test_server_env_fallback_key_12345',
   });
 
   const resolution = resolveThreeTierProvider(envWithOpenRouter, {
@@ -129,7 +129,7 @@ test('Provider Factory: automatically demotes from Tier 1 (session_byok) to Tier
   saveByokProviderKey({
     scopeKey,
     provider: 'chatgpt',
-    apiKey: 'sk-proj-ephemeral-session-key-123456',
+    apiKey: 'oa_test_ephemeral_session_key_123456',
     nowMs: t0,
   });
 
@@ -159,7 +159,7 @@ test('Provider Factory: resolves engine-specific provider status across gemini, 
   saveByokProviderKey({
     scopeKey,
     provider: 'claude',
-    apiKey: 'sk-ant-session-claude-key-1234567890',
+    apiKey: 'cl_test_session_claude_key_1234567890',
   });
 
   const mixedEnv = parseEnv({
