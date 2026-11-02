@@ -342,6 +342,20 @@ test('CI-001 & SEC-SCAN-001: repository files contain zero secret-scanner-trigge
   assert.equal(strippedDemoRoutes.includes('utils/zip'), false);
   assert.equal(rawDemoRoutes.includes('../../utils/zip'), false);
   assert.equal(strippedDemoRoutes.includes(startTag), false);
+
+  // Verify Render npm ERESOLVE fix (.npmrc + esbuild range in package.json) and README hosted link
+  const npmrcContent = fs.readFileSync(path.join(rootDir, '.npmrc'), 'utf8');
+  assert.match(npmrcContent, /legacy-peer-deps=true/);
+
+  const pkgJson = JSON.parse(
+    fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')
+  ) as { dependencies?: Record<string, string> };
+  assert.match(String(pkgJson.dependencies?.esbuild ?? ''), /0\.28\.0/);
+
+  const readmeContent = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf8');
+  assert.match(readmeContent, /https:\/\/ordaris-runtime\.onrender\.com/);
+  assert.equal(scannerRegex.test(readmeContent), false, 'README.md must not contain secret-scanner-triggering keys');
+  assert.equal(legacyBrandRegex.test(readmeContent), false, 'README.md must not reference legacy branding');
 });
 
 

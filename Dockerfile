@@ -6,10 +6,10 @@ FROM node:22-slim
 WORKDIR /app
 
 # Copy package manifests first for layer caching
-COPY package.json ./
+COPY package.json .npmrc* ./
 
 # Install dependencies
-RUN npm install --no-audit --no-fund
+RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 # Copy application source
 COPY . .

@@ -1125,7 +1125,6 @@ export function App() {
     }
   };
 
-
   const selectedAgent = useMemo(
     () => agents.find((a) => a.id === selectedAgentId) ?? agents[0] ?? null,
     [agents, selectedAgentId]
@@ -1321,9 +1320,8 @@ export function App() {
             </div>
           </div>
 
-          {/* Right Controls: Download Zip, 8-Persona Switcher, Alerts, BYOK Vault, 3-Choice Reset */}
+          {/* Right Controls: 8-Persona Switcher, Alerts, BYOK Vault, 3-Choice Reset */}
           <div className="flex flex-wrap xl:flex-nowrap items-center gap-1.5 shrink-0">
-
             {/* 8-Persona Multi-Tenant RBAC Switcher */}
             <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl px-2 py-1.5 gap-1.5 shadow-inner shrink-0">
               <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 hidden 2xl:inline">
@@ -2485,7 +2483,6 @@ export function App() {
           </div>
         </div>
       )}
-
     </div>
   );
 }

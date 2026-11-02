@@ -1,6 +1,14 @@
 # Ordaris Runtime (`v1.0.0-demo`) — Enterprise Governed AI Agent, Hybrid RAG & Workflow Runtime
 
-**Ordaris Runtime** is a local-first, defense-in-depth multi-tenant AI agent orchestration, Hybrid Retrieval-Augmented Generation (RAG), Directed Acyclic Workflow (DAG), Human-in-the-Loop (HITL) governance, FinOps telemetry, and automated evaluation platform backed by an Express HTTP API, a durable PostgreSQL job worker (`FOR UPDATE SKIP LOCKED`), and Drizzle ORM.
+> ### 🌐 Live Hosted Deployment (Render Cloud Sandbox)
+> - **Interactive Operator Console (8-Persona Multi-Tenant Sandbox)**: **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)**
+> - **Live Process Health Probe (`200 OK`)**: [`https://ordaris-runtime.onrender.com/api/v1/health/live`](https://ordaris-runtime.onrender.com/api/v1/health/live)
+> - **Database Readiness Probe (`SELECT 1`)**: [`https://ordaris-runtime.onrender.com/api/v1/health/ready`](https://ordaris-runtime.onrender.com/api/v1/health/ready)
+> - **1-Click Deploy Your Own Instance on Render**: [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://dashboard.render.com/select-repo?type=blueprint) *(Blueprint Name: `ordaris-runtime-platform` • Service Name: `ordaris-runtime`)*
+
+---
+
+**Ordaris Runtime** is a local-first and cloud-ready, defense-in-depth multi-tenant AI agent orchestration, Hybrid Retrieval-Augmented Generation (RAG), Directed Acyclic Workflow (DAG), Human-in-the-Loop (HITL) governance, FinOps telemetry, and automated evaluation platform backed by an Express HTTP API, a durable PostgreSQL job worker (`FOR UPDATE SKIP LOCKED`), and Drizzle ORM.
 
 Built under a strict **Zero-Required-Spend (`ADR-001`)** and **Defense-in-Depth Tenant Isolation (`ADR-002`)** architecture, the entire full-stack application runs deterministically out of the box with zero external API keys required (`AI_MODE=demo`), while allowing operators and technical evaluators to plug in free-tier cloud AI keys (`Gemini`, `ChatGPT`, `Claude`, `Grok`, `OpenRouter`) at runtime via a **Session-Scoped AES-256-GCM BYOK Vault** or `.env` configuration.
 
@@ -25,15 +33,17 @@ Built under a strict **Zero-Required-Spend (`ADR-001`)** and **Defense-in-Depth 
 
 4. **Agent Studio, Immutable Snapshot Versioning & Side-by-Side 2-Engine Arena (`AGENT-001`..`003`)**
    - Separates mutable draft configurations (`agents`) from immutable published snapshots (`agent_versions`) fingerprinted by canonical SHA-256 `snapshot_hash`.
+   - Persists per-job `execution_config` (`aiEngine`, `byokScopeKey`, `resolutionTier`, `maxBudgetUsd`) directly on `job_queue` so background workers and targeted inline executions (`processQueuedJobById`) resolve the exact caller-selected AI engine and session BYOK vault scope.
    - Includes a **Side-by-Side 2-Engine Comparison Arena** (`POST /api/v1/agents/:id/arena`) to benchmark two AI engines concurrently on identical prompts, tools, and RAG context, plus idempotency key deduplication (`X-Idempotency-Key`).
 
-5. **Bounded Agent Runtime & Safe Tool Gateway (`TOOL-001`..`002`, `RUN-001`..`002`)**
+5. **Bounded Agent Runtime, Worker Lease Heartbeats & Safe Tool Gateway (`TOOL-001`..`002`, `RUN-001`..`002`)**
+   - Background `RuntimeWorker` (`src/server/worker/main.ts`) claims queued jobs via `FOR UPDATE SKIP LOCKED`, renews active job leases (`renewJobLease` on `WORKER_HEARTBEAT_INTERVAL_MS`), and enforces a single-worker compare-and-swap (CAS) completion guard so reclaimed jobs can never double-commit.
    - Recursive-descent arithmetic parser (`evaluateSafeArithmetic`) evaluates mathematical expressions with **zero `eval()` or `Function()`**.
    - `ToolGateway` enforces per-version tool allowlists (`Threat T-03`), Zod input schemas, byte-size caps, and per-call timeouts.
    - `verifyModelCitations()` strips any hallucinated chunk or document citations not actually returned by `knowledge_search` during the run.
 
 6. **Tenant-Isolated Knowledge Ingestion & Hybrid RAG (`RAG-001`..`003`)**
-   - Sanitizes display filenames against path traversal (`Threat T-05`), generates opaque `<org_id>/<uuid>.bin` storage keys, deduplicates by SHA-256 content hash, and wraps untrusted chunks in `<untrusted_knowledge_context>` delimiters (`Threat T-03`).
+   - Sanitizes display filenames against path traversal (`Threat T-05`), enforces unified `MAX_UPLOAD_BYTES` (`10 MiB` default across Express JSON middleware and `ingestKnowledgeDocument`), generates opaque `<org_id>/<uuid>.bin` storage keys, deduplicates by SHA-256 content hash, and wraps untrusted chunks in `<untrusted_knowledge_context>` delimiters (`Threat T-03`).
    - Ranks chunks using hybrid PostgreSQL `tsvector` (`ts_rank_cd`) + 64-dimension normalized vector cosine similarity, with a built-in **Prompt-Injection Red-Team Preset** in the UI.
 
 7. **Directed Acyclic Workflow Engine, Live Cycle Detector & HITL Approval Gates (`WORKFLOW-001`..`002`, `HITL-001`)**
@@ -43,13 +53,47 @@ Built under a strict **Zero-Required-Spend (`ADR-001`)** and **Defense-in-Depth 
 8. **Automated Evaluation Harness, Honest FinOps Ledger & Append-Only Security Audit Trail (`EVAL-001`, `USAGE-001`, `AUDIT-001`)**
    - Deterministic graders (`exact_match`, `contains`, `json_schema`, `citation_required`, `tool_called`) grade agent versions and compute `v1`-vs-`v2` regression diffs (`compareEvalExperiments`).
    - `usage_events` explicitly partition `mock` (`is_estimated = true`) vs `live` (`is_estimated = false`) provider token consumption.
-   - Append-only `audit_events` record both `allowed` and `denied` security-sensitive operations (`Threat T-06`), accompanied by a live **4-Point Cross-Tenant Isolation Verifier** (`GET /api/v1/demo/verify-isolation`).
+   - Append-only `audit_events` record both `allowed` and `denied` security-sensitive operations (`Threat T-06`), accompanied by a live **4-Point Cross-Tenant Isolation Verifier** (`GET /api/v1/demo/verify-isolation`) and tenant-filtered runtime logs (`GET /api/v1/logs`, `POST /api/v1/logs/clear`).
 
 ---
 
-## 2. 8-Persona Multi-Tenant RBAC Matrix
+## 2. Cloud Deployment (Render.com Free Tier & Docker)
 
-Switch personas instantaneously in the top header (`x-actor-id` header) to verify tenant isolation and role boundaries:
+### Option A: 1-Click Render Blueprint (`render.yaml`)
+The repository includes a pre-configured [`render.yaml`](render.yaml) Blueprint and [`.npmrc`](.npmrc) (`legacy-peer-deps=true`) for zero-cost deployment on **Render.com**:
+1. Push this repository to GitHub and open **[Render Blueprints](https://dashboard.render.com/select-repo?type=blueprint)**.
+2. Set **Blueprint Name** to `ordaris-runtime-platform` (this deploys the web service `ordaris-runtime` at **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)**).
+3. Render automatically runs:
+   - **Build Command**: `npm install --legacy-peer-deps && npm run build` (builds static frontend assets to `dist/` and bundles the backend entrypoint to `dist/server.js`).
+   - **Start Command**: `npm start` (`SERVE_STATIC=true node dist/server.js`).
+   - **Health Check Path**: `/api/v1/health/live`
+   - **Auto-Detection (`normalizeRenderRuntimeEnv` in `server.ts`)**: Automatically detects `RENDER=true` / `RENDER_EXTERNAL_URL`, serves pre-built static assets from `dist/`, keeps the 8-Persona Interactive Sandbox active (`DEMO_MODE=true`), and provisions an ephemeral 64-hex CSPRNG `AUTH_SECRET` if not explicitly set.
+
+### Option B: Container Deployment (`Dockerfile`)
+The included [`Dockerfile`](Dockerfile) and [`.dockerignore`](.dockerignore) support **Render Docker Runtime**, **Koyeb Free Tier**, **Hugging Face Spaces (Docker)**, **Railway**, and **Fly.io**:
+```bash
+docker build -t ordaris-runtime:latest .
+docker run --rm -p 3000:3000 ordaris-runtime:latest
+```
+
+---
+
+## 3. GitHub Actions CI & Secret Scanning Hardening
+
+- **GitHub Actions Workflow (`.github/workflows/ci.yml` — `Ordaris Runtime CI`)**:
+  1. **Secret-Pattern & Branding Hygiene Check**: Fails the build if any real or synthetic provider key prefix or legacy branding appears in source, test, or documentation files.
+  2. **TypeScript Verification**: Runs `pnpm run typecheck` (`tsc --noEmit`).
+  3. **Unit & Security Test Suite**: Runs `pnpm run test:unit` and `pnpm run test:security` (`75/75` tests).
+  4. **HTTP API & Worker Integration Suite**: Runs `pnpm run test:integration` (`34/34` tests).
+  5. **Multi-Tenant Database Seed & Production Build**: Runs `pnpm run seed` and `pnpm run build` (`dist/index.html` + `dist/server.js`).
+- **GitHub Secret Scanning Configuration (`.github/secret_scanning.yml`)**:
+  - Configures `paths-ignore` for `tests/**`, `**/*.test.ts`, and `**/*.spec.ts`, paired with automated test verification (`CI-001 & SEC-SCAN-001` in `tests/unit/env.test.ts`) ensuring all test fixtures use non-triggering synthetic tokens (`gm_test_*`, `oa_test_*`, `cl_test_*`, `or_test_*`, `gk_test_*`).
+
+---
+
+## 4. 8-Persona Multi-Tenant RBAC Matrix
+
+Switch personas instantaneously in the top header (`x-actor-id` header) at **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)** or `http://localhost:3000` to verify tenant isolation and role boundaries:
 
 | Persona ID | Display Name | Organization | Role | Allowed Permissions | Key Capabilities & Restrictions |
 | :--- | :--- | :--- | :--- | :---: | :--- |
@@ -64,11 +108,11 @@ Switch personas instantaneously in the top header (`x-actor-id` header) to verif
 
 ---
 
-## 3. System Architecture & Runtime Topology
+## 5. System Architecture & Runtime Topology
 
 ```mermaid
 flowchart TB
-  subgraph Browser["React 19 Operator Console (http://localhost:3000)"]
+  subgraph Browser["React 19 Operator Console (https://ordaris-runtime.onrender.com | http://localhost:3000)"]
     HEADER["8-Persona RBAC Switcher + Session BYOK Drawer + 3-Choice Reset"]
     TABS["5-Tab Workspace: Studio | RAG | Workflow & HITL | Evals, FinOps & Security | Engines & Logs"]
   end
@@ -108,15 +152,17 @@ flowchart TB
 
 ---
 
-## 4. Quickstart & Verification Commands
+## 6. Local Quickstart & Verification Commands
 
 ### Prerequisites
-- **Node.js** `>= 20` (Node 22 recommended)
-- **pnpm** `>= 10`
+- **Node.js** `>= 20` (Node 22 / 24 supported)
+- **pnpm** `>= 10` (or `npm`)
 
 ### 1. Install Dependencies
 ```bash
-pnpm install --frozen-lockfile
+pnpm install
+# or with npm:
+npm install --legacy-peer-deps
 ```
 
 ### 2. Optional: Configure `.env`
@@ -127,11 +173,11 @@ cp .env.example .env
 
 ### 3. Run Strict TypeScript Verification
 ```bash
-pnpm typecheck
+pnpm run typecheck
 ```
 
 ### 4. Run the Automated Test Matrix (`109/109` Passing Across `21` Suites)
-Runs all unit, AES-256-GCM vault, 28-permission RBAC, PostgreSQL composite FK constraint, worker lease heartbeat, and HTTP API/worker integration tests in-process:
+Runs all unit, AES-256-GCM vault, 28-permission RBAC, PostgreSQL composite FK constraint, worker lease heartbeat, CI/secret-scanning hygiene, and HTTP API/worker integration tests in-process:
 ```bash
 pnpm test
 ```
@@ -139,19 +185,19 @@ pnpm test
 ### 5. Seed the Flagship Multi-Tenant Workspace
 Provisions `Acme Cyber Defense` & `Beta Global Logistics` with 8 personas, RAG runbooks, immutable Agent snapshots (`v1` & `v2`), a 6-node HITL workflow, and `v1`-vs-`v2` evaluation regression benchmarks:
 ```bash
-pnpm seed
+pnpm run seed
 ```
 
 ### 6. Start the Full-Stack Application (Express API + Background Worker + Vite UI)
 ```bash
 pnpm dev
 ```
-- Open `http://localhost:3000` to launch the **Ordaris Runtime `v1.0.0-demo` Operator Console**.
+- Open `http://localhost:3000` (or visit **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)**) to launch the **Ordaris Runtime `v1.0.0-demo` Operator Console**.
 - Follow the built-in **5-Step Interactive Evaluator Walkthrough** banner at the top of the workspace.
 
 ---
 
-## 5. Mounted HTTP API Endpoints (`src/server/http/app.ts`, `src/server/http/demo-routes.ts` & `src/server/http/auth.ts`)
+## 7. Mounted HTTP API Endpoints (`src/server/http/app.ts`, `src/server/http/demo-routes.ts` & `src/server/http/auth.ts`)
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
@@ -198,7 +244,7 @@ pnpm dev
 
 ---
 
-## 6. What We Built (`v1.0.0-demo`) vs. Planned Roadmap (`v1.1` – `v2.0`)
+## 8. What We Built (`v1.0.0-demo`) vs. Planned Roadmap (`v1.1` – `v2.0`)
 
 Detailed engineering documentation lives in `/docs`:
 - [`docs/implementation/STATUS.md`](docs/implementation/STATUS.md) — Complete checklist of built features, `109/109` test suite breakdown, and `v1.1`–`v2.0` roadmap.
@@ -208,7 +254,7 @@ Detailed engineering documentation lives in `/docs`:
 
 | Milestone | Status | Scope Summary |
 | :--- | :---: | :--- |
-| **`v1.0.0-demo` (Current)** | **Built & Verified** | 2-tenant / 8-persona 28-permission RBAC, composite SQL foreign keys, dual external PostgreSQL (`pg.Pool`) + PGlite adapter, Session AES-256-GCM BYOK Vault with CSPRNG fail-closed tokens, 6-engine 3-tier AI factory with per-job `execution_config`, worker lease heartbeats & single-worker CAS guard, bounded tool gateway (zero `eval()`), hybrid `tsvector` + cosine RAG (unified 10 MiB `MAX_UPLOAD_BYTES`), 3-color DFS workflow DAG & HITL gates, `v1`-vs-`v2` eval harness, 2-engine Arena, 3-choice sandbox reset, 5-tab React 19 UI (`109/109` tests passing). |
+| **`v1.0.0-demo` (Current)** | **Built & Verified** | Hosted Render deployment (`https://ordaris-runtime.onrender.com`), 2-tenant / 8-persona 28-permission RBAC, composite SQL foreign keys, dual external PostgreSQL (`pg.Pool`) + PGlite adapter, Session AES-256-GCM BYOK Vault with CSPRNG fail-closed tokens, 6-engine 3-tier AI factory with per-job `execution_config`, worker lease heartbeats & single-worker CAS guard, bounded tool gateway (zero `eval()`), hybrid `tsvector` + cosine RAG (unified 10 MiB `MAX_UPLOAD_BYTES`), 3-color DFS workflow DAG & HITL gates, `v1`-vs-`v2` eval harness, 2-engine Arena, 3-choice sandbox reset, 5-tab React 19 UI (`109/109` tests passing). |
 | **`v1.1` (Planned)** | Planned | OAuth 2.0 / OIDC & SAML SSO session authentication (`DEMO_MODE=false`), persistent KMS envelope-encrypted tenant API key vault (`AWS KMS` / `GCP Cloud KMS`), and prefix-tagged (`ord_live_...`) machine-to-machine bearer tokens. |
 | **`v1.2` (Planned)** | Planned | Native `pgvector` HNSW index migration for external PostgreSQL 16, asynchronous worker-backed PDF/CSV ingestion with SSE chunk progress, and chunk-level sensitivity ACL tags. |
 | **`v1.3` (Planned)** | Planned | OpenTelemetry (`OTLP`) distributed trace propagation across HTTP -> `job_queue` -> worker -> LLM provider, `HMAC-SHA256` signed outbound webhooks (Slack/PagerDuty/Jira), and live token delta streaming over SSE. |
