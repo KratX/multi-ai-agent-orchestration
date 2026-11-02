@@ -5,8 +5,8 @@
 - **Last Updated**: 2026-10-31
 - **AI Execution Mode**: 3-Tier AI Resolution (`Tier 1`: Session AES-256-GCM BYOK Vault -> `Tier 2`: Server `.env` -> `Tier 3`: Deterministic `MockModelProvider` across `mock`, `gemini`, `chatgpt`, `claude`, `grok`, `openrouter`)
 - **Database Engine (`DB_DRIVER=auto|postgres|pglite`)**: Dual PostgreSQL adapter supporting external PostgreSQL 16+ via `pg.Pool` (`drizzle-orm/node-postgres`) when `DATABASE_URL` is configured, and file-backed PGlite (`PGLITE_DATA_DIR=".local/ordaris-db"`) for local zero-daemon execution, with `20` tables, migrations `0001`..`0006`, and composite `(organization_id, ...)` foreign keys enforced at the SQL constraint layer
-- **Runtime Processes**: Full-stack Express API + Vite UI (`pnpm dev` / `server.ts`, compiled to `server.js` via `pnpm build`) and standalone background queue worker (`pnpm dev:worker` / `src/server/worker/main.ts`)
-- **Automated Verification**: `21` test suites (`108/108` tests passing across unit, security, and full-stack PostgreSQL/HTTP integration), `pnpm typecheck` (`0` errors), `pnpm seed`, and `pnpm build` verified
+- **Runtime Processes**: Full-stack Express API + Vite UI (`pnpm dev` / `server.ts`, compiled to `dist/server.js` via `pnpm build`) and standalone background queue worker (`pnpm dev:worker` / `src/server/worker/main.ts`)
+- **Automated Verification**: `21` test suites (`109/109` tests passing across unit, security, and full-stack PostgreSQL/HTTP integration), `pnpm typecheck` (`0` errors), `pnpm seed`, and `pnpm build` verified
 
 ---
 
@@ -55,13 +55,13 @@
 
 ---
 
-## 2. Test Evidence (`108/108` Passing Across `21` Suites)
+## 2. Test Evidence (`109/109` Passing Across `21` Suites)
 
-### Unit & Security Suites (`74/74` Passing Across `12` Suites)
+### Unit & Security Suites (`75/75` Passing Across `12` Suites)
 - `tests/unit/session-key-vault.test.ts` -> `9 pass, 0 fail` (In-RAM AES-256-GCM encryption with ephemeral CSPRNG master key, master key rotation, zero disk writes, 2-hour sliding TTL expiry & extension, high-entropy session token validation, session isolation, masked preview, and scope clearing)
 - `tests/unit/provider-factory.test.ts` -> `6 pass, 0 fail` (3-tier key resolution: Session BYOK -> `.env` -> Deterministic Mock, TTL expiry fallback, multi-engine routing, and live connection verification)
 - `tests/unit/authorization.test.ts` -> `6 pass, 0 fail` (28-permission matrix, 404 cross-tenant masking, 409 last-owner guard)
-- `tests/unit/env.test.ts` -> `11 pass, 0 fail` (Env validation, `WORKER_HEARTBEAT_INTERVAL_MS < WORKER_LEASE_MS`, `DB_DRIVER`, secret redaction, production `DEMO_MODE` lockout)
+- `tests/unit/env.test.ts` -> `12 pass, 0 fail` (Env validation, `WORKER_HEARTBEAT_INTERVAL_MS < WORKER_LEASE_MS`, `DB_DRIVER`, secret redaction, production `DEMO_MODE` lockout, and `CI-001 & SEC-SCAN-001` secret/branding hygiene)
 - `tests/unit/health-route.test.ts` -> `4 pass, 0 fail`
 - `tests/unit/mock-model-provider.test.ts` -> `6 pass, 0 fail`
 - `tests/unit/gemini-provider.test.ts` -> `4 pass, 0 fail`

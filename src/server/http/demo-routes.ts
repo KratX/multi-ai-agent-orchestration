@@ -1336,8 +1336,16 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
           'index.html',
           'server.ts',
           '.env.example',
+          '.gitignore',
+          '.dockerignore',
+          'Dockerfile',
+          'render.yaml',
+          'docker-compose.yml',
+          'pnpm-workspace.yaml',
           'README.md',
           'metadata.json',
+          '.github/workflows/ci.yml',
+          '.github/secret_scanning.yml',
         ];
 
         for (const rel of rootFiles) {
@@ -1385,6 +1393,128 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
             files: collected,
           },
         });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // 10. Direct HTTP Download Links for Render Deploy Package & Full Repo ZIP
+  app.get(
+    '/api/v1/demo/download-render-zip',
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { createZipUint8Array, stripPreviewZipMarkers } = await import(
+          '../../utils/zip'
+        );
+        const rootDir = process.cwd();
+        const renderFiles = [
+          'render.yaml',
+          'Dockerfile',
+          '.dockerignore',
+          'server.ts',
+          'package.json',
+          '.github/workflows/ci.yml',
+          '.github/secret_scanning.yml',
+          '.gitignore',
+          'src/server/http/demo-routes.ts',
+          'tests/integration/http-api-and-worker.test.ts',
+          'tests/unit/session-key-vault.test.ts',
+          'tests/unit/gemini-provider.test.ts',
+          'tests/unit/provider-factory.test.ts',
+          'tests/unit/env.test.ts',
+          'src/App.tsx',
+        ];
+        const entries: Array<{ path: string; content: string }> = [];
+        for (const rel of renderFiles) {
+          const full = path.join(rootDir, rel);
+          if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+            const raw = fs.readFileSync(full, 'utf8');
+            entries.push({
+              path: rel,
+              content: rel === 'src/App.tsx' ? stripPreviewZipMarkers(raw) : raw,
+            });
+          }
+        }
+        const zipBytes = createZipUint8Array(entries);
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader(
+          'Content-Disposition',
+          'attachment; filename="ordaris-render-deploy.zip"'
+        );
+        res.status(200).send(Buffer.from(zipBytes));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.get(
+    '/api/v1/demo/download-full-repo-zip',
+    async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { createZipUint8Array, stripPreviewZipMarkers } = await import(
+          '../../utils/zip'
+        );
+        const rootDir = process.cwd();
+        const entries: Array<{ path: string; content: string }> = [];
+        const rootFiles = [
+          'package.json',
+          'tsconfig.json',
+          'vite.config.ts',
+          'index.html',
+          'server.ts',
+          '.env.example',
+          '.gitignore',
+          '.dockerignore',
+          'Dockerfile',
+          'render.yaml',
+          'docker-compose.yml',
+          'pnpm-workspace.yaml',
+          'README.md',
+          'metadata.json',
+          '.github/workflows/ci.yml',
+          '.github/secret_scanning.yml',
+        ];
+        for (const rel of rootFiles) {
+          const full = path.join(rootDir, rel);
+          if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+            entries.push({ path: rel, content: fs.readFileSync(full, 'utf8') });
+          }
+        }
+        const walkDir = (dirRel: string) => {
+          const absDir = path.join(rootDir, dirRel);
+          if (!fs.existsSync(absDir)) return;
+          for (const entry of fs.readdirSync(absDir, { withFileTypes: true })) {
+            if (entry.name.startsWith('.')) continue;
+            const childRel = path.posix.join(dirRel, entry.name);
+            if (entry.isDirectory()) {
+              walkDir(childRel);
+            } else if (
+              entry.isFile() &&
+              /\.(ts|tsx|css|md|json|sql|html)$/i.test(entry.name)
+            ) {
+              if (childRel === 'src/utils/zip.ts') continue;
+              const raw = fs.readFileSync(path.join(rootDir, childRel), 'utf8');
+              entries.push({
+                path: childRel,
+                content:
+                  childRel === 'src/App.tsx' ? stripPreviewZipMarkers(raw) : raw,
+              });
+            }
+          }
+        };
+        walkDir('src');
+        walkDir('tests');
+        walkDir('docs');
+
+        const zipBytes = createZipUint8Array(entries);
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader(
+          'Content-Disposition',
+          'attachment; filename="ordaris-runtime-full-repo.zip"'
+        );
+        res.status(200).send(Buffer.from(zipBytes));
       } catch (err) {
         next(err);
       }

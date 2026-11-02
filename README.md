@@ -130,7 +130,7 @@ cp .env.example .env
 pnpm typecheck
 ```
 
-### 4. Run the Automated Test Matrix (`108/108` Passing Across `21` Suites)
+### 4. Run the Automated Test Matrix (`109/109` Passing Across `21` Suites)
 Runs all unit, AES-256-GCM vault, 28-permission RBAC, PostgreSQL composite FK constraint, worker lease heartbeat, and HTTP API/worker integration tests in-process:
 ```bash
 pnpm test
@@ -201,14 +201,14 @@ pnpm dev
 ## 6. What We Built (`v1.0.0-demo`) vs. Planned Roadmap (`v1.1` – `v2.0`)
 
 Detailed engineering documentation lives in `/docs`:
-- [`docs/implementation/STATUS.md`](docs/implementation/STATUS.md) — Complete checklist of built features, `108/108` test suite breakdown, and `v1.1`–`v2.0` roadmap.
+- [`docs/implementation/STATUS.md`](docs/implementation/STATUS.md) — Complete checklist of built features, `109/109` test suite breakdown, and `v1.1`–`v2.0` roadmap.
 - [`docs/architecture.md`](docs/architecture.md) — Layered architecture, sequence diagrams, run state machine, and runtime guardrails.
 - [`docs/threat-model.md`](docs/threat-model.md) — Threat catalog (`T-01`..`T-08`) covering IDOR, prompt injection, path traversal, and Session AES-256-GCM BYOK Vault isolation.
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (`ADR-001` Zero-Spend & 3-Tier BYOK, `ADR-002` Tenant Isolation & 8-Persona RBAC, `ADR-003` PostgreSQL Job Queue).
 
 | Milestone | Status | Scope Summary |
 | :--- | :---: | :--- |
-| **`v1.0.0-demo` (Current)** | **Built & Verified** | 2-tenant / 8-persona 28-permission RBAC, composite SQL foreign keys, dual external PostgreSQL (`pg.Pool`) + PGlite adapter, Session AES-256-GCM BYOK Vault with CSPRNG fail-closed tokens, 6-engine 3-tier AI factory with per-job `execution_config`, worker lease heartbeats & single-worker CAS guard, bounded tool gateway (zero `eval()`), hybrid `tsvector` + cosine RAG (unified 10 MiB `MAX_UPLOAD_BYTES`), 3-color DFS workflow DAG & HITL gates, `v1`-vs-`v2` eval harness, 2-engine Arena, 3-choice sandbox reset, 5-tab React 19 UI (`108/108` tests passing). |
+| **`v1.0.0-demo` (Current)** | **Built & Verified** | 2-tenant / 8-persona 28-permission RBAC, composite SQL foreign keys, dual external PostgreSQL (`pg.Pool`) + PGlite adapter, Session AES-256-GCM BYOK Vault with CSPRNG fail-closed tokens, 6-engine 3-tier AI factory with per-job `execution_config`, worker lease heartbeats & single-worker CAS guard, bounded tool gateway (zero `eval()`), hybrid `tsvector` + cosine RAG (unified 10 MiB `MAX_UPLOAD_BYTES`), 3-color DFS workflow DAG & HITL gates, `v1`-vs-`v2` eval harness, 2-engine Arena, 3-choice sandbox reset, 5-tab React 19 UI (`109/109` tests passing). |
 | **`v1.1` (Planned)** | Planned | OAuth 2.0 / OIDC & SAML SSO session authentication (`DEMO_MODE=false`), persistent KMS envelope-encrypted tenant API key vault (`AWS KMS` / `GCP Cloud KMS`), and prefix-tagged (`ord_live_...`) machine-to-machine bearer tokens. |
 | **`v1.2` (Planned)** | Planned | Native `pgvector` HNSW index migration for external PostgreSQL 16, asynchronous worker-backed PDF/CSV ingestion with SSE chunk progress, and chunk-level sensitivity ACL tags. |
 | **`v1.3` (Planned)** | Planned | OpenTelemetry (`OTLP`) distributed trace propagation across HTTP -> `job_queue` -> worker -> LLM provider, `HMAC-SHA256` signed outbound webhooks (Slack/PagerDuty/Jira), and live token delta streaming over SSE. |

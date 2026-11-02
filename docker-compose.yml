@@ -5,13 +5,13 @@
 #   View DB logs:         docker compose logs -f postgres
 #   Stop (preserve data): docker compose stop
 #
-# Note: Data is persisted in the named volume `aegis_postgres_data`.
+# Note: Data is persisted in the named volume `ordaris_postgres_data`.
 # Normal start/stop commands never delete this volume.
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: aegis-runtime-postgres
+    container_name: ordaris-runtime-postgres
     restart: unless-stopped
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -20,7 +20,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-agent_platform}
     volumes:
-      - aegis_postgres_data:/var/lib/postgresql/data
+      - ordaris_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-agent_platform}"]
       interval: 5s
@@ -29,6 +29,5 @@ services:
       start_period: 5s
 
 volumes:
-  aegis_postgres_data:
-    name: aegis_runtime_postgres_data
-
+  ordaris_postgres_data:
+    name: ordaris_runtime_postgres_data

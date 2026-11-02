@@ -1,0 +1,28 @@
+# Ordaris Runtime — Render.com 1-Click Free Web Service Blueprint (render.yaml)
+# 1-Click Deploy on Render: https://dashboard.render.com/select-repo?type=blueprint
+
+services:
+  - type: web
+    name: ordaris-runtime
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/v1/health/live
+    envVars:
+      - key: NODE_ENV
+        value: development
+      - key: SERVE_STATIC
+        value: "true"
+      - key: DEMO_MODE
+        value: "true"
+      - key: AI_MODE
+        value: demo
+      - key: DB_DRIVER
+        value: pglite
+      - key: PGLITE_DATA_DIR
+        value: .local/ordaris-db
+      - key: UPLOAD_DIR
+        value: .local/uploads
+      - key: AUTH_SECRET
+        generateValue: true

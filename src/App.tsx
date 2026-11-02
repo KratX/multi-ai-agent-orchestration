@@ -1323,6 +1323,7 @@ export function App() {
 
           {/* Right Controls: Download Zip, 8-Persona Switcher, Alerts, BYOK Vault, 3-Choice Reset */}
           <div className="flex flex-wrap xl:flex-nowrap items-center gap-1.5 shrink-0">
+            {}
 
             {/* 8-Persona Multi-Tenant RBAC Switcher */}
             <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl px-2 py-1.5 gap-1.5 shadow-inner shrink-0">
@@ -2486,6 +2487,7 @@ export function App() {
         </div>
       )}
 
+      {}
     </div>
   );
 }
