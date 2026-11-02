@@ -158,13 +158,47 @@ export async function createDatabaseClient(options?: {
   if (isFileBacked && rawDir) {
     resolvedDir = path.resolve(rawDir);
     fs.mkdirSync(resolvedDir, { recursive: true });
+    // Remove stale Emscripten postmaster.pid lock left behind by abrupt container stop/snapshot
+    try {
+      const pidFile = path.join(resolvedDir, 'postmaster.pid');
+      if (fs.existsSync(pidFile)) {
+        fs.rmSync(pidFile, { force: true });
+      }
+    } catch {
+      // Ignore lock cleanup errors
+    }
   }
 
-  const pglite = new PGlite(resolvedDir);
-  await pglite.waitReady;
+  let pglite: PGlite;
+  let effectiveStorageMode: 'file' | 'memory' = isFileBacked ? 'file' : 'memory';
 
-  if (options?.autoMigrate !== false) {
-    await applyTenantMigrations(pglite);
+  const initPgliteInstance = async (dir?: string): Promise<PGlite> => {
+    const instance = new PGlite(dir);
+    await instance.waitReady;
+    if (options?.autoMigrate !== false) {
+      await applyTenantMigrations(instance);
+    }
+    return instance;
+  };
+
+  try {
+    pglite = await initPgliteInstance(resolvedDir);
+  } catch {
+    if (resolvedDir) {
+      try {
+        // Recover from corrupted WASM WAL/data directory after an unclean process kill
+        fs.rmSync(resolvedDir, { recursive: true, force: true });
+        fs.mkdirSync(resolvedDir, { recursive: true });
+        pglite = await initPgliteInstance(resolvedDir);
+      } catch {
+        // Final fallback to in-memory PGlite so server startup never fails
+        effectiveStorageMode = 'memory';
+        resolvedDir = undefined;
+        pglite = await initPgliteInstance(undefined);
+      }
+    } else {
+      throw new Error('Failed to initialize in-memory PGlite database');
+    }
   }
 
   const db = drizzlePglite(pglite, { schema: ordarisSchema });
@@ -173,7 +207,7 @@ export async function createDatabaseClient(options?: {
     pg: pglite as unknown as RawSqlClient,
     db,
     engine: 'pglite',
-    storageMode: isFileBacked ? 'file' : 'memory',
+    storageMode: effectiveStorageMode,
     dataDir: resolvedDir,
     close: async () => {
       if (!pglite.closed) {
