@@ -308,6 +308,41 @@ test('CI-001 & SEC-SCAN-001: repository files contain zero secret-scanner-trigge
     [],
     `Found secret-scanner-triggering key pattern in: ${detected.join(', ')}`
   );
+
+  // Verify that exported src/App.tsx and src/server/http/demo-routes.ts have zero utils/zip references
+  const startTag = '__PREVIEW_ZIP_' + 'START__';
+  const endTag = '__PREVIEW_ZIP_' + 'END__';
+  const stripMarkers = (raw: string): string =>
+    raw
+      .replace(
+        new RegExp(
+          `\\n?[ \\t]*\\{\\/\\* ${startTag} \\*\\/\\}[\\s\\S]*?\\{\\/\\* ${endTag} \\*\\/\\}[ \\t]*\\n?`,
+          'g'
+        ),
+        '\n'
+      )
+      .replace(
+        new RegExp(
+          `\\n?[ \\t]*\\/\\* ${startTag} \\*\\/[\\s\\S]*?\\/\\* ${endTag} \\*\\/[ \\t]*\\n?`,
+          'g'
+        ),
+        '\n'
+      );
+
+  const rawApp = fs.readFileSync(path.join(rootDir, 'src/App.tsx'), 'utf8');
+  const rawDemoRoutes = fs.readFileSync(
+    path.join(rootDir, 'src/server/http/demo-routes.ts'),
+    'utf8'
+  );
+  const strippedApp = stripMarkers(rawApp);
+  const strippedDemoRoutes = stripMarkers(rawDemoRoutes);
+
+  assert.equal(strippedApp.includes('utils/zip'), false);
+  assert.equal(strippedApp.includes(startTag), false);
+  assert.equal(strippedDemoRoutes.includes('utils/zip'), false);
+  assert.equal(rawDemoRoutes.includes('../../utils/zip'), false);
+  assert.equal(strippedDemoRoutes.includes(startTag), false);
 });
+
 
 
