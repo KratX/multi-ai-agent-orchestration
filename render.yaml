@@ -24,5 +24,7 @@ services:
         value: .local/ordaris-db
       - key: UPLOAD_DIR
         value: .local/uploads
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=256"
       - key: AUTH_SECRET
         generateValue: true

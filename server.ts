@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import {
   appendRuntimeLog,
   getProviderKeyStatus,
@@ -30,7 +29,9 @@ function normalizeRenderRuntimeEnv(
   const normalized: Record<string, string | undefined> = { ...raw };
   const isRender =
     normalized.RENDER === 'true' || Boolean(normalized.RENDER_EXTERNAL_URL);
-  const isStaticCloud = isRender || normalized.SERVE_STATIC === 'true';
+  const isPreseed = process.argv.includes('--preseed-only');
+  const isStaticCloud =
+    isRender || normalized.SERVE_STATIC === 'true' || isPreseed;
 
   if (normalized.RENDER_EXTERNAL_URL && !normalized.APP_URL) {
     normalized.APP_URL = normalized.RENDER_EXTERNAL_URL;
@@ -63,25 +64,62 @@ function normalizeRenderRuntimeEnv(
   return normalized;
 }
 
+export async function preseedDatabaseForBuild(): Promise<void> {
+  const env = parseEnv(normalizeRenderRuntimeEnv(process.env));
+  const dbContext = await getSharedDatabase({ dataDir: env.PGLITE_DATA_DIR });
+  await ensureWorkspaceSeededWithPendingHitl(dbContext.db, { forceReset: false });
+  if (dbContext.dataDir) {
+    try {
+      fs.writeFileSync(
+        path.join(dbContext.dataDir, '.ordaris-seeded-v1'),
+        new Date().toISOString() + '\n',
+        'utf8'
+      );
+    } catch {
+      // Ignore marker write error
+    }
+  }
+  await closeSharedDatabase();
+}
+
 export async function startOrdarisServer(port = 3000) {
   const env = parseEnv(normalizeRenderRuntimeEnv(process.env));
   const dbContext = await getSharedDatabase({ dataDir: env.PGLITE_DATA_DIR });
 
-  // Seed default workspace on first startup if empty
-  try {
-    await ensureWorkspaceSeededWithPendingHitl(dbContext.db, { forceReset: false });
-  } catch (seedErr) {
-    appendRuntimeLog({
-      level: 'WARN',
-      component: 'server.ts',
-      message: `Initial workspace seed check encountered an issue, retrying with clean reset: ${
-        seedErr instanceof Error ? seedErr.message : String(seedErr)
-      }`,
-    });
+  const seedMarkerPath = dbContext.dataDir
+    ? path.join(dbContext.dataDir, '.ordaris-seeded-v1')
+    : null;
+  const alreadyPreseeded = Boolean(
+    seedMarkerPath &&
+      fs.existsSync(seedMarkerPath) &&
+      dbContext.dataDir &&
+      fs.existsSync(path.join(dbContext.dataDir, 'PG_VERSION'))
+  );
+
+  // Seed default workspace on first startup if not already pre-seeded during build
+  if (!alreadyPreseeded) {
     try {
-      await ensureWorkspaceSeededWithPendingHitl(dbContext.db, { forceReset: true });
-    } catch {
-      // Continue booting server even if seed retry fails
+      await ensureWorkspaceSeededWithPendingHitl(dbContext.db, { forceReset: false });
+      if (seedMarkerPath) {
+        try {
+          fs.writeFileSync(seedMarkerPath, new Date().toISOString() + '\n', 'utf8');
+        } catch {
+          // Ignore marker write error
+        }
+      }
+    } catch (seedErr) {
+      appendRuntimeLog({
+        level: 'WARN',
+        component: 'server.ts',
+        message: `Initial workspace seed check encountered an issue, retrying with clean reset: ${
+          seedErr instanceof Error ? seedErr.message : String(seedErr)
+        }`,
+      });
+      try {
+        await ensureWorkspaceSeededWithPendingHitl(dbContext.db, { forceReset: true });
+      } catch {
+        // Continue booting server even if seed retry fails
+      }
     }
   }
 
@@ -123,6 +161,7 @@ export async function startOrdarisServer(port = 3000) {
       fs.existsSync(path.join(distPath, 'index.html')));
 
   if (!shouldServeStaticDist) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -176,11 +215,25 @@ const isDirectExecution =
   fileURLToPath(import.meta.url).endsWith(process.argv[1].replace(/^file:\/\//, ''));
 
 if (isDirectExecution) {
-  const port = resolveCliPort(process.argv.slice(2));
-  startOrdarisServer(port).catch((error) => {
-    process.stderr.write(
-      `Failed to start Ordaris Runtime server: ${error instanceof Error ? error.message : String(error)}\n`
-    );
-    process.exit(1);
-  });
+  if (process.argv.includes('--preseed-only')) {
+    preseedDatabaseForBuild()
+      .then(() => {
+        process.stdout.write('Pre-seeded .local/ordaris-db for low-memory startup.\n');
+        process.exit(0);
+      })
+      .catch((error) => {
+        process.stderr.write(
+          `Pre-seed warning: ${error instanceof Error ? error.message : String(error)}\n`
+        );
+        process.exit(0);
+      });
+  } else {
+    const port = resolveCliPort(process.argv.slice(2));
+    startOrdarisServer(port).catch((error) => {
+      process.stderr.write(
+        `Failed to start Ordaris Runtime server: ${error instanceof Error ? error.message : String(error)}\n`
+      );
+      process.exit(1);
+    });
+  }
 }

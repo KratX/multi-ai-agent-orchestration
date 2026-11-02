@@ -788,10 +788,14 @@ export async function seedFlagshipWorkspace(
   };
 }
 
+const cliEntryArg =
+  typeof process !== 'undefined' && process.argv[1]
+    ? process.argv[1].replace(/\\/g, '/')
+    : '';
 const isDirectExecution =
-  typeof process !== 'undefined' &&
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === process.argv[1];
+  Boolean(cliEntryArg) &&
+  /\/demo-seed\.(ts|js)$/.test(cliEntryArg) &&
+  fileURLToPath(import.meta.url).replace(/\\/g, '/') === cliEntryArg;
 
 if (isDirectExecution) {
   (async () => {

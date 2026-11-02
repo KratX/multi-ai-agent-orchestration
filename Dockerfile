@@ -28,6 +28,7 @@ ENV AI_MODE=demo
 ENV DB_DRIVER=auto
 ENV PGLITE_DATA_DIR=/app/.local/ordaris-db
 ENV UPLOAD_DIR=/app/.local/uploads
+ENV NODE_OPTIONS="--max-old-space-size=256"
 ENV PORT=3000
 
 EXPOSE 3000

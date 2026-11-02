@@ -172,11 +172,40 @@ export async function createDatabaseClient(options?: {
   let pglite: PGlite;
   let effectiveStorageMode: 'file' | 'memory' = isFileBacked ? 'file' : 'memory';
 
+  const lowMemStartParams = [
+    ...PGlite.defaultStartParams,
+    '-c',
+    'shared_buffers=2MB',
+    '-c',
+    'work_mem=1MB',
+    '-c',
+    'maintenance_work_mem=2MB',
+    '-c',
+    'temp_buffers=1MB',
+    '-c',
+    'wal_buffers=256kB',
+  ];
+
   const initPgliteInstance = async (dir?: string): Promise<PGlite> => {
-    const instance = new PGlite(dir);
+    const hasExistingMigratedDb = Boolean(
+      dir &&
+        fs.existsSync(path.join(dir, 'PG_VERSION')) &&
+        fs.existsSync(path.join(dir, '.ordaris-migrated-v1'))
+    );
+    const instance = new PGlite(dir, {
+      relaxedDurability: true,
+      startParams: lowMemStartParams,
+    });
     await instance.waitReady;
-    if (options?.autoMigrate !== false) {
+    if (options?.autoMigrate !== false && !hasExistingMigratedDb) {
       await applyTenantMigrations(instance);
+      if (dir) {
+        try {
+          fs.writeFileSync(path.join(dir, '.ordaris-migrated-v1'), 'ok\n', 'utf8');
+        } catch {
+          // Ignore marker write error on read-only FS
+        }
+      }
     }
     return instance;
   };

@@ -252,9 +252,11 @@ export async function runStandaloneWorkerCli(): Promise<void> {
   );
 }
 
+const cliEntryArg = (process.argv[1] ?? '').replace(/\\/g, '/').replace(/^file:\/\//, '');
 const isDirectExecution =
-  process.argv[1] &&
-  fileURLToPath(import.meta.url).endsWith(process.argv[1].replace(/^file:\/\//, ''));
+  Boolean(cliEntryArg) &&
+  /\/worker\/main\.(ts|js)$/.test(cliEntryArg) &&
+  fileURLToPath(import.meta.url).replace(/\\/g, '/').endsWith(cliEntryArg);
 
 if (isDirectExecution) {
   runStandaloneWorkerCli().catch((error) => {
