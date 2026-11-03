@@ -27,6 +27,6 @@ services:
       - key: UPLOAD_DIR
         value: .local/uploads
       - key: NODE_OPTIONS
-        value: "--liftoff-only --no-wasm-tier-up --expose-gc --max-old-space-size=192 --max-semi-space-size=8"
+        value: "--expose-gc --max-old-space-size=384"
       - key: AUTH_SECRET
         generateValue: true
