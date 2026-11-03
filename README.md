@@ -4,7 +4,7 @@
 > - **Interactive Operator Console (8-Persona Multi-Tenant Sandbox)**: **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)**
 > - **Live Process Health Probe (`200 OK`)**: [`https://ordaris-runtime.onrender.com/api/v1/health/live`](https://ordaris-runtime.onrender.com/api/v1/health/live)
 > - **Database Readiness Probe (`SELECT 1`)**: [`https://ordaris-runtime.onrender.com/api/v1/health/ready`](https://ordaris-runtime.onrender.com/api/v1/health/ready)
-> - **1-Click Deploy Your Own Instance on Render**: [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://dashboard.render.com/select-repo?type=blueprint) *(Blueprint Name: `ordaris-runtime-platform` • Service Name: `ordaris-runtime`)*
+
 
 ---
 
