@@ -13,7 +13,9 @@ services:
       - key: NODE_VERSION
         value: "22.14.0"
       - key: NODE_ENV
-        value: development
+        value: production
+      - key: PUBLIC_DEMO_SANDBOX
+        value: "true"
       - key: SERVE_STATIC
         value: "true"
       - key: DEMO_MODE

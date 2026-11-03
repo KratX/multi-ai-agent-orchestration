@@ -19,6 +19,7 @@ import {
   type ModelProvider,
 } from '../ai/provider-factory';
 import type { DatabaseContext, OrdarisDatabase } from '../db/client';
+import { verifyAuthSecretHeader } from './auth';
 import {
   AuthorizationError,
   listRolePermissions,
@@ -626,9 +627,14 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
           ? rawMode
           : 'workspace_only';
 
-      const clearAllByok = req.body?.clearAllByok === true;
+      const requestedClearAllByok = req.body?.clearAllByok === true;
+      const hasPreSharedSecret = verifyAuthSecretHeader(
+        req.header('x-auth-secret'),
+        env.AUTH_SECRET
+      );
+      const clearAllByok = requestedClearAllByok && hasPreSharedSecret;
 
-      if (resetMode === 'factory_reset' || clearAllByok) {
+      if (resetMode === 'factory_reset' || requestedClearAllByok) {
         requireAuthorization(actor, 'org.delete', {
           organizationId: actor.organizationId,
           resourceType: 'organization',

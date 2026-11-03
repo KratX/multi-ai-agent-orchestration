@@ -155,8 +155,6 @@ export async function resetDemoSandboxOnly(
       clearedByokKeysCount = clearByokScope().clearedCount;
     } else if (options?.clearByokScopeKey) {
       clearedByokKeysCount = clearByokScope(options.clearByokScopeKey).clearedCount;
-    } else {
-      clearedByokKeysCount = clearByokScope().clearedCount;
     }
   }
 

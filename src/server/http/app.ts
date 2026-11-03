@@ -6,6 +6,7 @@ import {
   appendRuntimeLog,
   getProviderKeyStatus,
   getPublicEnvSummary,
+  isPublicDemoModeAllowed,
   parseEnv,
   redactSecretsFromText,
   type AppEnv,
@@ -279,39 +280,40 @@ async function resolveActorFromRequest(
     return resolved;
   }
 
-  // 2. Production & Non-Demo Guard:
-  // When NODE_ENV === "production" or DEMO_MODE === false, unsigned headers and query params are NEVER trusted.
-  // Only a valid signed `ordaris_session` cookie (or Bearer token above) is accepted.
-  if (env.NODE_ENV === 'production' || !env.DEMO_MODE) {
-    if (extracted.source === 'cookie' && extracted.token) {
-      const claims = verifyAuthToken(extracted.token, env.AUTH_SECRET);
-      if (!claims) {
-        return null;
-      }
-      const resolved = await resolveActorContext(db, claims.sub, claims.org);
-      (
-        req as Request & {
-          resolvedActor?: AuthenticatedActor | null;
-          authMethod?: 'jwt' | 'demo_header';
-        }
-      ).resolvedActor = resolved;
-      (
-        req as Request & {
-          authMethod?: 'jwt' | 'demo_header';
-        }
-      ).authMethod = 'jwt';
-      return resolved;
+  // 2. Signed Session Cookie (`Cookie: ordaris_session=<jwt>`)
+  if (extracted.source === 'cookie' && extracted.token) {
+    const claims = verifyAuthToken(extracted.token, env.AUTH_SECRET);
+    if (!claims) {
+      return null;
     }
+    const resolved = await resolveActorContext(db, claims.sub, claims.org);
+    (
+      req as Request & {
+        resolvedActor?: AuthenticatedActor | null;
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).resolvedActor = resolved;
+    (
+      req as Request & {
+        authMethod?: 'jwt' | 'demo_header';
+      }
+    ).authMethod = 'jwt';
+    return resolved;
+  }
+
+  // 3. Production & Non-Demo Guard:
+  // When interactive demo mode is disabled (`DEMO_MODE=false` or `NODE_ENV=production` without `PUBLIC_DEMO_SANDBOX=true`),
+  // unsigned headers and query params are NEVER trusted.
+  if (!isPublicDemoModeAllowed(env)) {
     return null;
   }
 
-  // 3. Explicit Non-Production Demo Mode Header Resolution:
-  // Query parameters (?actor=...) and silent default fallbacks ('acme-admin') are strictly prohibited
-  // so unauthenticated requests always receive 401 UNAUTHENTICATED.
+  // 4. Explicit Demo Mode Header Resolution:
+  // Direct (x-user-id, x-organization-id) header resolution is only permitted outside production (e.g. integration test harness).
   const explicitUserId = req.header('x-user-id')?.trim();
   const explicitOrgId = req.header('x-organization-id')?.trim();
 
-  if (explicitUserId && explicitOrgId) {
+  if (explicitUserId && explicitOrgId && env.NODE_ENV !== 'production') {
     const resolved = await resolveActorContext(db, explicitUserId, explicitOrgId);
     (
       req as Request & {

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
-import { parseEnv, type AppEnv } from '../config/env';
+import { isPublicDemoModeAllowed, parseEnv, type AppEnv } from '../config/env';
 import type { DatabaseContext, OrdarisDatabase } from '../db/client';
 import {
   createOrganizationWithOwner,
@@ -70,6 +70,24 @@ export function verifyAuthSecretHeader(
 ): boolean {
   if (!candidate || !authSecret) return false;
   return timingSafeStringMatch(candidate.trim(), authSecret);
+}
+
+/**
+ * Determines whether session cookies (`ordaris_session`, `ordaris_oauth_state`) must carry the
+ * `; Secure` attribute. Enabled in `production`, when `APP_URL` is `https://`, or behind an HTTPS proxy.
+ */
+export function shouldUseSecureCookie(req: Request, env: AppEnv): boolean {
+  if (env.NODE_ENV === 'production') return true;
+  if (env.APP_URL.toLowerCase().startsWith('https://')) return true;
+  if (req.secure) return true;
+  const forwardedProto = req.header('x-forwarded-proto');
+  if (
+    forwardedProto &&
+    forwardedProto.toLowerCase().split(',')[0]?.trim() === 'https'
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -343,7 +361,8 @@ export function registerAuthRoutes(app: Express, deps: AuthRoutesDeps): void {
             authenticated: Boolean(actor),
             actor,
             authMethod: actor ? authMethod : 'none',
-            demoMode: env.DEMO_MODE && env.NODE_ENV !== 'production',
+            demoMode: isPublicDemoModeAllowed(env),
+            publicDemoSandbox: Boolean(env.PUBLIC_DEMO_SANDBOX),
             githubOAuthConfigured: Boolean(
               env.AUTH_GITHUB_ID?.trim() && env.AUTH_GITHUB_SECRET?.trim()
             ),
@@ -370,17 +389,14 @@ export function registerAuthRoutes(app: Express, deps: AuthRoutesDeps): void {
           env.AUTH_SECRET
         );
 
-        if (
-          (env.NODE_ENV === 'production' || !env.DEMO_MODE) &&
-          !hasValidPreSharedSecret
-        ) {
+        if (!isPublicDemoModeAllowed(env) && !hasValidPreSharedSecret) {
           sendProblemDetails(
             res,
             getReqId(req),
             403,
             'DEMO_AUTH_DISABLED',
             'Demo authentication disabled in production',
-            'Unauthenticated demo persona token issuance is disabled when DEMO_MODE=false or NODE_ENV=production. Authenticate via GitHub OAuth (/api/v1/auth/github/login) or supply a valid x-auth-secret header.'
+            'Unauthenticated demo persona token issuance is disabled when DEMO_MODE=false or NODE_ENV=production without PUBLIC_DEMO_SANDBOX=true. Authenticate via GitHub OAuth (/api/v1/auth/github/login) or supply a valid x-auth-secret header.'
           );
           return;
         }
@@ -403,6 +419,17 @@ export function registerAuthRoutes(app: Express, deps: AuthRoutesDeps): void {
 
         let actor: AuthenticatedActor | null = null;
         if (rawUserId && rawOrgId) {
+          if (!hasValidPreSharedSecret) {
+            sendProblemDetails(
+              res,
+              getReqId(req),
+              403,
+              'DEMO_AUTH_RESTRICTED_TO_SANDBOX_PERSONAS',
+              'Direct userId/organizationId token minting requires x-auth-secret',
+              'Unauthenticated demo token issuance is strictly limited to the 8 seeded sandbox personas (acme-* and beta-*). Supply a valid x-auth-secret header to mint tokens by userId/organizationId.'
+            );
+            return;
+          }
           actor = await resolveActorContext(db, rawUserId, rawOrgId);
         } else if (rawPersonaId) {
           actor = await resolvePersonaActor(db, rawPersonaId);
@@ -432,7 +459,7 @@ export function registerAuthRoutes(app: Express, deps: AuthRoutesDeps): void {
           env.AUTH_SECRET
         );
 
-        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
+        const secureFlag = shouldUseSecureCookie(req, env) ? '; Secure' : '';
         res.setHeader(
           'Set-Cookie',
           `ordaris_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`
@@ -453,10 +480,12 @@ export function registerAuthRoutes(app: Express, deps: AuthRoutesDeps): void {
     }
   );
 
-  app.post('/api/v1/auth/logout', (_req: Request, res: Response) => {
+  app.post('/api/v1/auth/logout', (req: Request, res: Response) => {
+    const env = parseEnv(rawEnv ?? process.env);
+    const secureFlag = shouldUseSecureCookie(req, env) ? '; Secure' : '';
     res.setHeader(
       'Set-Cookie',
-      'ordaris_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'
+      `ordaris_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secureFlag}`
     );
     res.status(200).json({ data: { loggedOut: true } });
   });
@@ -488,7 +517,7 @@ export function registerAuthRoutes(app: Express, deps: AuthRoutesDeps): void {
             : '/';
         const state = signOAuthState(redirectAfter, env.AUTH_SECRET);
         const callbackUrl = `${env.APP_URL.replace(/\/$/, '')}/api/v1/auth/github/callback`;
-        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
+        const secureFlag = shouldUseSecureCookie(req, env) ? '; Secure' : '';
 
         res.setHeader(
           'Set-Cookie',
@@ -666,7 +695,7 @@ export function registerAuthRoutes(app: Express, deps: AuthRoutesDeps): void {
           env.AUTH_SECRET
         );
 
-        const secureFlag = env.NODE_ENV === 'production' ? '; Secure' : '';
+        const secureFlag = shouldUseSecureCookie(req, env) ? '; Secure' : '';
         res.setHeader(
           'Set-Cookie',
           `ordaris_session=${encodeURIComponent(sessionJwt)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${expiresIn}${secureFlag}`

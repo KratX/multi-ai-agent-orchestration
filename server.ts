@@ -181,12 +181,22 @@ function normalizeRenderRuntimeEnv(
       normalized.AUTH_SECRET = generatedSecret;
     }
 
-    // Keep the 8-Persona Interactive Sandbox active on Render unless LOCKDOWN_PRODUCTION="true"
-    if (normalized.LOCKDOWN_PRODUCTION !== 'true') {
-      normalized.NODE_ENV = 'development';
+    // Keep the 8-Persona Interactive Sandbox active under NODE_ENV=production with PUBLIC_DEMO_SANDBOX=true
+    // unless LOCKDOWN_PRODUCTION="true" is set for a locked-down customer deployment.
+    if (normalized.LOCKDOWN_PRODUCTION === 'true') {
+      normalized.NODE_ENV = 'production';
+      normalized.DEMO_MODE = 'false';
+      normalized.PUBLIC_DEMO_SANDBOX = 'false';
+      process.env.NODE_ENV = 'production';
+      process.env.DEMO_MODE = 'false';
+      process.env.PUBLIC_DEMO_SANDBOX = 'false';
+    } else {
+      normalized.NODE_ENV = 'production';
       normalized.DEMO_MODE = 'true';
-      process.env.NODE_ENV = 'development';
+      normalized.PUBLIC_DEMO_SANDBOX = 'true';
+      process.env.NODE_ENV = 'production';
       process.env.DEMO_MODE = 'true';
+      process.env.PUBLIC_DEMO_SANDBOX = 'true';
     }
   }
 

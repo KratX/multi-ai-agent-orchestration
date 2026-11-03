@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -192,9 +193,21 @@ export function clearRuntimeLogs(options?: { organizationId?: string }): number 
   return removedCount;
 }
 
+const EPHEMERAL_RUNTIME_AUTH_SECRET = crypto.randomBytes(32).toString('hex');
+
+export const PLACEHOLDER_AUTH_SECRETS = new Set([
+  'local-dev-only-auth-secret-change-me',
+  'replace-with-local-random-value-at-least-16-chars',
+]);
+
 const booleanStringSchema = z
   .enum(['true', 'false', '1', '0'])
   .default('true')
+  .transform((val) => val === 'true' || val === '1');
+
+const falseBooleanStringSchema = z
+  .enum(['true', 'false', '1', '0'])
+  .default('false')
   .transform((val) => val === 'true' || val === '1');
 
 export const envSchema = z
@@ -214,7 +227,7 @@ export const envSchema = z
     AUTH_SECRET: z
       .string()
       .min(16, 'AUTH_SECRET must be at least 16 characters')
-      .default('local-dev-only-auth-secret-change-me'),
+      .default(EPHEMERAL_RUNTIME_AUTH_SECRET),
     AUTH_GITHUB_ID: z.string().optional().default(''),
     AUTH_GITHUB_SECRET: z.string().optional().default(''),
 
@@ -290,6 +303,7 @@ export const envSchema = z
       .default(10_000),
 
     DEMO_MODE: booleanStringSchema,
+    PUBLIC_DEMO_SANDBOX: falseBooleanStringSchema,
   })
   .superRefine((env, ctx) => {
     // Rule 0: Worker lease heartbeat interval must be strictly less than the worker lease duration.
@@ -327,11 +341,10 @@ export const envSchema = z
       }
     }
 
-    // Rule 2: In production, reject the default local placeholder AUTH_SECRET.
+    // Rule 2: In production, reject missing or known placeholder AUTH_SECRET values.
     if (
       env.NODE_ENV === 'production' &&
-      (env.AUTH_SECRET === 'local-dev-only-auth-secret-change-me' ||
-        env.AUTH_SECRET === 'replace-with-local-random-value-at-least-16-chars')
+      PLACEHOLDER_AUTH_SECRETS.has(env.AUTH_SECRET)
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -340,18 +353,31 @@ export const envSchema = z
       });
     }
 
-    // Rule 3: Block DEMO_MODE authentication bypass in production.
-    if (env.NODE_ENV === 'production' && env.DEMO_MODE) {
+    // Rule 3: Block DEMO_MODE authentication bypass in production unless PUBLIC_DEMO_SANDBOX="true" is explicitly set.
+    if (env.NODE_ENV === 'production' && env.DEMO_MODE && !env.PUBLIC_DEMO_SANDBOX) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['DEMO_MODE'],
         message:
-          'DEMO_MODE authentication bypass cannot be enabled when NODE_ENV="production". Set DEMO_MODE="false" in production.',
+          'DEMO_MODE authentication bypass cannot be enabled when NODE_ENV="production". Set DEMO_MODE="false" in production (or set PUBLIC_DEMO_SANDBOX="true" for an isolated public demo deployment).',
       });
     }
   });
 
 export type AppEnv = z.infer<typeof envSchema>;
+
+/**
+ * Returns true only when interactive 8-persona sandbox switching is permitted:
+ * - In local `development` / `test` when `DEMO_MODE=true`, OR
+ * - In `production` ONLY when `DEMO_MODE=true` AND `PUBLIC_DEMO_SANDBOX=true` are both explicitly enabled.
+ */
+export function isPublicDemoModeAllowed(
+  env: Pick<AppEnv, 'DEMO_MODE' | 'NODE_ENV' | 'PUBLIC_DEMO_SANDBOX'>
+): boolean {
+  return Boolean(
+    env.DEMO_MODE && (env.NODE_ENV !== 'production' || env.PUBLIC_DEMO_SANDBOX)
+  );
+}
 
 export function isConfiguredApiKey(val: string | undefined): boolean {
   const clean = (val ?? '').trim();
@@ -395,9 +421,22 @@ export function parseEnv(rawEnv: Record<string, string | undefined> = process.en
   if (!normalized.XAI_BASE_URL) {
     normalized.XAI_BASE_URL = 'https://api.x.ai/v1/chat/completions';
   }
-  // In production, default DEMO_MODE to 'false' unless explicitly supplied (which Rule 3 will reject if 'true')
+
+  // Never allow any non-production process to sign tokens with a static known string from the repo
+  if (
+    normalized.NODE_ENV !== 'production' &&
+    (!normalized.AUTH_SECRET ||
+      PLACEHOLDER_AUTH_SECRETS.has(normalized.AUTH_SECRET.trim()))
+  ) {
+    normalized.AUTH_SECRET = EPHEMERAL_RUNTIME_AUTH_SECRET;
+  }
+
+  // In production, default DEMO_MODE to 'false' unless PUBLIC_DEMO_SANDBOX="true" or explicitly supplied
   if (normalized.NODE_ENV === 'production' && normalized.DEMO_MODE === undefined) {
-    normalized.DEMO_MODE = 'false';
+    const isSandbox =
+      normalized.PUBLIC_DEMO_SANDBOX === 'true' ||
+      normalized.PUBLIC_DEMO_SANDBOX === '1';
+    normalized.DEMO_MODE = isSandbox ? 'true' : 'false';
   }
   // If WORKER_LEASE_MS is explicitly set without WORKER_HEARTBEAT_INTERVAL_MS, scale the default heartbeat to 1/3 of lease
   if (
@@ -432,7 +471,8 @@ export function getPublicEnvSummary(env: AppEnv = parseEnv()) {
   return {
     nodeEnv: env.NODE_ENV,
     aiMode: env.AI_MODE,
-    demoMode: env.DEMO_MODE,
+    demoMode: isPublicDemoModeAllowed(env),
+    publicDemoSandbox: env.PUBLIC_DEMO_SANDBOX,
     githubOAuthConfigured: Boolean(
       env.AUTH_GITHUB_ID?.trim() && env.AUTH_GITHUB_SECRET?.trim()
     ),
