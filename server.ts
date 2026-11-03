@@ -5,30 +5,61 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { PGlite } from '@electric-sql/pglite';
+import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 
 // Prevent bundled sub-modules (demo-seed.ts, seed.ts, worker/main.ts) from thinking
 // they were invoked directly as CLI entrypoints when esbuild bundles into dist/server.js.
 const originalCliArgv1 = process.argv[1] ?? '';
-if (originalCliArgv1.replace(/\\/g, '/').endsWith('server.js') || originalCliArgv1.replace(/\\/g, '/').endsWith('server.ts')) {
+if (
+  originalCliArgv1.replace(/\\/g, '/').endsWith('server.js') ||
+  originalCliArgv1.replace(/\\/g, '/').endsWith('server.ts')
+) {
   process.argv[1] = '__ordaris_bundled_server_entry__';
 }
 
+const LOW_MEM_POSTGRES_FLAGS = [
+  '-c',
+  'shared_buffers=1MB',
+  '-c',
+  'work_mem=256kB',
+  '-c',
+  'maintenance_work_mem=1MB',
+  '-c',
+  'temp_buffers=800kB',
+  '-c',
+  'wal_buffers=64kB',
+];
+
 // Configure low-memory PostgreSQL buffers on PGlite globally before any DB instance is created
-// so PGlite uses 2MB shared_buffers instead of the 128MB Postgres default (keeps RSS ~185MB on Render 512Mi plan).
-if (!PGlite.defaultStartParams.includes('shared_buffers=2MB')) {
-  PGlite.defaultStartParams.push(
-    '-c',
-    'shared_buffers=2MB',
-    '-c',
-    'work_mem=1MB',
-    '-c',
-    'maintenance_work_mem=2MB',
-    '-c',
-    'temp_buffers=1MB',
-    '-c',
-    'wal_buffers=256kB'
-  );
+if (!PGlite.defaultStartParams.includes('shared_buffers=1MB')) {
+  PGlite.defaultStartParams.push(...LOW_MEM_POSTGRES_FLAGS);
 }
+
+const REQUIRED_PGDATA_SUBDIRS = [
+  'base',
+  'global',
+  'pg_commit_ts',
+  'pg_dynshmem',
+  'pg_logical',
+  'pg_logical/mappings',
+  'pg_logical/snapshots',
+  'pg_multixact',
+  'pg_multixact/members',
+  'pg_multixact/offsets',
+  'pg_notify',
+  'pg_replslot',
+  'pg_serial',
+  'pg_snapshots',
+  'pg_stat',
+  'pg_stat_tmp',
+  'pg_subtrans',
+  'pg_tblspc',
+  'pg_twophase',
+  'pg_wal',
+  'pg_wal/archive_status',
+  'pg_wal/summaries',
+  'pg_xact',
+];
 
 function runGarbageCollectionIfAvailable(): void {
   const maybeGc = (globalThis as unknown as { gc?: () => void }).gc;
@@ -39,6 +70,59 @@ function runGarbageCollectionIfAvailable(): void {
       // Ignore GC errors
     }
   }
+}
+
+/**
+ * Ensures all required PostgreSQL PGDATA subdirectories exist (cloud artifact uploaders
+ * often strip empty directories like `pg_notify`, `pg_tblspc`, `pg_twophase`, causing
+ * PGlite to fail resume and trigger an expensive second WASM initdb in RAM), removes stale
+ * `postmaster.pid`, and tunes `postgresql.conf` for minimal RAM usage (~130MB RSS).
+ */
+export function repairPreseededPostgresDir(rawDir?: string): string | undefined {
+  if (!rawDir || rawDir === 'memory://') {
+    return undefined;
+  }
+  const resolvedDir = path.resolve(rawDir);
+  fs.mkdirSync(resolvedDir, { recursive: true });
+
+  const pidFile = path.join(resolvedDir, 'postmaster.pid');
+  if (fs.existsSync(pidFile)) {
+    try {
+      fs.rmSync(pidFile, { force: true });
+    } catch {
+      // Ignore lock cleanup error
+    }
+  }
+
+  if (fs.existsSync(path.join(resolvedDir, 'PG_VERSION'))) {
+    for (const sub of REQUIRED_PGDATA_SUBDIRS) {
+      const targetSub = path.join(resolvedDir, sub);
+      if (!fs.existsSync(targetSub)) {
+        try {
+          fs.mkdirSync(targetSub, { recursive: true });
+        } catch {
+          // Ignore mkdir error
+        }
+      }
+    }
+
+    const confPath = path.join(resolvedDir, 'postgresql.conf');
+    if (fs.existsSync(confPath)) {
+      try {
+        let conf = fs.readFileSync(confPath, 'utf8');
+        conf = conf
+          .replace(/^max_connections\s*=.*$/m, 'max_connections = 10')
+          .replace(/^shared_buffers\s*=.*$/m, 'shared_buffers = 1MB')
+          .replace(/^max_wal_size\s*=.*$/m, 'max_wal_size = 32MB')
+          .replace(/^min_wal_size\s*=.*$/m, 'min_wal_size = 32MB');
+        fs.writeFileSync(confPath, conf, 'utf8');
+      } catch {
+        // Ignore read-only conf error
+      }
+    }
+  }
+
+  return resolvedDir;
 }
 
 /**
@@ -58,6 +142,7 @@ function normalizeRenderRuntimeEnv(
 
   if (normalized.RENDER_EXTERNAL_URL && !normalized.APP_URL) {
     normalized.APP_URL = normalized.RENDER_EXTERNAL_URL;
+    process.env.APP_URL = normalized.RENDER_EXTERNAL_URL;
   }
 
   if (isStaticCloud) {
@@ -66,16 +151,30 @@ function normalizeRenderRuntimeEnv(
 
     // Store pre-seeded PGlite database inside dist/ordaris-db on static cloud builds so
     // Render's build artifact uploader always carries the pre-initialized DB to the runtime container.
-    if (!normalized.PGLITE_DATA_DIR || normalized.PGLITE_DATA_DIR === '.local/ordaris-db') {
+    if (
+      !normalized.PGLITE_DATA_DIR ||
+      normalized.PGLITE_DATA_DIR === '.local/ordaris-db'
+    ) {
       normalized.PGLITE_DATA_DIR = 'dist/ordaris-db';
       process.env.PGLITE_DATA_DIR = 'dist/ordaris-db';
+    }
+
+    // Reduce background worker polling frequency on constrained cloud instances
+    if (!normalized.WORKER_CONCURRENCY) {
+      normalized.WORKER_CONCURRENCY = '1';
+      process.env.WORKER_CONCURRENCY = '1';
+    }
+    if (!normalized.WORKER_POLL_INTERVAL_MS) {
+      normalized.WORKER_POLL_INTERVAL_MS = '2500';
+      process.env.WORKER_POLL_INTERVAL_MS = '2500';
     }
 
     // Generate a strong ephemeral AUTH_SECRET if none was configured in Render dashboard
     if (
       !normalized.AUTH_SECRET ||
       normalized.AUTH_SECRET === 'local-dev-only-auth-secret-change-me' ||
-      normalized.AUTH_SECRET === 'replace-with-local-random-value-at-least-16-chars'
+      normalized.AUTH_SECRET ===
+        'replace-with-local-random-value-at-least-16-chars'
     ) {
       const generatedSecret = crypto.randomBytes(32).toString('hex');
       process.env.AUTH_SECRET = generatedSecret;
@@ -94,16 +193,34 @@ function normalizeRenderRuntimeEnv(
   return normalized;
 }
 
+// Normalize process.env immediately at module load time before submodules are imported
+normalizeRenderRuntimeEnv(process.env);
+
 export async function preseedDatabaseForBuild(): Promise<void> {
   const { parseEnv } = await import('./src/server/config/env');
-  const { closeSharedDatabase, getSharedDatabase } = await import('./src/server/db/client');
-  const { ensureWorkspaceSeededWithPendingHitl } = await import('./src/server/http/app');
+  const { closeSharedDatabase, getSharedDatabase } = await import(
+    './src/server/db/client'
+  );
+  const { ensureWorkspaceSeededWithPendingHitl } = await import(
+    './src/server/http/app'
+  );
 
   const env = parseEnv(normalizeRenderRuntimeEnv(process.env));
-  const dbContext = await getSharedDatabase({ dataDir: env.PGLITE_DATA_DIR });
+  const resolvedDir = repairPreseededPostgresDir(env.PGLITE_DATA_DIR);
+  const dbContext = await getSharedDatabase({ dataDir: resolvedDir });
   runGarbageCollectionIfAvailable();
+
   await ensureWorkspaceSeededWithPendingHitl(dbContext.db, { forceReset: false });
+
   if (dbContext.dataDir) {
+    try {
+      await dbContext.pg.exec('CHECKPOINT;');
+    } catch {
+      // Ignore checkpoint error
+    }
+
+    repairPreseededPostgresDir(dbContext.dataDir);
+
     try {
       fs.writeFileSync(
         path.join(dbContext.dataDir, '.ordaris-migrated-v1'),
@@ -118,8 +235,30 @@ export async function preseedDatabaseForBuild(): Promise<void> {
     } catch {
       // Ignore marker write error
     }
+
+    // Also export a compact 4.8MB gzipped tarball snapshot in dist/ordaris-db-seed.tar.gz
+    // so if the cloud artifact uploader strips any PGDATA files, runtime restores via loadDataDir
+    // without ever invoking initdb.wasm in the 512Mi runtime container.
+    try {
+      const rawPglite = dbContext.pg as unknown as PGlite;
+      if (typeof rawPglite.dumpDataDir === 'function') {
+        const dumpBlob = await rawPglite.dumpDataDir('gzip');
+        const dumpBuffer = Buffer.from(await dumpBlob.arrayBuffer());
+        const tarballPath = path.resolve(
+          path.dirname(dbContext.dataDir),
+          'ordaris-db-seed.tar.gz'
+        );
+        fs.writeFileSync(tarballPath, dumpBuffer);
+      }
+    } catch {
+      // Ignore optional tarball snapshot error
+    }
   }
+
   await closeSharedDatabase();
+  if (resolvedDir) {
+    repairPreseededPostgresDir(resolvedDir);
+  }
   runGarbageCollectionIfAvailable();
 }
 
@@ -130,8 +269,15 @@ export async function startOrdarisServer(port = 3000) {
     LOG_FILE_PATH,
     parseEnv,
   } = await import('./src/server/config/env');
-  const { createLiveRuntimeModelProvider } = await import('./src/server/ai/model-provider');
-  const { closeSharedDatabase, getSharedDatabase } = await import('./src/server/db/client');
+  const { createLiveRuntimeModelProvider } = await import(
+    './src/server/ai/model-provider'
+  );
+  const {
+    closeSharedDatabase,
+    getSharedDatabase,
+    ordarisSchema,
+    setSharedDatabaseForRuntime,
+  } = await import('./src/server/db/client');
   const {
     createApiApp,
     ensureWorkspaceSeededWithPendingHitl,
@@ -139,7 +285,57 @@ export async function startOrdarisServer(port = 3000) {
   const { RuntimeWorker } = await import('./src/server/worker/main');
 
   const env = parseEnv(normalizeRenderRuntimeEnv(process.env));
-  const dbContext = await getSharedDatabase({ dataDir: env.PGLITE_DATA_DIR });
+  const resolvedDir = repairPreseededPostgresDir(env.PGLITE_DATA_DIR);
+
+  // If pre-seeded directory was stripped by build cache but dist/ordaris-db-seed.tar.gz exists,
+  // restore directly via PGlite loadDataDir (avoids running multi-WASM initdb in 512Mi container).
+  if (
+    resolvedDir &&
+    !fs.existsSync(path.join(resolvedDir, 'PG_VERSION')) &&
+    env.DB_DRIVER !== 'postgres'
+  ) {
+    const tarballPath = path.resolve(
+      path.dirname(resolvedDir),
+      'ordaris-db-seed.tar.gz'
+    );
+    if (fs.existsSync(tarballPath)) {
+      try {
+        fs.rmSync(resolvedDir, { recursive: true, force: true });
+        fs.mkdirSync(resolvedDir, { recursive: true });
+        const tarBuf = fs.readFileSync(tarballPath);
+        const pglite = new PGlite(resolvedDir, {
+          relaxedDurability: true,
+          loadDataDir: new Blob([tarBuf]),
+          startParams: [...PGlite.defaultStartParams],
+        });
+        await pglite.waitReady;
+        repairPreseededPostgresDir(resolvedDir);
+        fs.writeFileSync(path.join(resolvedDir, '.ordaris-migrated-v1'), 'ok\n', 'utf8');
+        fs.writeFileSync(
+          path.join(resolvedDir, '.ordaris-seeded-v1'),
+          new Date().toISOString() + '\n',
+          'utf8'
+        );
+        const db = drizzlePglite(pglite, { schema: ordarisSchema });
+        setSharedDatabaseForRuntime({
+          pg: pglite as unknown as Awaited<ReturnType<typeof getSharedDatabase>>['pg'],
+          db,
+          engine: 'pglite',
+          storageMode: 'file',
+          dataDir: resolvedDir,
+          close: async () => {
+            if (!pglite.closed) {
+              await pglite.close();
+            }
+          },
+        });
+      } catch {
+        // Fall through to standard getSharedDatabase
+      }
+    }
+  }
+
+  const dbContext = await getSharedDatabase({ dataDir: resolvedDir ?? env.PGLITE_DATA_DIR });
   runGarbageCollectionIfAvailable();
 
   const seedMarkerPath = dbContext.dataDir

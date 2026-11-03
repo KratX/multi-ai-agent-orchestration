@@ -64,10 +64,10 @@ The repository includes a pre-configured [`render.yaml`](render.yaml) Blueprint 
 1. Push this repository to GitHub and open **[Render Blueprints](https://dashboard.render.com/select-repo?type=blueprint)**.
 2. Set **Blueprint Name** to `ordaris-runtime-platform` (this deploys the web service `ordaris-runtime` at **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)**).
 3. Render automatically runs:
-   - **Build Command**: `npm install --legacy-peer-deps && npm run build` (builds static frontend assets to `dist/` and bundles the backend entrypoint to `dist/server.js`).
-   - **Start Command**: `npm start` (`SERVE_STATIC=true node dist/server.js`).
+   - **Build Command**: `npm install --legacy-peer-deps && npm run build` (builds static frontend assets to `dist/`, bundles `dist/server.js`, and pre-seeds `dist/ordaris-db` + `dist/ordaris-db-seed.tar.gz` during build).
+   - **Start Command**: `npm start` (`SERVE_STATIC=true node --liftoff-only --no-wasm-tier-up --expose-gc --max-old-space-size=192 --max-semi-space-size=8 dist/server.js`).
    - **Health Check Path**: `/api/v1/health/live`
-   - **Auto-Detection (`normalizeRenderRuntimeEnv` in `server.ts`)**: Automatically detects `RENDER=true` / `RENDER_EXTERNAL_URL`, serves pre-built static assets from `dist/`, keeps the 8-Persona Interactive Sandbox active (`DEMO_MODE=true`), and provisions an ephemeral 64-hex CSPRNG `AUTH_SECRET` if not explicitly set.
+   - **Low-Memory 512Mi Free-Tier Optimization (`server.ts`)**: Repairs stripped empty `PGDATA` directories before startup, tunes `postgresql.conf` (`max_connections=10`, `shared_buffers=1MB`), disables V8 background WASM TurboFan tier-up (`--liftoff-only --no-wasm-tier-up`), and keeps steady-state RSS around **~135–165 MiB** on Render Free Tier.
 
 ### Option B: Container Deployment (`Dockerfile`)
 The included [`Dockerfile`](Dockerfile) and [`.dockerignore`](.dockerignore) support **Render Docker Runtime**, **Koyeb Free Tier**, **Hugging Face Spaces (Docker)**, **Railway**, and **Fly.io**:

@@ -10,6 +10,8 @@ services:
     startCommand: npm start
     healthCheckPath: /api/v1/health/live
     envVars:
+      - key: NODE_VERSION
+        value: "22.14.0"
       - key: NODE_ENV
         value: development
       - key: SERVE_STATIC
@@ -25,6 +27,6 @@ services:
       - key: UPLOAD_DIR
         value: .local/uploads
       - key: NODE_OPTIONS
-        value: "--expose-gc --max-old-space-size=256"
+        value: "--liftoff-only --no-wasm-tier-up --expose-gc --max-old-space-size=192 --max-semi-space-size=8"
       - key: AUTH_SECRET
         generateValue: true
