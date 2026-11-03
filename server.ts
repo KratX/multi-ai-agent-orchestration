@@ -126,14 +126,16 @@ export function repairPreseededPostgresDir(rawDir?: string): string | undefined 
 }
 
 /**
- * Normalizes Render.com / cloud container environment variables so deploying via
- * Render Blueprint (`render.yaml`) or standard Render Web Service (`npm run build && npm start`)
- * boots out-of-the-box with zero manual env configuration required.
+ * Normalizes Render.com / cloud container environment variables.
+ * Never forces DEMO_MODE=true or PUBLIC_DEMO_SANDBOX=true: production and SERVE_STATIC=true
+ * default to locked-down mode (DEMO_MODE=false, PUBLIC_DEMO_SANDBOX=false) unless
+ * PUBLIC_DEMO_SANDBOX="true" is explicitly opted in (such as in render.yaml) and DEMO_MODE is not "false".
  */
-function normalizeRenderRuntimeEnv(
+export function normalizeRenderRuntimeEnv(
   raw: Record<string, string | undefined>
 ): Record<string, string | undefined> {
   const normalized: Record<string, string | undefined> = { ...raw };
+  const isMutatingProcessEnv = raw === process.env;
   const isRender =
     normalized.RENDER === 'true' || Boolean(normalized.RENDER_EXTERNAL_URL);
   const isPreseed = process.argv.includes('--preseed-only');
@@ -142,12 +144,23 @@ function normalizeRenderRuntimeEnv(
 
   if (normalized.RENDER_EXTERNAL_URL && !normalized.APP_URL) {
     normalized.APP_URL = normalized.RENDER_EXTERNAL_URL;
-    process.env.APP_URL = normalized.RENDER_EXTERNAL_URL;
+    if (isMutatingProcessEnv) {
+      process.env.APP_URL = normalized.RENDER_EXTERNAL_URL;
+    }
   }
 
   if (isStaticCloud) {
-    process.env.SERVE_STATIC = 'true';
     normalized.SERVE_STATIC = 'true';
+    if (isMutatingProcessEnv) {
+      process.env.SERVE_STATIC = 'true';
+    }
+
+    if (!normalized.NODE_ENV) {
+      normalized.NODE_ENV = 'production';
+      if (isMutatingProcessEnv) {
+        process.env.NODE_ENV = 'production';
+      }
+    }
 
     // Store pre-seeded PGlite database inside dist/ordaris-db on static cloud builds so
     // Render's build artifact uploader always carries the pre-initialized DB to the runtime container.
@@ -156,20 +169,26 @@ function normalizeRenderRuntimeEnv(
       normalized.PGLITE_DATA_DIR === '.local/ordaris-db'
     ) {
       normalized.PGLITE_DATA_DIR = 'dist/ordaris-db';
-      process.env.PGLITE_DATA_DIR = 'dist/ordaris-db';
+      if (isMutatingProcessEnv) {
+        process.env.PGLITE_DATA_DIR = 'dist/ordaris-db';
+      }
     }
 
     // Reduce background worker polling frequency on constrained cloud instances
     if (!normalized.WORKER_CONCURRENCY) {
       normalized.WORKER_CONCURRENCY = '1';
-      process.env.WORKER_CONCURRENCY = '1';
+      if (isMutatingProcessEnv) {
+        process.env.WORKER_CONCURRENCY = '1';
+      }
     }
     if (!normalized.WORKER_POLL_INTERVAL_MS) {
       normalized.WORKER_POLL_INTERVAL_MS = '2500';
-      process.env.WORKER_POLL_INTERVAL_MS = '2500';
+      if (isMutatingProcessEnv) {
+        process.env.WORKER_POLL_INTERVAL_MS = '2500';
+      }
     }
 
-    // Generate a strong ephemeral AUTH_SECRET if none was configured in Render dashboard
+    // Generate a strong ephemeral AUTH_SECRET if none was configured
     if (
       !normalized.AUTH_SECRET ||
       normalized.AUTH_SECRET === 'local-dev-only-auth-secret-change-me' ||
@@ -177,26 +196,41 @@ function normalizeRenderRuntimeEnv(
         'replace-with-local-random-value-at-least-16-chars'
     ) {
       const generatedSecret = crypto.randomBytes(32).toString('hex');
-      process.env.AUTH_SECRET = generatedSecret;
       normalized.AUTH_SECRET = generatedSecret;
+      if (isMutatingProcessEnv) {
+        process.env.AUTH_SECRET = generatedSecret;
+      }
     }
 
-    // Keep the 8-Persona Interactive Sandbox active under NODE_ENV=production with PUBLIC_DEMO_SANDBOX=true
-    // unless LOCKDOWN_PRODUCTION="true" is set for a locked-down customer deployment.
-    if (normalized.LOCKDOWN_PRODUCTION === 'true') {
-      normalized.NODE_ENV = 'production';
-      normalized.DEMO_MODE = 'false';
-      normalized.PUBLIC_DEMO_SANDBOX = 'false';
-      process.env.NODE_ENV = 'production';
-      process.env.DEMO_MODE = 'false';
-      process.env.PUBLIC_DEMO_SANDBOX = 'false';
-    } else {
-      normalized.NODE_ENV = 'production';
-      normalized.DEMO_MODE = 'true';
+    // Respect explicit DEMO_MODE="false", PUBLIC_DEMO_SANDBOX="false", or LOCKDOWN_PRODUCTION="true".
+    // Default PUBLIC_DEMO_SANDBOX to "false" unless explicitly opted in via PUBLIC_DEMO_SANDBOX="true".
+    const explicitDemoDisabled =
+      normalized.LOCKDOWN_PRODUCTION === 'true' ||
+      normalized.LOCKDOWN_PRODUCTION === '1' ||
+      normalized.DEMO_MODE === 'false' ||
+      normalized.DEMO_MODE === '0' ||
+      normalized.PUBLIC_DEMO_SANDBOX === 'false' ||
+      normalized.PUBLIC_DEMO_SANDBOX === '0';
+
+    const explicitSandboxOptIn =
+      !explicitDemoDisabled &&
+      (normalized.PUBLIC_DEMO_SANDBOX === 'true' ||
+        normalized.PUBLIC_DEMO_SANDBOX === '1');
+
+    if (explicitSandboxOptIn) {
       normalized.PUBLIC_DEMO_SANDBOX = 'true';
-      process.env.NODE_ENV = 'production';
-      process.env.DEMO_MODE = 'true';
-      process.env.PUBLIC_DEMO_SANDBOX = 'true';
+      normalized.DEMO_MODE = 'true';
+      if (isMutatingProcessEnv) {
+        process.env.PUBLIC_DEMO_SANDBOX = 'true';
+        process.env.DEMO_MODE = 'true';
+      }
+    } else if (explicitDemoDisabled || normalized.NODE_ENV === 'production') {
+      normalized.PUBLIC_DEMO_SANDBOX = 'false';
+      normalized.DEMO_MODE = 'false';
+      if (isMutatingProcessEnv) {
+        process.env.PUBLIC_DEMO_SANDBOX = 'false';
+        process.env.DEMO_MODE = 'false';
+      }
     }
   }
 

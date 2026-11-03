@@ -23,8 +23,8 @@ RUN mkdir -p /app/.local/ordaris-db /app/.local/uploads /app/.local/logs && \
 
 ENV NODE_ENV=production
 ENV SERVE_STATIC=true
-ENV PUBLIC_DEMO_SANDBOX=true
-ENV DEMO_MODE=true
+ENV PUBLIC_DEMO_SANDBOX=false
+ENV DEMO_MODE=false
 ENV AI_MODE=demo
 ENV DB_DRIVER=pglite
 ENV PGLITE_DATA_DIR=/app/dist/ordaris-db

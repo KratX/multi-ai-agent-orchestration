@@ -431,6 +431,17 @@ export function parseEnv(rawEnv: Record<string, string | undefined> = process.en
     normalized.AUTH_SECRET = EPHEMERAL_RUNTIME_AUTH_SECRET;
   }
 
+  // Respect an explicit DEMO_MODE="false" or LOCKDOWN_PRODUCTION="true" even if PUBLIC_DEMO_SANDBOX="true" was also present
+  if (
+    normalized.LOCKDOWN_PRODUCTION === 'true' ||
+    normalized.LOCKDOWN_PRODUCTION === '1' ||
+    normalized.DEMO_MODE === 'false' ||
+    normalized.DEMO_MODE === '0'
+  ) {
+    normalized.DEMO_MODE = 'false';
+    normalized.PUBLIC_DEMO_SANDBOX = 'false';
+  }
+
   // In production, default DEMO_MODE to 'false' unless PUBLIC_DEMO_SANDBOX="true" or explicitly supplied
   if (normalized.NODE_ENV === 'production' && normalized.DEMO_MODE === undefined) {
     const isSandbox =
