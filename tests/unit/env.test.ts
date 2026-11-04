@@ -5,9 +5,12 @@ import {
   clearRuntimeLogs,
   getPublicEnvSummary,
   getRuntimeLogs,
+  isPublicDemoModeAllowed,
   parseEnv,
 } from '../../src/server/config/env';
+import { normalizeRenderRuntimeEnv } from '../../server';
 import {
+  shouldUseSecureCookie,
   signAuthToken,
   verifyAuthToken,
   signOAuthState,
@@ -19,7 +22,7 @@ import {
   resolveByokScopeKey,
 } from '../../src/server/security/session-key-vault';
 
-test('REPO-003: parseEnv succeeds in default AI_MODE="demo" with zero API keys', () => {
+test('REPO-003: parseEnv succeeds in default AI_MODE="demo" with zero API keys and generates CSPRNG AUTH_SECRET', () => {
   const env = parseEnv({
     NODE_ENV: 'development',
     AI_MODE: 'demo',
@@ -34,6 +37,8 @@ test('REPO-003: parseEnv succeeds in default AI_MODE="demo" with zero API keys',
   assert.equal(env.RUN_MAX_TOOL_CALLS, 6);
   assert.equal(env.RUN_TIMEOUT_SECONDS, 120);
   assert.equal(env.MAX_UPLOAD_BYTES, 10_485_760);
+  assert.notEqual(env.AUTH_SECRET, 'local-dev-only-auth-secret-change-me');
+  assert.equal(env.AUTH_SECRET.length, 64);
 });
 
 test('REPO-003: parseEnv normalizes MY_APP_URL placeholder to http://localhost:3000', () => {
@@ -90,7 +95,7 @@ test('REPO-003: parseEnv rejects default AUTH_SECRET in production mode', () => 
   );
 });
 
-test('REPO-003: parseEnv blocks DEMO_MODE="true" in production mode and defaults DEMO_MODE to false in production', () => {
+test('REPO-003: parseEnv blocks DEMO_MODE="true" in production mode without PUBLIC_DEMO_SANDBOX and respects explicit DEMO_MODE="false"', () => {
   assert.throws(
     () =>
       parseEnv({
@@ -109,6 +114,52 @@ test('REPO-003: parseEnv blocks DEMO_MODE="true" in production mode and defaults
   });
   assert.equal(prodEnv.NODE_ENV, 'production');
   assert.equal(prodEnv.DEMO_MODE, false);
+  assert.equal(isPublicDemoModeAllowed(prodEnv), false);
+
+  // Proof check: SERVE_STATIC=true NODE_ENV=production DEMO_MODE=false (and even with PUBLIC_DEMO_SANDBOX=true) must keep demo mode disabled
+  const staticDisabledEnv = parseEnv(
+    normalizeRenderRuntimeEnv({
+      SERVE_STATIC: 'true',
+      NODE_ENV: 'production',
+      DEMO_MODE: 'false',
+      PUBLIC_DEMO_SANDBOX: 'true',
+      AUTH_SECRET: 'prod-strong-random-auth-secret-9999',
+    })
+  );
+  assert.equal(staticDisabledEnv.NODE_ENV, 'production');
+  assert.equal(staticDisabledEnv.DEMO_MODE, false);
+  assert.equal(staticDisabledEnv.PUBLIC_DEMO_SANDBOX, false);
+  assert.equal(isPublicDemoModeAllowed(staticDisabledEnv), false);
+
+  // Default SERVE_STATIC=true (npm start / Dockerfile) without PUBLIC_DEMO_SANDBOX=true defaults to locked-down production
+  const defaultStaticEnv = parseEnv(
+    normalizeRenderRuntimeEnv({
+      SERVE_STATIC: 'true',
+    })
+  );
+  assert.equal(defaultStaticEnv.NODE_ENV, 'production');
+  assert.equal(defaultStaticEnv.DEMO_MODE, false);
+  assert.equal(defaultStaticEnv.PUBLIC_DEMO_SANDBOX, false);
+  assert.equal(isPublicDemoModeAllowed(defaultStaticEnv), false);
+
+  // Explicit Render Blueprint opt-in: PUBLIC_DEMO_SANDBOX=true enables sandbox when DEMO_MODE is not false
+  const publicDemoProdEnv = parseEnv(
+    normalizeRenderRuntimeEnv({
+      SERVE_STATIC: 'true',
+      NODE_ENV: 'production',
+      AI_MODE: 'demo',
+      AUTH_SECRET: 'prod-strong-random-auth-secret-9999',
+      DEMO_MODE: 'true',
+      PUBLIC_DEMO_SANDBOX: 'true',
+    })
+  );
+  assert.equal(publicDemoProdEnv.NODE_ENV, 'production');
+  assert.equal(publicDemoProdEnv.PUBLIC_DEMO_SANDBOX, true);
+  assert.equal(isPublicDemoModeAllowed(publicDemoProdEnv), true);
+  assert.equal(
+    shouldUseSecureCookie({ secure: false, headers: {} } as never, publicDemoProdEnv),
+    true
+  );
 });
 
 test('AUTH-001: signAuthToken and verifyAuthToken enforce HMAC-SHA256 signature and expiration with AUTH_SECRET', () => {

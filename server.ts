@@ -478,7 +478,52 @@ export async function startOrdarisServer(port = 3000) {
     );
   });
 
+  // Prevent Render Free Tier 15-minute inactivity spin-down by pinging the external HTTPS edge URL
+  // every 10 minutes (600,000ms) when KEEP_ALIVE_URL or RENDER_EXTERNAL_URL is set.
+  let keepAliveTimer: NodeJS.Timeout | null = null;
+  const keepAliveDisabled =
+    process.env.KEEP_ALIVE_ENABLED === 'false' ||
+    process.env.KEEP_ALIVE_ENABLED === '0' ||
+    Boolean(process.env.NODE_TEST_CONTEXT);
+  const rawKeepAliveBase = (
+    process.env.KEEP_ALIVE_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    (process.env.RENDER === 'true' ? 'https://ordaris-runtime.onrender.com' : '')
+  )
+    .trim()
+    .replace(/\/+$/, '');
+
+  if (!keepAliveDisabled && rawKeepAliveBase.startsWith('http')) {
+    const parsedInterval = Number(process.env.KEEP_ALIVE_INTERVAL_MS ?? 600_000);
+    const intervalMs =
+      Number.isFinite(parsedInterval) && parsedInterval >= 60_000
+        ? parsedInterval
+        : 600_000;
+    const targetHealthUrl = `${rawKeepAliveBase}/api/v1/health/live`;
+
+    keepAliveTimer = setInterval(() => {
+      void fetch(targetHealthUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Ordaris-EdgeKeepAlive/1.0',
+          'Cache-Control': 'no-cache',
+        },
+        signal: AbortSignal.timeout(15_000),
+      }).catch(() => {
+        // Ignore transient network errors during background keep-alive ping
+      });
+    }, intervalMs);
+
+    if (typeof keepAliveTimer.unref === 'function') {
+      keepAliveTimer.unref();
+    }
+  }
+
   const shutdown = async () => {
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
     await worker.stop();
     httpServer.close();
     await closeSharedDatabase();

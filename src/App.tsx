@@ -770,6 +770,19 @@ export function App() {
     void fetchWorkspace();
   }, [activeActorId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep cloud host warm while an operator console tab is open (every 4 minutes)
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void fetch('/api/v1/health/live', {
+        method: 'GET',
+        cache: 'no-store',
+      }).catch(() => {
+        // Ignore transient offline errors
+      });
+    }, 240_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // Update default prompt when switching between Acme Cyber Defense and Beta Logistics
   useEffect(() => {
     if (activePersona.orgSlug === 'beta-logistics') {

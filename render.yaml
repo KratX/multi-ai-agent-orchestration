@@ -28,6 +28,10 @@ services:
         value: dist/ordaris-db
       - key: UPLOAD_DIR
         value: .local/uploads
+      - key: KEEP_ALIVE_URL
+        value: "https://ordaris-runtime.onrender.com"
+      - key: KEEP_ALIVE_INTERVAL_MS
+        value: "600000"
       - key: NODE_OPTIONS
         value: "--expose-gc --max-old-space-size=384"
       - key: AUTH_SECRET

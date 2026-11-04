@@ -1,0 +1,33 @@
+name: Render Free-Tier Keep-Alive Heartbeat
+
+on:
+  schedule:
+    # Ping the public Render ingress URL every 10 minutes (Render Free Tier spins down after 15m of inactivity)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    name: Ping Render Health Probe (/api/v1/health/live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send External HTTPS Keep-Alive Request to Render Ingress
+        env:
+          TARGET_HEALTH_URL: ${{ vars.RENDER_HEALTH_URL || 'https://ordaris-runtime.onrender.com/api/v1/health/live' }}
+        run: |
+          echo "Pinging ${TARGET_HEALTH_URL} at $(date -u +"%Y-%m-%dT%H:%M:%SZ")..."
+          HTTP_STATUS=$(curl -sS -o /tmp/health_resp.json -w "%{http_code}" \
+            --retry 3 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            --max-time 25 \
+            -H "User-Agent: Ordaris-GitHubActions-KeepAlive/1.0" \
+            -H "Cache-Control: no-cache" \
+            "${TARGET_HEALTH_URL}")
+          cat /tmp/health_resp.json || true
+          echo ""
+          echo "HTTP Status: ${HTTP_STATUS}"
+          if [ "${HTTP_STATUS}" -lt 200 ] || [ "${HTTP_STATUS}" -ge 400 ]; then
+            echo "::warning::Keep-alive ping returned HTTP ${HTTP_STATUS}"
+          fi

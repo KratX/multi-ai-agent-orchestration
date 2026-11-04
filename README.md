@@ -1,16 +1,10 @@
 # Ordaris Runtime (`v1.0.0-demo`) — Enterprise Governed AI Agent, Hybrid RAG & Workflow Runtime
 
 > ### 🌐 Live Hosted Deployment (Render Public Evaluation Sandbox)
+>
 > - **Interactive Operator Console (8-Persona Multi-Tenant Sandbox)**: **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)**
 > - **Live Process Health Probe (`200 OK`)**: [`https://ordaris-runtime.onrender.com/api/v1/health/live`](https://ordaris-runtime.onrender.com/api/v1/health/live)
 > - **Database Readiness Probe (`SELECT 1`)**: [`https://ordaris-runtime.onrender.com/api/v1/health/ready`](https://ordaris-runtime.onrender.com/api/v1/health/ready)
-> - **1-Click Deploy Your Own Instance on Render**: [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://dashboard.render.com/select-repo?type=blueprint) *(Blueprint Name: `ordaris-runtime-platform` • Service Name: `ordaris-runtime`)*
->
-> > ⚠️ **Public Demo Sandbox Security Notice (`PUBLIC_DEMO_SANDBOX=true` in `render.yaml` Only)**:
-> > The hosted instance at `https://ordaris-runtime.onrender.com` deployed via the [`render.yaml`](render.yaml) Blueprint explicitly opts into **Public Demo Sandbox Mode** (`NODE_ENV=production`, `PUBLIC_DEMO_SANDBOX=true`, `DEMO_MODE=true`). By design, any visitor to the public sandbox can switch between the **8 pre-seeded sandbox personas** (`acme-owner`..`beta-viewer`), mint sandbox persona tokens via `POST /api/v1/auth/token`, and reset/re-seed the shared demo database (`Acme Cyber Defense` & `Beta Global Logistics`) via `POST /api/v1/workspace/reset`.
-> > - **Safe-by-Default (`npm start` & `Dockerfile`)**: Running `npm start` (`SERVE_STATIC=true`) or starting the [`Dockerfile`](Dockerfile) container defaults to **Locked-Down Production Mode** (`NODE_ENV=production`, `PUBLIC_DEMO_SANDBOX=false`, `DEMO_MODE=false`). Setting `DEMO_MODE=false` is always respected and immediately disables the public demo sandbox even if `PUBLIC_DEMO_SANDBOX=true` was also present.
-> > - **Strict Isolation**: Demo resets only re-seed the two synthetic demo organizations (`acme-cyber-defense`, `beta-logistics`), and session BYOK API key purges during `factory_reset` / `keys_only` are isolated strictly to the caller's own `x-ordaris-demo-session` header unless authenticated with `x-auth-secret`.
-> > - **Keep Demo Separate from Production**: Never store real customer data, production secrets, or live organizational records inside a `PUBLIC_DEMO_SANDBOX=true` deployment. See [Section 2](#2-cloud-deployment--production-lockdown-rendercom-free-tier--docker) for details.
 
 ---
 
@@ -66,6 +60,7 @@ Built under a strict **Zero-Required-Spend (`ADR-001`)** and **Defense-in-Depth 
 ## 2. Cloud Deployment & Production Lockdown (Render.com Free Tier & Docker)
 
 ### Security Posture: Public Demo Sandbox vs. Production Lockdown
+
 - **`NODE_ENV=production` & `; Secure` Cookies**: Both [`Dockerfile`](Dockerfile) and [`render.yaml`](render.yaml) run with `NODE_ENV=production`. All `ordaris_session` and `ordaris_oauth_state` cookies set `HttpOnly; Path=/; SameSite=Lax; Secure` whenever `NODE_ENV=production`, `APP_URL` is `https://`, or `x-forwarded-proto: https` is present.
 - **Zero Static Signing Secret Fallback (`AUTH_SECRET`)**:
   - In `NODE_ENV=production`, `parseEnv` rejects missing or placeholder `AUTH_SECRET` values (`Rule 2`).
@@ -76,7 +71,9 @@ Built under a strict **Zero-Required-Spend (`ADR-001`)** and **Defense-in-Depth 
   - **Public Demo Sandbox (Opt-in via `render.yaml` on `ordaris-runtime.onrender.com`)**: Explicitly sets `NODE_ENV=production`, `PUBLIC_DEMO_SANDBOX=true`, and `DEMO_MODE=true`. Allows unauthenticated visitors to evaluate the 8 pre-seeded sandbox personas (`x-actor-id` or `POST /api/v1/auth/token` with `personaId`) and re-seed the demo workspace. Arbitrary `{ userId, organizationId }` token minting without `x-auth-secret` is blocked (`403 DEMO_AUTH_RESTRICTED_TO_SANDBOX_PERSONAS`).
 
 ### Option A: 1-Click Render Blueprint (`render.yaml`)
+
 The repository includes a pre-configured [`render.yaml`](render.yaml) Blueprint and [`.npmrc`](.npmrc) (`legacy-peer-deps=true`) for zero-cost deployment on **Render.com**:
+
 1. Push this repository to GitHub and open **[Render Blueprints](https://dashboard.render.com/select-repo?type=blueprint)**.
 2. Set **Blueprint Name** to `ordaris-runtime-platform` (this deploys the web service `ordaris-runtime` at **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)**).
 3. Render automatically runs:
@@ -84,9 +81,15 @@ The repository includes a pre-configured [`render.yaml`](render.yaml) Blueprint 
    - **Start Command**: `npm start` (`SERVE_STATIC=true node --liftoff-only --no-wasm-tier-up --expose-gc --max-old-space-size=192 --max-semi-space-size=8 dist/server.js`).
    - **Health Check Path**: `/api/v1/health/live`
    - **Low-Memory 512Mi Free-Tier Optimization (`server.ts`)**: Repairs stripped empty `PGDATA` directories before startup, tunes `postgresql.conf` (`max_connections=10`, `shared_buffers=1MB`), disables V8 background WASM TurboFan tier-up (`--liftoff-only --no-wasm-tier-up` on the `node` CLI while keeping `NODE_OPTIONS="--expose-gc --max-old-space-size=384"` valid for Node 22/24), and keeps steady-state RSS around **~135–165 MiB** on Render Free Tier.
+   - **3-Layer Anti-Spin-Down Keep-Alive (Preventing Render 15m Idle Sleep)**:
+     1. **External GitHub Actions Cron (`.github/workflows/keep-alive.yml`)**: Pings `https://ordaris-runtime.onrender.com/api/v1/health/live` from an external GitHub runner every 10 minutes (`*/10 * * * *`) with automatic retries.
+     2. **Outbound Edge Self-Ping (`server.ts` + `KEEP_ALIVE_URL` in `render.yaml`)**: Sends an outbound HTTPS request through Render's external ingress router every 10 minutes (`600000ms`).
+     3. **Browser Tab Heartbeat (`src/App.tsx`)**: Pings `/api/v1/health/live` every 4 minutes while an operator console tab is open.
 
 ### Option B: Container Deployment (`Dockerfile`)
+
 The included [`Dockerfile`](Dockerfile) and [`.dockerignore`](.dockerignore) support **Render Docker Runtime**, **Koyeb Free Tier**, **Hugging Face Spaces (Docker)**, **Railway**, and **Fly.io**:
+
 ```bash
 # Locked-down Production container (default — requires signed JWT / x-auth-secret):
 docker build -t ordaris-runtime:latest .
@@ -101,14 +104,16 @@ docker run --rm -p 3000:3000 \
 
 ---
 
-## 3. GitHub Actions CI & Secret Scanning Hardening
+## 3. GitHub Actions CI, Keep-Alive & Secret Scanning Hardening
 
-- **GitHub Actions Workflow (`.github/workflows/ci.yml` — `Ordaris Runtime CI`)**:
+- **GitHub Actions CI Workflow (`.github/workflows/ci.yml` — `Ordaris Runtime CI`)**:
   1. **Secret-Pattern & Branding Hygiene Check**: Fails the build if any real or synthetic provider key prefix or legacy branding appears in source, test, or documentation files.
   2. **TypeScript Verification**: Runs `pnpm run typecheck` (`tsc --noEmit`).
   3. **Unit & Security Test Suite**: Runs `pnpm run test:unit` and `pnpm run test:security` (`75/75` tests).
   4. **HTTP API & Worker Integration Suite**: Runs `pnpm run test:integration` (`34/34` tests).
   5. **Multi-Tenant Database Seed & Production Build**: Runs `pnpm run seed` and `pnpm run build` (`dist/index.html` + `dist/server.js`).
+- **GitHub Actions Keep-Alive Workflow (`.github/workflows/keep-alive.yml` — `Render Free-Tier Keep-Alive Heartbeat`)**:
+  - Scheduled `*/10 * * * *` cron job (plus `workflow_dispatch`) that sends an external HTTPS `GET` request to `https://ordaris-runtime.onrender.com/api/v1/health/live` so Render's 15-minute Free Tier idle timer never spins the service down.
 - **GitHub Secret Scanning Configuration (`.github/secret_scanning.yml`)**:
   - Configures `paths-ignore` for `tests/**`, `**/*.test.ts`, and `**/*.spec.ts`, paired with automated test verification (`CI-001 & SEC-SCAN-001` in `tests/unit/env.test.ts`) ensuring all test fixtures use non-triggering synthetic tokens (`gm_test_*`, `oa_test_*`, `cl_test_*`, `or_test_*`, `gk_test_*`).
 
@@ -118,16 +123,16 @@ docker run --rm -p 3000:3000 \
 
 Switch personas instantaneously in the top header (`x-actor-id` header) at **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)** or `http://localhost:3000` to verify tenant isolation and role boundaries:
 
-| Persona ID | Display Name | Organization | Role | Allowed Permissions | Key Capabilities & Restrictions |
-| :--- | :--- | :--- | :--- | :---: | :--- |
-| `acme-owner` | Elena Vance | Acme Cyber Defense | `owner` | `28 / 28` | Full tenant control, member role management, HITL approvals, audit trail, log clear, sandbox reset |
-| `acme-admin` | Marcus Sterling | Acme Cyber Defense | `admin` | `26 / 28` | Agent/RAG/workflow authoring, HITL approvals, audit trail, member management (non-owner) |
-| `acme-dev` | Priya Nair | Acme Cyber Defense | `developer` | `18 / 28` | Create/publish/run agents, ingest RAG docs, run evals; **403** on HITL decisions, logs & audit ledger |
-| `acme-viewer` | Devon Brooks | Acme Cyber Defense | `viewer` | `9 / 28` | Read-only inspection of agents, runs, workflows, and usage; **403** on all mutations & runs |
-| `beta-owner` | Soren Lindqvist | Beta Global Logistics | `owner` | `28 / 28` | Full control inside Beta tenant; **404 `TENANT_MISMATCH`** when probing Acme UUIDs |
-| `beta-admin` | Hana Takahashi | Beta Global Logistics | `admin` | `26 / 28` | Full Beta operations & HITL approvals; isolated from Acme data |
-| `beta-dev` | Lucas Meyer | Beta Global Logistics | `developer` | `18 / 28` | Authoring & execution inside Beta tenant; **403** on Beta HITL approvals, logs & audit ledger |
-| `beta-viewer` | Chloe Dubois | Beta Global Logistics | `viewer` | `9 / 28` | Read-only observer inside Beta tenant |
+| Persona ID    | Display Name    | Organization          | Role        | Allowed Permissions | Key Capabilities & Restrictions                                                                       |
+| :------------ | :-------------- | :-------------------- | :---------- | :-----------------: | :---------------------------------------------------------------------------------------------------- |
+| `acme-owner`  | Elena Vance     | Acme Cyber Defense    | `owner`     |      `28 / 28`      | Full tenant control, member role management, HITL approvals, audit trail, log clear, sandbox reset    |
+| `acme-admin`  | Marcus Sterling | Acme Cyber Defense    | `admin`     |      `26 / 28`      | Agent/RAG/workflow authoring, HITL approvals, audit trail, member management (non-owner)              |
+| `acme-dev`    | Priya Nair      | Acme Cyber Defense    | `developer` |      `18 / 28`      | Create/publish/run agents, ingest RAG docs, run evals; **403** on HITL decisions, logs & audit ledger |
+| `acme-viewer` | Devon Brooks    | Acme Cyber Defense    | `viewer`    |      `9 / 28`       | Read-only inspection of agents, runs, workflows, and usage; **403** on all mutations & runs           |
+| `beta-owner`  | Soren Lindqvist | Beta Global Logistics | `owner`     |      `28 / 28`      | Full control inside Beta tenant; **404 `TENANT_MISMATCH`** when probing Acme UUIDs                    |
+| `beta-admin`  | Hana Takahashi  | Beta Global Logistics | `admin`     |      `26 / 28`      | Full Beta operations & HITL approvals; isolated from Acme data                                        |
+| `beta-dev`    | Lucas Meyer     | Beta Global Logistics | `developer` |      `18 / 28`      | Authoring & execution inside Beta tenant; **403** on Beta HITL approvals, logs & audit ledger         |
+| `beta-viewer` | Chloe Dubois    | Beta Global Logistics | `viewer`    |      `9 / 28`       | Read-only observer inside Beta tenant                                                                 |
 
 ---
 
@@ -178,10 +183,12 @@ flowchart TB
 ## 6. Local Quickstart & Verification Commands
 
 ### Prerequisites
+
 - **Node.js** `>= 20` (Node 22 / 24 supported)
 - **pnpm** `>= 10` (or `npm`)
 
 ### 1. Install Dependencies
+
 ```bash
 pnpm install
 # or with npm:
@@ -189,32 +196,41 @@ npm install --legacy-peer-deps
 ```
 
 ### 2. Optional: Configure `.env`
+
 ```bash
 cp .env.example .env
 ```
-*(No API keys are required in `.env`—Ordaris Runtime boots cleanly in `AI_MODE=demo` and allows adding keys per browser session in the UI's **Session BYOK Vault** drawer.)*
+
+_(No API keys are required in `.env`—Ordaris Runtime boots cleanly in `AI_MODE=demo` and allows adding keys per browser session in the UI's **Session BYOK Vault** drawer.)_
 
 ### 3. Run Strict TypeScript Verification
+
 ```bash
 pnpm run typecheck
 ```
 
 ### 4. Run the Automated Test Matrix (`109/109` Passing Across `21` Suites)
+
 Runs all unit, AES-256-GCM vault, 28-permission RBAC, PostgreSQL composite FK constraint, worker lease heartbeat, CI/secret-scanning hygiene, and HTTP API/worker integration tests in-process:
+
 ```bash
 pnpm test
 ```
 
 ### 5. Seed the Flagship Multi-Tenant Workspace
+
 Provisions `Acme Cyber Defense` & `Beta Global Logistics` with 8 personas, RAG runbooks, immutable Agent snapshots (`v1` & `v2`), a 6-node HITL workflow, and `v1`-vs-`v2` evaluation regression benchmarks:
+
 ```bash
 pnpm run seed
 ```
 
 ### 6. Start the Full-Stack Application (Express API + Background Worker + Vite UI)
+
 ```bash
 pnpm dev
 ```
+
 - Open `http://localhost:3000` (or visit **[https://ordaris-runtime.onrender.com](https://ordaris-runtime.onrender.com)**) to launch the **Ordaris Runtime `v1.0.0-demo` Operator Console**.
 - Follow the built-in **5-Step Interactive Evaluator Walkthrough** banner at the top of the workspace.
 
@@ -222,63 +238,64 @@ pnpm dev
 
 ## 7. Mounted HTTP API Endpoints (`src/server/http/app.ts`, `src/server/http/demo-routes.ts` & `src/server/http/auth.ts`)
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api/v1/health/live` | Process liveness probe (`200 OK`, independent of database) |
-| `GET` | `/api/v1/health/ready` | Executes a real `SELECT 1` query against PostgreSQL (`200 OK` or `503 Service Unavailable`) |
-| `GET` | `/api/v1/auth/status` | Returns active actor, `authMethod` (`jwt` / `demo_header` / `none`), and GitHub OAuth readiness |
-| `POST` | `/api/v1/auth/token` | Mints an `HS256` JWT signed with `AUTH_SECRET` (requires `x-auth-secret` in `NODE_ENV=production`) |
-| `POST` | `/api/v1/auth/logout` | Clears the `ordaris_session` `HttpOnly` cookie |
-| `GET` | `/api/v1/auth/github/login` | Initiates GitHub OAuth 2.0 login (`AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET`) with HMAC-signed `state` |
-| `GET` | `/api/v1/auth/github/callback` | Verifies CSRF `state`, exchanges code with GitHub, provisions user/org, and signs `HS256` JWT |
-| `GET` | `/api/v1/workspace` | Returns persisted tenant state, 8 personas, active permissions, and database storage mode (`401` if unauthenticated) |
-| `POST` | `/api/v1/workspace/reset` | Executes 3-mode sandbox reset (`401` if unauthenticated; requires `org.manage` or `org.delete` for `factory_reset`) |
-| `POST` | `/api/v1/workspace/seed` | Alias for resetting and re-seeding the workspace (`401` if unauthenticated; requires `org.manage`) |
-| `GET` | `/api/v1/providers/keys` | Lists masked Session BYOK + `.env` status across all 5 cloud AI providers (`401` if unauthenticated) |
-| `POST` | `/api/v1/providers/keys` | Encrypts and stores a provider API key in the caller's Session AES-256-GCM BYOK Vault |
-| `DELETE` | `/api/v1/providers/keys` | Deletes all provider keys from the caller's Session BYOK Vault |
-| `POST` | `/api/v1/providers/test` | Executes a live connectivity probe using the resolved key tier |
-| `GET` | `/api/v1/demo/verify-isolation` | Runs the live 4-point cross-tenant & RBAC security verification suite (`401` if unauthenticated) |
-| `GET` | `/api/v1/demo/diagnostics` | Returns live row counts across PostgreSQL tables and worker queue metrics (`401` if unauthenticated) |
-| `GET` | `/api/v1/agents` | Lists tenant-scoped agents |
-| `POST` | `/api/v1/agents` | Creates a new draft agent (`agent.edit`) |
-| `PATCH` | `/api/v1/agents/:id` | Updates mutable draft agent fields without mutating published versions (`agent.edit`) |
-| `POST` | `/api/v1/agents/:id/publish` | Publishes an immutable `agent_versions` snapshot with SHA-256 hash (`agent.publish`) |
-| `POST` | `/api/v1/agents/:id/runs` | Enqueues a durable run (`202 Accepted`), supports `idempotencyKey` deduplication |
-| `GET` | `/api/v1/runs` | Lists tenant-scoped run history |
-| `GET` | `/api/v1/runs/:id` | Returns run status, pinned version, step timeline, and persisted events (`404` across tenants) |
-| `GET` | `/api/v1/runs/:id/events` | Cursor-paginated persisted events (`?afterSequence=N`) for reconnect replay |
-| `GET` | `/api/v1/runs/:id/stream` | Server-Sent Events (`text/event-stream`) replay with `Last-Event-ID` support |
-| `POST` | `/api/v1/runs/:id/cancel` | Cancels an active or queued run |
-| `GET` | `/api/v1/approvals` | Lists pending and decided HITL approval gates |
-| `POST` | `/api/v1/approvals/:id/decision` | Server-authorized `owner`/`admin` approval or rejection (`403` for `developer`/`viewer`) |
-| `GET` | `/api/v1/knowledge/documents` | Lists tenant-scoped knowledge documents |
-| `POST` | `/api/v1/knowledge/documents` | Ingests, sanitizes, chunks, and indexes a knowledge document (`document.upload`) |
-| `GET` | `/api/v1/knowledge/search` | Executes hybrid PostgreSQL `tsvector` + cosine vector similarity search with `<untrusted_knowledge_context>` |
-| `POST` | `/api/v1/workflows/:id/runs` | Starts a gated workflow DAG execution |
-| `POST` | `/api/v1/workflows/validate-dag` | Runs the 3-color DFS cycle detector and returns topological order or exact `cyclePath` (`401` if unauthenticated) |
-| `POST` | `/api/v1/eval-suites/:id/experiments` | Executes a `v1`-vs-`v2` evaluation regression experiment across deterministic graders |
-| `GET` | `/api/v1/usage` | Reads tenant FinOps usage ledger separating `mock` (simulated) from `live` provider tokens |
-| `GET` | `/api/v1/audit-events` | Reads append-only security audit trail (`owner`/`admin` only; `403` for `viewer`/`developer`) |
-| `POST` | `/api/v1/members` | Invites or updates organization member roles (`member.manage`) |
-| `DELETE` | `/api/v1/members/:userId` | Removes a member while enforcing the sole-owner `409 Conflict` (`LAST_OWNER_PROTECTED`) safeguard |
-| `GET` | `/api/v1/logs` | Returns organization-filtered runtime diagnostic logs (`401` if unauthenticated; requires `audit.view`) |
-| `POST` | `/api/v1/logs/clear` | Clears caller organization's runtime log entries (`401` if unauthenticated; requires `org.delete`) |
+| Method   | Endpoint                              | Description                                                                                                          |
+| :------- | :------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/api/v1/health/live`                 | Process liveness probe (`200 OK`, independent of database)                                                           |
+| `GET`    | `/api/v1/health/ready`                | Executes a real `SELECT 1` query against PostgreSQL (`200 OK` or `503 Service Unavailable`)                          |
+| `GET`    | `/api/v1/auth/status`                 | Returns active actor, `authMethod` (`jwt` / `demo_header` / `none`), and GitHub OAuth readiness                      |
+| `POST`   | `/api/v1/auth/token`                  | Mints an `HS256` JWT signed with `AUTH_SECRET` (requires `x-auth-secret` in `NODE_ENV=production`)                   |
+| `POST`   | `/api/v1/auth/logout`                 | Clears the `ordaris_session` `HttpOnly` cookie                                                                       |
+| `GET`    | `/api/v1/auth/github/login`           | Initiates GitHub OAuth 2.0 login (`AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET`) with HMAC-signed `state`                  |
+| `GET`    | `/api/v1/auth/github/callback`        | Verifies CSRF `state`, exchanges code with GitHub, provisions user/org, and signs `HS256` JWT                        |
+| `GET`    | `/api/v1/workspace`                   | Returns persisted tenant state, 8 personas, active permissions, and database storage mode (`401` if unauthenticated) |
+| `POST`   | `/api/v1/workspace/reset`             | Executes 3-mode sandbox reset (`401` if unauthenticated; requires `org.manage` or `org.delete` for `factory_reset`)  |
+| `POST`   | `/api/v1/workspace/seed`              | Alias for resetting and re-seeding the workspace (`401` if unauthenticated; requires `org.manage`)                   |
+| `GET`    | `/api/v1/providers/keys`              | Lists masked Session BYOK + `.env` status across all 5 cloud AI providers (`401` if unauthenticated)                 |
+| `POST`   | `/api/v1/providers/keys`              | Encrypts and stores a provider API key in the caller's Session AES-256-GCM BYOK Vault                                |
+| `DELETE` | `/api/v1/providers/keys`              | Deletes all provider keys from the caller's Session BYOK Vault                                                       |
+| `POST`   | `/api/v1/providers/test`              | Executes a live connectivity probe using the resolved key tier                                                       |
+| `GET`    | `/api/v1/demo/verify-isolation`       | Runs the live 4-point cross-tenant & RBAC security verification suite (`401` if unauthenticated)                     |
+| `GET`    | `/api/v1/demo/diagnostics`            | Returns live row counts across PostgreSQL tables and worker queue metrics (`401` if unauthenticated)                 |
+| `GET`    | `/api/v1/agents`                      | Lists tenant-scoped agents                                                                                           |
+| `POST`   | `/api/v1/agents`                      | Creates a new draft agent (`agent.edit`)                                                                             |
+| `PATCH`  | `/api/v1/agents/:id`                  | Updates mutable draft agent fields without mutating published versions (`agent.edit`)                                |
+| `POST`   | `/api/v1/agents/:id/publish`          | Publishes an immutable `agent_versions` snapshot with SHA-256 hash (`agent.publish`)                                 |
+| `POST`   | `/api/v1/agents/:id/runs`             | Enqueues a durable run (`202 Accepted`), supports `idempotencyKey` deduplication                                     |
+| `GET`    | `/api/v1/runs`                        | Lists tenant-scoped run history                                                                                      |
+| `GET`    | `/api/v1/runs/:id`                    | Returns run status, pinned version, step timeline, and persisted events (`404` across tenants)                       |
+| `GET`    | `/api/v1/runs/:id/events`             | Cursor-paginated persisted events (`?afterSequence=N`) for reconnect replay                                          |
+| `GET`    | `/api/v1/runs/:id/stream`             | Server-Sent Events (`text/event-stream`) replay with `Last-Event-ID` support                                         |
+| `POST`   | `/api/v1/runs/:id/cancel`             | Cancels an active or queued run                                                                                      |
+| `GET`    | `/api/v1/approvals`                   | Lists pending and decided HITL approval gates                                                                        |
+| `POST`   | `/api/v1/approvals/:id/decision`      | Server-authorized `owner`/`admin` approval or rejection (`403` for `developer`/`viewer`)                             |
+| `GET`    | `/api/v1/knowledge/documents`         | Lists tenant-scoped knowledge documents                                                                              |
+| `POST`   | `/api/v1/knowledge/documents`         | Ingests, sanitizes, chunks, and indexes a knowledge document (`document.upload`)                                     |
+| `GET`    | `/api/v1/knowledge/search`            | Executes hybrid PostgreSQL `tsvector` + cosine vector similarity search with `<untrusted_knowledge_context>`         |
+| `POST`   | `/api/v1/workflows/:id/runs`          | Starts a gated workflow DAG execution                                                                                |
+| `POST`   | `/api/v1/workflows/validate-dag`      | Runs the 3-color DFS cycle detector and returns topological order or exact `cyclePath` (`401` if unauthenticated)    |
+| `POST`   | `/api/v1/eval-suites/:id/experiments` | Executes a `v1`-vs-`v2` evaluation regression experiment across deterministic graders                                |
+| `GET`    | `/api/v1/usage`                       | Reads tenant FinOps usage ledger separating `mock` (simulated) from `live` provider tokens                           |
+| `GET`    | `/api/v1/audit-events`                | Reads append-only security audit trail (`owner`/`admin` only; `403` for `viewer`/`developer`)                        |
+| `POST`   | `/api/v1/members`                     | Invites or updates organization member roles (`member.manage`)                                                       |
+| `DELETE` | `/api/v1/members/:userId`             | Removes a member while enforcing the sole-owner `409 Conflict` (`LAST_OWNER_PROTECTED`) safeguard                    |
+| `GET`    | `/api/v1/logs`                        | Returns organization-filtered runtime diagnostic logs (`401` if unauthenticated; requires `audit.view`)              |
+| `POST`   | `/api/v1/logs/clear`                  | Clears caller organization's runtime log entries (`401` if unauthenticated; requires `org.delete`)                   |
 
 ---
 
 ## 8. What We Built (`v1.0.0-demo`) vs. Planned Roadmap (`v1.1` – `v2.0`)
 
 Detailed engineering documentation lives in `/docs`:
+
 - [`docs/implementation/STATUS.md`](docs/implementation/STATUS.md) — Complete checklist of built features, `109/109` test suite breakdown, and `v1.1`–`v2.0` roadmap.
 - [`docs/architecture.md`](docs/architecture.md) — Layered architecture, sequence diagrams, run state machine, and runtime guardrails.
 - [`docs/threat-model.md`](docs/threat-model.md) — Threat catalog (`T-01`..`T-08`) covering IDOR, prompt injection, path traversal, and Session AES-256-GCM BYOK Vault isolation.
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (`ADR-001` Zero-Spend & 3-Tier BYOK, `ADR-002` Tenant Isolation & 8-Persona RBAC, `ADR-003` PostgreSQL Job Queue).
 
-| Milestone | Status | Scope Summary |
-| :--- | :---: | :--- |
+| Milestone                   |        Status        | Scope Summary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| :-------------------------- | :------------------: | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`v1.0.0-demo` (Current)** | **Built & Verified** | Hosted Render deployment (`https://ordaris-runtime.onrender.com`), 2-tenant / 8-persona 28-permission RBAC, composite SQL foreign keys, dual external PostgreSQL (`pg.Pool`) + PGlite adapter, Session AES-256-GCM BYOK Vault with CSPRNG fail-closed tokens, 6-engine 3-tier AI factory with per-job `execution_config`, worker lease heartbeats & single-worker CAS guard, bounded tool gateway (zero `eval()`), hybrid `tsvector` + cosine RAG (unified 10 MiB `MAX_UPLOAD_BYTES`), 3-color DFS workflow DAG & HITL gates, `v1`-vs-`v2` eval harness, 2-engine Arena, 3-choice sandbox reset, 5-tab React 19 UI (`109/109` tests passing). |
-| **`v1.1` (Planned)** | Planned | OAuth 2.0 / OIDC & SAML SSO session authentication (`DEMO_MODE=false`), persistent KMS envelope-encrypted tenant API key vault (`AWS KMS` / `GCP Cloud KMS`), and prefix-tagged (`ord_live_...`) machine-to-machine bearer tokens. |
-| **`v1.2` (Planned)** | Planned | Native `pgvector` HNSW index migration for external PostgreSQL 16, asynchronous worker-backed PDF/CSV ingestion with SSE chunk progress, and chunk-level sensitivity ACL tags. |
-| **`v1.3` (Planned)** | Planned | OpenTelemetry (`OTLP`) distributed trace propagation across HTTP -> `job_queue` -> worker -> LLM provider, `HMAC-SHA256` signed outbound webhooks (Slack/PagerDuty/Jira), and live token delta streaming over SSE. |
-| **`v2.0` (Planned)** | Planned | Hierarchical parent-to-child sub-agent delegation (`MAX_DELEGATION_DEPTH = 3`), hard FinOps organization daily/monthly USD spend caps, and WebAssembly (`.wasm`) sandboxed custom user tools. |
+| **`v1.1` (Planned)**        |       Planned        | OAuth 2.0 / OIDC & SAML SSO session authentication (`DEMO_MODE=false`), persistent KMS envelope-encrypted tenant API key vault (`AWS KMS` / `GCP Cloud KMS`), and prefix-tagged (`ord_live_...`) machine-to-machine bearer tokens.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **`v1.2` (Planned)**        |       Planned        | Native `pgvector` HNSW index migration for external PostgreSQL 16, asynchronous worker-backed PDF/CSV ingestion with SSE chunk progress, and chunk-level sensitivity ACL tags.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **`v1.3` (Planned)**        |       Planned        | OpenTelemetry (`OTLP`) distributed trace propagation across HTTP -> `job_queue` -> worker -> LLM provider, `HMAC-SHA256` signed outbound webhooks (Slack/PagerDuty/Jira), and live token delta streaming over SSE.                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **`v2.0` (Planned)**        |       Planned        | Hierarchical parent-to-child sub-agent delegation (`MAX_DELEGATION_DEPTH = 3`), hard FinOps organization daily/monthly USD spend caps, and WebAssembly (`.wasm`) sandboxed custom user tools.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
