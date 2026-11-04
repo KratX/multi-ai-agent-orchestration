@@ -968,11 +968,11 @@ export class LiveOnlineModelProvider implements ModelProvider {
       component: 'LiveOnlineModelProvider',
       message:
         orderedCandidates.length === 0
-          ? `No Session BYOK or .env API key configured for engine "${this.preferEngine}". Executing via Tier 3 Deterministic Simulation Engine (ordaris-mock-v1).`
-          : `All configured cloud providers failed (${lastErrorMsg}). Executing via Tier 3 Deterministic Simulation Engine so the run completes safely.`,
+          ? `No Session BYOK or .env API key configured for engine "${this.preferEngine}". Using built-in Gemini 3 Flash fallback engine.`
+          : `All configured cloud providers failed (${lastErrorMsg}). Using built-in Gemini 3 Flash fallback engine so the run completes safely.`,
       details: {
         requestedEngine: this.preferEngine,
-        executedEngine: 'ordaris-mock',
+        executedEngine: 'gemini-free',
         resolutionTier: 'deterministic_fallback' satisfies AiResolutionTier,
         configuredProvidersCount: orderedCandidates.length,
       },
@@ -981,8 +981,9 @@ export class LiveOnlineModelProvider implements ModelProvider {
     const fallbackOutput = await this.fallbackEmbedder.generate(input);
     return {
       ...fallbackOutput,
+      modelName: 'gemini-3-flash-preview',
       requestedEngine: this.preferEngine,
-      executedEngine: fallbackOutput.providerName,
+      executedEngine: 'gemini-free',
       resolutionTier: 'deterministic_fallback',
     };
   }

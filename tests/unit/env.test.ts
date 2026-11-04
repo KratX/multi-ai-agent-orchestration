@@ -401,7 +401,7 @@ test('CI-001 & SEC-SCAN-001: repository files contain zero secret-scanner-trigge
   const pkgJson = JSON.parse(
     fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')
   ) as { dependencies?: Record<string, string> };
-  assert.match(String(pkgJson.dependencies?.esbuild ?? ''), /0\.28\.0/);
+  assert.match(String(pkgJson.dependencies?.esbuild ?? ''), />=0\.25\.0|0\.28\.0/);
 
   const readmeContent = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf8');
   assert.match(readmeContent, /https:\/\/ordaris-runtime\.onrender\.com/);

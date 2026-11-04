@@ -203,7 +203,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
   const [subTab, setSubTab] = useState<'evals' | 'finops' | 'rbac' | 'audit'>('evals');
 
   // Sub-Tab 4A: Evals & SLA Gate state
-  const [evalEngine, setEvalEngine] = useState<string>(selectedEngine || 'mock');
+  const [evalEngine, setEvalEngine] = useState<string>(selectedEngine || 'gemini-free');
   const [slaThreshold, setSlaThreshold] = useState<number>(85);
   const [runningSuiteId, setRunningSuiteId] = useState<string | null>(null);
 
@@ -518,8 +518,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   onChange={(e) => setEvalEngine(e.target.value)}
                   className="bg-transparent text-xs font-mono text-indigo-300 focus:outline-none"
                 >
-                  <option value="mock" className="bg-slate-900">mock (Deterministic)</option>
-                  <option value="gemini-free" className="bg-slate-900">gemini-free</option>
+                  <option value="gemini-free" className="bg-slate-900">gemini-free (Default)</option>
                   <option value="openrouter-free" className="bg-slate-900">openrouter-free</option>
                   <option value="chatgpt-free" className="bg-slate-900">chatgpt-free</option>
                   <option value="claude-free" className="bg-slate-900">claude-free</option>
@@ -1422,7 +1421,7 @@ NODE_ENV=development
 PORT=3000
 PGLITE_DATA_DIR=.local/ordaris-db
 LOG_FILE_PATH=.local/logs/ordaris-runtime.log
-DEFAULT_AI_PROVIDER=mock
+DEFAULT_AI_PROVIDER=gemini-free
 
 # Optional Tier-2 Server Cloud AI Keys (Visitors can also use Tier-1 Session BYOK in UI)
 GEMINI_API_KEY=

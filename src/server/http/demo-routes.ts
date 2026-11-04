@@ -959,8 +959,8 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
 
         const arenaSchema = z.object({
           inputPrompt: z.string().trim().min(1).max(16_000),
-          leftEngine: z.string().default('mock'),
-          rightEngine: z.string().default('gemini-free'),
+          leftEngine: z.string().default('gemini-free'),
+          rightEngine: z.string().default('openrouter-free'),
           agentVersionId: z.string().uuid().optional(),
         });
         const body = arenaSchema.parse(req.body ?? {});

@@ -261,8 +261,8 @@ export function App() {
   >('studio');
 
   // Global AI Engine Selector
-  const [selectedEngine, setSelectedEngine] = useState<string>('mock');
-  const [arenaRightEngine, setArenaRightEngine] = useState<string>('gemini-free');
+  const [selectedEngine, setSelectedEngine] = useState<string>('gemini-free');
+  const [arenaRightEngine, setArenaRightEngine] = useState<string>('openrouter-free');
   const [arenaMode, setArenaMode] = useState<boolean>(false);
 
   // Drawer & Modals
@@ -1772,9 +1772,8 @@ export function App() {
               }}
               className="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-mono text-indigo-300 max-w-[235px] truncate"
             >
-              <option value="mock">mock (Deterministic Sandbox — $0)</option>
+              <option value="gemini-free">gemini-free (Gemini 3 Flash — Default)</option>
               <option value="auto">auto (3-Tier Smart Resolution)</option>
-              <option value="gemini-free">gemini-free (Gemini 3 Flash)</option>
               <option value="openrouter-free">openrouter-free (Llama 3.3 70B)</option>
               <option value="chatgpt-free">chatgpt-free (GPT-4o-mini)</option>
               <option value="claude-free">claude-free (Claude 3.5 Haiku)</option>
@@ -1891,7 +1890,6 @@ export function App() {
                         onChange={(e) => setSelectedEngine(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-xs font-mono text-white"
                       >
-                        <option value="mock">mock (Deterministic)</option>
                         <option value="gemini-free">gemini-free</option>
                         <option value="openrouter-free">openrouter-free</option>
                         <option value="chatgpt-free">chatgpt-free</option>
@@ -1913,7 +1911,6 @@ export function App() {
                         <option value="chatgpt-free">chatgpt-free</option>
                         <option value="claude-free">claude-free</option>
                         <option value="grok-free">grok-free</option>
-                        <option value="mock">mock (Deterministic)</option>
                       </select>
                     </div>
                   </div>

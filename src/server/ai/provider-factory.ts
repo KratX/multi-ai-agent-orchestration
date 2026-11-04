@@ -83,10 +83,12 @@ export function resolveThreeTierProvider(
   }
 ): ThreeTierProviderResolution {
   const scopeKey = options?.scopeKey ?? 'global';
-  const rawEngine = (options?.engine ?? 'auto').trim().toLowerCase();
+  const rawEngine = (options?.engine ?? 'gemini-free').trim().toLowerCase();
 
-  let requestedEngine: LiveAiEngineMode = 'auto';
-  if (rawEngine === 'mock' || rawEngine === 'ordaris-mock') {
+  let requestedEngine: LiveAiEngineMode = 'gemini-free';
+  if (rawEngine === 'auto') {
+    requestedEngine = 'auto';
+  } else if (rawEngine === 'mock' || rawEngine === 'ordaris-mock') {
     requestedEngine = 'mock';
   } else if (rawEngine === 'gemini' || rawEngine === 'gemini-free') {
     requestedEngine = 'gemini-free';

@@ -807,8 +807,10 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
         const byokStatuses = listByokProviderStatuses(env, byokScopeKey);
         const hasSessionByok = byokStatuses.some((s) => s.source === 'vault');
+        const effectiveAiEngine =
+          body.aiEngine ?? (env.NODE_ENV === 'test' ? undefined : 'gemini-free');
         const resolutionTier =
-          body.aiEngine === 'mock' || !body.aiEngine
+          effectiveAiEngine === 'mock' || !effectiveAiEngine
             ? ('deterministic_fallback' as const)
             : hasSessionByok
               ? ('session_byok' as const)
@@ -823,7 +825,7 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           inputPrompt: redaction.scrubbedPrompt,
           idempotencyKey: body.idempotencyKey,
           executionConfig: {
-            aiEngine: body.aiEngine,
+            aiEngine: effectiveAiEngine,
             byokScopeKey,
             resolutionTier,
             maxBudgetUsd: body.maxBudgetUsd,
@@ -1494,7 +1496,9 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
       const requestedEngine =
         typeof rawEngineInput === 'string'
           ? (rawEngineInput as LiveAiEngineMode)
-          : 'mock';
+          : env.NODE_ENV === 'test'
+            ? 'mock'
+            : 'gemini-free';
 
       const byokScopeKey = getRequestByokScope(req, actor.organizationId);
       const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);

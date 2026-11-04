@@ -420,7 +420,7 @@ export async function startOrdarisServer(port = 3000) {
     runGarbageCollectionIfAvailable();
   }
 
-  const modelProvider = createLiveRuntimeModelProvider(env, { engine: 'auto' });
+  const modelProvider = createLiveRuntimeModelProvider(env, { engine: 'gemini-free' });
   const keyStatus = getProviderKeyStatus(env);
 
   appendRuntimeLog({
