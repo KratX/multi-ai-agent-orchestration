@@ -680,6 +680,8 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
           status: 'seeded',
           scope: 'demo-sandbox-only',
           resetMode,
+          defaultEngine: 'gemini-free',
+          alwaysAvailableEngines: ['gemini-free', 'openrouter-free'],
           clearedByokKeysCount: result.clearedByokKeysCount,
           pendingApprovalId: result.pendingApprovalId,
           personas,

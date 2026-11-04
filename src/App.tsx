@@ -27,8 +27,11 @@ import {
 import {
   SessionByokVaultDrawer,
   OrdarisRagKnowledgePanel,
+  getRequiredByokForEngine,
+  isEngineKeyConfigured,
   type ByokProviderStatusItem,
   type KnowledgeDocumentItem,
+  type RequiredByokEngineInfo,
 } from './client/components/OrdarisRagAndByokDrawer';
 import {
   OrdarisWorkflowAndHitl,
@@ -267,6 +270,13 @@ export function App() {
 
   // Drawer & Modals
   const [byokDrawerOpen, setByokDrawerOpen] = useState<boolean>(false);
+  const [requiredByokPrompt, setRequiredByokPrompt] = useState<
+    | (RequiredByokEngineInfo & {
+        target: 'global' | 'arena-left' | 'arena-right' | 'eval';
+        onAllowed?: (eng: string) => void;
+      })
+    | null
+  >(null);
   const [resetMenuOpen, setResetMenuOpen] = useState<boolean>(false);
   const [resettingMode, setResettingMode] = useState<string | null>(null);
   const [showGuidedTour, setShowGuidedTour] = useState<boolean>(true);
@@ -281,8 +291,12 @@ export function App() {
   const [newAgentPrompt, setNewAgentPrompt] = useState<string>(
     'You are an Ordaris governed enterprise AI agent. Cite retrieved runbook evidence and verify quantitative calculations.'
   );
+  const [newAgentTools, setNewAgentTools] = useState<
+    Array<'calculator' | 'knowledge_search'>
+  >(['calculator', 'knowledge_search']);
   const [creatingAgent, setCreatingAgent] = useState<boolean>(false);
   const [publishingAgent, setPublishingAgent] = useState<boolean>(false);
+  const [updatingAllowlist, setUpdatingAllowlist] = useState<boolean>(false);
 
   // Top Floating Popup Notification & History State
   const [toast, setToast] = useState<{
@@ -384,6 +398,58 @@ export function App() {
   const [auditEvents, setAuditEvents] = useState<AuditLedgerEvent[]>([]);
   const [members, setMembers] = useState<WorkspaceMemberItem[]>([]);
   const [byokProviders, setByokProviders] = useState<ByokProviderStatusItem[]>([]);
+
+  const handleSelectEngineWithByokGate = useCallback(
+    (
+      nextEngine: string,
+      target: 'global' | 'arena-left' | 'arena-right' | 'eval' = 'global',
+      onAllowed?: (eng: string) => void
+    ): boolean => {
+      if (isEngineKeyConfigured(nextEngine, byokProviders)) {
+        setRequiredByokPrompt(null);
+        if (target === 'arena-right') {
+          setArenaRightEngine(nextEngine);
+        } else if (target === 'eval') {
+          onAllowed?.(nextEngine);
+        } else {
+          setSelectedEngine(nextEngine);
+          onAllowed?.(nextEngine);
+        }
+        notify(
+          `Selected AI Engine: "${nextEngine}"`,
+          'info',
+          nextEngine === 'gemini-free' ||
+            nextEngine === 'openrouter-free' ||
+            nextEngine === 'auto'
+            ? `Always Available Free Tier (Default Fallback: gemini-free).`
+            : `Verified BYOK / Server API Key active for "${nextEngine}" (Default Fallback: gemini-free).`
+        );
+        return true;
+      }
+
+      const reqInfo = getRequiredByokForEngine(nextEngine);
+      if (reqInfo) {
+        setRequiredByokPrompt({
+          ...reqInfo,
+          target,
+          onAllowed,
+        });
+        if (target === 'arena-right') {
+          setArenaRightEngine('openrouter-free');
+        } else if (target === 'global' || target === 'arena-left') {
+          setSelectedEngine('gemini-free');
+        }
+        setByokDrawerOpen(true);
+        notify(
+          `${reqInfo.providerLabel} ("${reqInfo.engine}") is No Longer Free — API Key Required to Use (Opening BYOK Vault)`,
+          'error',
+          `ChatGPT, Claude, and Grok are no longer free and require your ${reqInfo.envVarName} in the Session BYOK Vault to use. "gemini-free" and "openrouter-free" remain free and always available (default fallback: gemini-free).`
+        );
+      }
+      return false;
+    },
+    [byokProviders, notify]
+  );
 
   // Agent Studio Execution State
   const [promptInput, setPromptInput] = useState<string>(
@@ -844,6 +910,14 @@ export function App() {
   // Execute Single Run or Side-by-Side 2-Engine Arena Run
   const handleExecuteStudioRun = async () => {
     if (!selectedAgentId || !promptInput.trim()) return;
+    if (!isEngineKeyConfigured(selectedEngine, byokProviders)) {
+      handleSelectEngineWithByokGate(selectedEngine, 'global');
+      return;
+    }
+    if (arenaMode && !isEngineKeyConfigured(arenaRightEngine, byokProviders)) {
+      handleSelectEngineWithByokGate(arenaRightEngine, 'arena-right');
+      return;
+    }
     setRunningStudio(true);
     setArenaComparisonResult(null);
 
@@ -1014,7 +1088,7 @@ export function App() {
           slug: newAgentSlug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-'),
           description: 'Created via Ordaris Agent Studio',
           draftSystemPrompt: newAgentPrompt.trim(),
-          draftToolAllowlist: ['calculator', 'knowledge_search'],
+          draftToolAllowlist: newAgentTools,
         }),
       });
       const body = await res.json();
@@ -1029,17 +1103,74 @@ export function App() {
       notify(
         `Created Governed Agent Draft "${body.data?.name}"`,
         'success',
-        `Slug: ${body.data?.slug} • Tenant: ${activePersona.orgName} • Allowlist: calculator, knowledge_search`
+        `Slug: ${body.data?.slug} • Tenant: ${activePersona.orgName} • Allowlist: ${newAgentTools.length > 0 ? newAgentTools.join(', ') : 'none'}`
       );
       setShowCreateAgentModal(false);
       setNewAgentName('');
       setNewAgentSlug('');
+      setNewAgentTools(['calculator', 'knowledge_search']);
       await fetchWorkspace();
       if (body.data?.id) {
         setSelectedAgentId(body.data.id);
       }
     } finally {
       setCreatingAgent(false);
+    }
+  };
+
+  // Toggle Tool in Active Agent's Allowlist (`PATCH /api/v1/agents/:id` + publish snapshot)
+  const handleToggleAgentTool = async (
+    toolName: 'calculator' | 'knowledge_search'
+  ) => {
+    if (!selectedAgent || updatingAllowlist) return;
+    const currentTools = Array.isArray(selectedAgent.draftToolAllowlist)
+      ? selectedAgent.draftToolAllowlist
+      : [];
+    const exists = currentTools.includes(toolName);
+    const nextTools = exists
+      ? currentTools.filter((t) => t !== toolName)
+      : [...currentTools, toolName];
+
+    setUpdatingAllowlist(true);
+    try {
+      const patchRes = await apiFetch(`/api/v1/agents/${selectedAgent.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          draftToolAllowlist: nextTools,
+        }),
+      });
+      const patchBody = await patchRes.json();
+      if (!patchRes.ok) {
+        notify(
+          `Tool Allowlist Update Blocked (HTTP ${patchRes.status})`,
+          'error',
+          patchBody?.detail || 'Failed to update agent tool allowlist'
+        );
+        return;
+      }
+
+      // Publish a new immutable snapshot so active runs immediately enforce the updated allowlist
+      const pubRes = await apiFetch(
+        `/api/v1/agents/${selectedAgent.id}/publish`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+        }
+      );
+      const pubBody = await pubRes.json();
+      const verNum = pubRes.ok
+        ? ` (Published Snapshot v${pubBody?.data?.versionNumber})`
+        : '';
+
+      notify(
+        `Updated Tool Allowlist${verNum}: [${nextTools.length > 0 ? nextTools.join(', ') : 'none'}]`,
+        'success',
+        `${exists ? 'Disabled' : 'Enabled'} "${toolName}" on "${selectedAgent.name}". Server-side ToolGateway now enforces [${nextTools.length > 0 ? nextTools.join(', ') : 'none'}].`
+      );
+      await fetchWorkspace();
+    } finally {
+      setUpdatingAllowlist(false);
     }
   };
 
@@ -1095,20 +1226,65 @@ export function App() {
         );
         return;
       }
+
+      const nextByokProviders: ByokProviderStatusItem[] = Array.isArray(
+        body?.data?.byokProviders
+      )
+        ? body.data.byokProviders
+        : [];
+      if (nextByokProviders.length > 0) {
+        setByokProviders(nextByokProviders);
+      }
+
+      // Sync engine selection and UI state according to reset mode
+      setRequiredByokPrompt(null);
+      if (mode === 'factory_reset') {
+        setSelectedEngine('gemini-free');
+        setArenaRightEngine('openrouter-free');
+        setArenaMode(false);
+        setArenaComparisonResult(null);
+        setCursorResumeResult(null);
+        setIdempotencyKeyInput('');
+      } else if (mode === 'keys_only') {
+        if (!isEngineKeyConfigured(selectedEngine, nextByokProviders)) {
+          setSelectedEngine('gemini-free');
+        }
+        if (!isEngineKeyConfigured(arenaRightEngine, nextByokProviders)) {
+          setArenaRightEngine('openrouter-free');
+        }
+      } else if (mode === 'workspace_only') {
+        if (
+          nextByokProviders.length > 0 &&
+          !isEngineKeyConfigured(selectedEngine, nextByokProviders)
+        ) {
+          setSelectedEngine('gemini-free');
+        }
+        if (
+          nextByokProviders.length > 0 &&
+          !isEngineKeyConfigured(arenaRightEngine, nextByokProviders)
+        ) {
+          setArenaRightEngine('openrouter-free');
+        }
+        setArenaComparisonResult(null);
+        setCursorResumeResult(null);
+      }
+
       const modeLabels: Record<string, { title: string; detail: string }> = {
         workspace_only: {
           title: 'Reset Demo Workspace & Runs (Preserved Session BYOK Keys)',
           detail:
-            'Restored Acme Cyber Defense & Beta Global Logistics seed state while keeping your encrypted Session BYOK keys intact.',
+            'Restored Acme Cyber Defense & Beta Global Logistics seed state while keeping your Session BYOK keys (OpenAI, Claude, Grok) and active engine intact.',
         },
         factory_reset: {
-          title: 'Full Factory Reset Completed (Reseeded DB + Wiped Session Keys)',
+          title:
+            'Full Factory Reset Completed (Reseeded DB + Wiped BYOK + Default gemini-free)',
           detail:
-            'Re-seeded all 20 PostgreSQL tables from scratch and purged in-memory Session BYOK keys.',
+            'Re-seeded all 20 PostgreSQL tables, purged Session BYOK keys, and reset engines to "gemini-free" (default fallback) and "openrouter-free".',
         },
         keys_only: {
-          title: 'Cleared Session BYOK Keys Only',
-          detail: `Wiped in-memory API keys for browser session (${sessionId.slice(0, 12)}…) while preserving all runs and documents.`,
+          title:
+            'Cleared Session BYOK Keys Only (Reverted Engine to gemini-free)',
+          detail: `Wiped in-memory API keys for browser session (${sessionId.slice(0, 12)}…) and reverted BYOK-gated engines to "gemini-free" (default fallback) & "openrouter-free".`,
         },
       };
       const info = modeLabels[mode] ?? {
@@ -1535,7 +1711,7 @@ export function App() {
                       1. Reset Runs &amp; Seed Data (Preserve BYOK Keys)
                     </div>
                     <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                      Restores Acme &amp; Beta baseline runs, HITL queue, and RAG documents while keeping your Session BYOK keys intact.
+                      Restores Acme &amp; Beta baseline runs, HITL queue, and RAG documents while keeping your Session BYOK keys (OpenAI, Claude, Grok) and active engine intact.
                     </p>
                   </button>
 
@@ -1546,10 +1722,10 @@ export function App() {
                     className="w-full text-left p-3 rounded-xl bg-slate-950 hover:bg-slate-800/80 border border-slate-800 transition"
                   >
                     <div className="text-xs font-bold text-amber-300">
-                      2. Clear Session BYOK Keys Only
+                      2. Clear Session BYOK Keys Only (Revert to gemini-free)
                     </div>
                     <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                      Wipes in-memory BYOK keys for your browser session (`{sessionId.slice(0, 12)}...`) without touching database runs.
+                      Wipes in-memory BYOK keys (`{sessionId.slice(0, 12)}...`) for paid engines (`chatgpt`, `claude`, `grok` — no longer free) and reverts active engines to `gemini-free` (default fallback) &amp; `openrouter-free`.
                     </p>
                   </button>
 
@@ -1560,10 +1736,10 @@ export function App() {
                     className="w-full text-left p-3 rounded-xl bg-rose-950/30 hover:bg-rose-950/50 border border-rose-500/30 transition"
                   >
                     <div className="text-xs font-bold text-rose-300">
-                      3. Full Factory Reset (DB + Session BYOK)
+                      3. Full Factory Reset (DB + Wipe BYOK + Default gemini-free)
                     </div>
                     <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                      Re-seeds PostgreSQL tenants from scratch and purges all session API keys.
+                      Re-seeds PostgreSQL tenants from scratch, purges all Session BYOK keys, and resets active engines to `gemini-free` (default fallback) and `openrouter-free`.
                     </p>
                   </button>
                 </div>
@@ -1762,22 +1938,40 @@ export function App() {
               aria-label="Global AI Engine Selector"
               value={selectedEngine}
               onChange={(e) => {
-                const nextEng = e.target.value;
-                setSelectedEngine(nextEng);
-                notify(
-                  `Selected AI Engine: "${nextEng}"`,
-                  'info',
-                  `Resolution Priority: Tier 1 (Session BYOK) ➔ Tier 2 (Server .env) ➔ Tier 3 (Deterministic Simulation).`
-                );
+                handleSelectEngineWithByokGate(e.target.value, 'global');
               }}
-              className="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-mono text-indigo-300 max-w-[235px] truncate"
+              className="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-mono text-indigo-300 max-w-[260px] truncate"
             >
-              <option value="gemini-free">gemini-free (Gemini 3 Flash — Default)</option>
-              <option value="auto">auto (3-Tier Smart Resolution)</option>
-              <option value="openrouter-free">openrouter-free (Llama 3.3 70B)</option>
-              <option value="chatgpt-free">chatgpt-free (GPT-4o-mini)</option>
-              <option value="claude-free">claude-free (Claude 3.5 Haiku)</option>
-              <option value="grok-free">grok-free (Grok-2)</option>
+              <option value="gemini-free">
+                gemini-free (Gemini 3 Flash — Free &amp; Always Available, Default)
+              </option>
+              <option value="openrouter-free">
+                openrouter-free (Llama 3.3 70B — Free &amp; Always Available)
+              </option>
+              <option value="auto">
+                auto (3-Tier Smart Resolution — Default: gemini-free)
+              </option>
+              <option value="chatgpt">
+                chatgpt (OpenAI GPT-4o-mini —{' '}
+                {isEngineKeyConfigured('chatgpt', byokProviders)
+                  ? '✓ Key Ready'
+                  : 'No Longer Free • Requires Key in BYOK Vault'}
+                )
+              </option>
+              <option value="claude">
+                claude (Claude 3.5 Haiku —{' '}
+                {isEngineKeyConfigured('claude', byokProviders)
+                  ? '✓ Key Ready'
+                  : 'No Longer Free • Requires Key in BYOK Vault'}
+                )
+              </option>
+              <option value="grok">
+                grok (xAI Grok-2 —{' '}
+                {isEngineKeyConfigured('grok', byokProviders)
+                  ? '✓ Key Ready'
+                  : 'No Longer Free • Requires Key in BYOK Vault'}
+                )
+              </option>
             </select>
           </div>
         </div>
@@ -1842,15 +2036,78 @@ export function App() {
                 </select>
 
                 {selectedAgent && (
-                  <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800/90 space-y-2.5 text-xs">
+                  <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800/90 space-y-3 text-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-slate-300">
                       <span>
                         Pinned Versions: <strong>{selectedAgentVersions.length || 1}</strong>
                       </span>
                       <span className="text-emerald-400 font-semibold">
-                        Allowlist: {(selectedAgent.draftToolAllowlist || []).join(', ')}
+                        Allowlist:{' '}
+                        {(selectedAgent.draftToolAllowlist || []).length > 0
+                          ? (selectedAgent.draftToolAllowlist || []).join(', ')
+                          : 'none (all tools blocked)'}
                       </span>
                     </div>
+
+                    {/* Interactive Server-Side ToolGateway Allowlist Configurator */}
+                    <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between text-[11px] font-mono">
+                        <span className="text-slate-300 font-semibold">
+                          Configure ToolGateway Allowlist (Click to Toggle):
+                        </span>
+                        <span className="text-slate-400">
+                          {updatingAllowlist ? 'Saving & pinning vN+1...' : 'Auto-pins Snapshot vN+1'}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {(
+                          [
+                            {
+                              id: 'calculator',
+                              label: 'calculator',
+                              desc: 'Safe Arithmetic Parser (no eval)',
+                            },
+                            {
+                              id: 'knowledge_search',
+                              label: 'knowledge_search',
+                              desc: 'Tenant-Scoped Hybrid RAG Search',
+                            },
+                          ] as const
+                        ).map((tool) => {
+                          const enabled = (
+                            selectedAgent.draftToolAllowlist || []
+                          ).includes(tool.id);
+                          return (
+                            <button
+                              key={tool.id}
+                              type="button"
+                              disabled={
+                                activePersona.role === 'viewer' ||
+                                updatingAllowlist
+                              }
+                              onClick={() => handleToggleAgentTool(tool.id)}
+                              className={`px-2.5 py-1.5 rounded-lg border text-xs font-mono flex items-center gap-1.5 transition disabled:opacity-40 ${
+                                enabled
+                                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'
+                                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                              title={tool.desc}
+                            >
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  enabled ? 'bg-emerald-400' : 'bg-slate-600'
+                                }`}
+                              />
+                              <span className="font-bold">{tool.label}</span>
+                              <span className="text-[10px] opacity-80">
+                                ({enabled ? 'ON' : 'OFF'})
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     <p className="text-xs text-slate-300 font-mono leading-relaxed">
                       {selectedAgent.draftSystemPrompt}
                     </p>
@@ -1887,14 +2144,41 @@ export function App() {
                       </label>
                       <select
                         value={selectedEngine}
-                        onChange={(e) => setSelectedEngine(e.target.value)}
+                        onChange={(e) =>
+                          handleSelectEngineWithByokGate(
+                            e.target.value,
+                            'arena-left'
+                          )
+                        }
                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-xs font-mono text-white"
                       >
-                        <option value="gemini-free">gemini-free</option>
-                        <option value="openrouter-free">openrouter-free</option>
-                        <option value="chatgpt-free">chatgpt-free</option>
-                        <option value="claude-free">claude-free</option>
-                        <option value="grok-free">grok-free</option>
+                        <option value="gemini-free">
+                          gemini-free (Free &amp; Always Available — Default)
+                        </option>
+                        <option value="openrouter-free">
+                          openrouter-free (Free &amp; Always Available)
+                        </option>
+                        <option value="chatgpt">
+                          chatgpt (
+                          {isEngineKeyConfigured('chatgpt', byokProviders)
+                            ? '✓ Key Ready'
+                            : 'No Longer Free • Requires Key in BYOK Vault'}
+                          )
+                        </option>
+                        <option value="claude">
+                          claude (
+                          {isEngineKeyConfigured('claude', byokProviders)
+                            ? '✓ Key Ready'
+                            : 'No Longer Free • Requires Key in BYOK Vault'}
+                          )
+                        </option>
+                        <option value="grok">
+                          grok (
+                          {isEngineKeyConfigured('grok', byokProviders)
+                            ? '✓ Key Ready'
+                            : 'No Longer Free • Requires Key in BYOK Vault'}
+                          )
+                        </option>
                       </select>
                     </div>
                     <div>
@@ -1903,14 +2187,41 @@ export function App() {
                       </label>
                       <select
                         value={arenaRightEngine}
-                        onChange={(e) => setArenaRightEngine(e.target.value)}
+                        onChange={(e) =>
+                          handleSelectEngineWithByokGate(
+                            e.target.value,
+                            'arena-right'
+                          )
+                        }
                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-xs font-mono text-white"
                       >
-                        <option value="gemini-free">gemini-free</option>
-                        <option value="openrouter-free">openrouter-free</option>
-                        <option value="chatgpt-free">chatgpt-free</option>
-                        <option value="claude-free">claude-free</option>
-                        <option value="grok-free">grok-free</option>
+                        <option value="gemini-free">
+                          gemini-free (Free &amp; Always Available — Default)
+                        </option>
+                        <option value="openrouter-free">
+                          openrouter-free (Free &amp; Always Available)
+                        </option>
+                        <option value="chatgpt">
+                          chatgpt (
+                          {isEngineKeyConfigured('chatgpt', byokProviders)
+                            ? '✓ Key Ready'
+                            : 'No Longer Free • Requires Key in BYOK Vault'}
+                          )
+                        </option>
+                        <option value="claude">
+                          claude (
+                          {isEngineKeyConfigured('claude', byokProviders)
+                            ? '✓ Key Ready'
+                            : 'No Longer Free • Requires Key in BYOK Vault'}
+                          )
+                        </option>
+                        <option value="grok">
+                          grok (
+                          {isEngineKeyConfigured('grok', byokProviders)
+                            ? '✓ Key Ready'
+                            : 'No Longer Free • Requires Key in BYOK Vault'}
+                          )
+                        </option>
                       </select>
                     </div>
                   </div>
@@ -2277,6 +2588,8 @@ export function App() {
             auditEvents={auditEvents}
             members={members}
             selectedEngine={selectedEngine}
+            byokProviders={byokProviders}
+            onSelectEngineWithByokGate={handleSelectEngineWithByokGate}
             apiFetch={apiFetch}
             onWorkspaceRefresh={fetchWorkspace}
             onNotify={notify}
@@ -2293,14 +2606,12 @@ export function App() {
             providers={byokProviders}
             selectedEngine={selectedEngine}
             onSelectEngine={(eng) => {
-              setSelectedEngine(eng);
-              notify(
-                `Activated AI Engine "${eng}"`,
-                'success',
-                `Selected from 3-Tier Engine Resolution Matrix.`
-              );
+              handleSelectEngineWithByokGate(eng, 'global');
             }}
-            onOpenByokDrawer={() => setByokDrawerOpen(true)}
+            onOpenByokDrawer={() => {
+              setRequiredByokPrompt(null);
+              setByokDrawerOpen(true);
+            }}
             apiFetch={apiFetch}
             onNotify={notify}
           />
@@ -2343,6 +2654,42 @@ export function App() {
         providers={byokProviders}
         onRefreshWorkspace={fetchWorkspace}
         onNotify={notify}
+        requiredEnginePrompt={requiredByokPrompt}
+        onClearRequiredPrompt={() => setRequiredByokPrompt(null)}
+        onProviderKeySaved={(providerId, hasKey) => {
+          if (hasKey && requiredByokPrompt?.provider === providerId) {
+            const unlockedEngine = requiredByokPrompt.engine;
+            if (requiredByokPrompt.target === 'arena-right') {
+              setArenaRightEngine(unlockedEngine);
+            } else if (requiredByokPrompt.target === 'eval') {
+              requiredByokPrompt.onAllowed?.(unlockedEngine);
+            } else {
+              setSelectedEngine(unlockedEngine);
+              requiredByokPrompt.onAllowed?.(unlockedEngine);
+            }
+            setRequiredByokPrompt(null);
+            notify(
+              `Unlocked & Activated "${unlockedEngine}" via Session BYOK Vault`,
+              'success',
+              `Your ${requiredByokPrompt.envVarName} is now encrypted in RAM for this session. Default fallback remains "gemini-free".`
+            );
+          } else if (!hasKey) {
+            const reqSelected = getRequiredByokForEngine(selectedEngine);
+            if (
+              reqSelected &&
+              (providerId === 'all' || reqSelected.provider === providerId)
+            ) {
+              setSelectedEngine('gemini-free');
+            }
+            const reqRight = getRequiredByokForEngine(arenaRightEngine);
+            if (
+              reqRight &&
+              (providerId === 'all' || reqRight.provider === providerId)
+            ) {
+              setArenaRightEngine('openrouter-free');
+            }
+          }
+        }}
       />
 
       {/* CREATE AGENT DRAFT MODAL */}
@@ -2411,6 +2758,52 @@ export function App() {
                   onChange={(e) => setNewAgentPrompt(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-white"
                 />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 mb-1.5">
+                  ToolGateway Allowlist (`draftToolAllowlist`)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      {
+                        id: 'calculator',
+                        label: 'calculator (Safe Math Parser)',
+                      },
+                      {
+                        id: 'knowledge_search',
+                        label: 'knowledge_search (Hybrid RAG)',
+                      },
+                    ] as const
+                  ).map((tool) => {
+                    const checked = newAgentTools.includes(tool.id);
+                    return (
+                      <label
+                        key={tool.id}
+                        className={`px-3 py-2 rounded-lg border text-xs font-mono flex items-center gap-2 cursor-pointer transition ${
+                          checked
+                            ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
+                            : 'bg-slate-950 border-slate-800 text-slate-400'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setNewAgentTools((prev) =>
+                              prev.includes(tool.id)
+                                ? prev.filter((t) => t !== tool.id)
+                                : [...prev, tool.id]
+                            );
+                          }}
+                          className="accent-emerald-500"
+                        />
+                        <span>{tool.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 

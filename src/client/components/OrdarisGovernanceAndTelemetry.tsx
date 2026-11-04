@@ -26,7 +26,10 @@ import {
   Layers,
   Cpu,
 } from 'lucide-react';
-import type { ByokProviderStatusItem } from './OrdarisRagAndByokDrawer';
+import {
+  isEngineKeyConfigured,
+  type ByokProviderStatusItem,
+} from './OrdarisRagAndByokDrawer';
 
 export interface EvalSuiteItem {
   id: string;
@@ -176,6 +179,12 @@ interface OrdarisGovernanceAndFinopsProps {
   auditEvents: AuditLedgerEvent[];
   members: WorkspaceMemberItem[];
   selectedEngine: string;
+  byokProviders?: ByokProviderStatusItem[];
+  onSelectEngineWithByokGate?: (
+    nextEngine: string,
+    target?: 'global' | 'arena-left' | 'arena-right' | 'eval',
+    onAllowed?: (eng: string) => void
+  ) => boolean;
   apiFetch: (url: string, init?: RequestInit) => Promise<Response>;
   onWorkspaceRefresh: () => Promise<void>;
   onNotify: (
@@ -195,6 +204,8 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
   auditEvents,
   members,
   selectedEngine,
+  byokProviders = [],
+  onSelectEngineWithByokGate,
   apiFetch,
   onWorkspaceRefresh,
   onNotify,
@@ -203,7 +214,20 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
   const [subTab, setSubTab] = useState<'evals' | 'finops' | 'rbac' | 'audit'>('evals');
 
   // Sub-Tab 4A: Evals & SLA Gate state
-  const [evalEngine, setEvalEngine] = useState<string>(selectedEngine || 'gemini-free');
+  const [evalEngine, setEvalEngine] = useState<string>(
+    isEngineKeyConfigured(selectedEngine || 'gemini-free', byokProviders)
+      ? selectedEngine || 'gemini-free'
+      : 'gemini-free'
+  );
+
+  useEffect(() => {
+    if (
+      selectedEngine &&
+      isEngineKeyConfigured(selectedEngine, byokProviders)
+    ) {
+      setEvalEngine(selectedEngine);
+    }
+  }, [selectedEngine, byokProviders]);
   const [slaThreshold, setSlaThreshold] = useState<number>(85);
   const [runningSuiteId, setRunningSuiteId] = useState<string | null>(null);
 
@@ -233,6 +257,13 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
   } | null>(null);
 
   const handleRunEvalSuite = async (suiteId: string) => {
+    if (!isEngineKeyConfigured(evalEngine, byokProviders)) {
+      onSelectEngineWithByokGate?.(evalEngine, 'eval', (allowedEng) =>
+        setEvalEngine(allowedEng)
+      );
+      setEvalEngine('gemini-free');
+      return;
+    }
     setRunningSuiteId(suiteId);
     try {
       const res = await apiFetch(`/api/v1/evals/suites/${suiteId}/run`, {
@@ -515,14 +546,50 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                 <span className="text-[11px] font-mono text-slate-400">Eval Engine:</span>
                 <select
                   value={evalEngine}
-                  onChange={(e) => setEvalEngine(e.target.value)}
+                  onChange={(e) => {
+                    const nextEng = e.target.value;
+                    if (onSelectEngineWithByokGate) {
+                      const allowed = onSelectEngineWithByokGate(
+                        nextEng,
+                        'eval',
+                        (resolvedEng) => setEvalEngine(resolvedEng)
+                      );
+                      if (!allowed) {
+                        setEvalEngine('gemini-free');
+                      }
+                    } else {
+                      setEvalEngine(nextEng);
+                    }
+                  }}
                   className="bg-transparent text-xs font-mono text-indigo-300 focus:outline-none"
                 >
-                  <option value="gemini-free" className="bg-slate-900">gemini-free (Default)</option>
-                  <option value="openrouter-free" className="bg-slate-900">openrouter-free</option>
-                  <option value="chatgpt-free" className="bg-slate-900">chatgpt-free</option>
-                  <option value="claude-free" className="bg-slate-900">claude-free</option>
-                  <option value="grok-free" className="bg-slate-900">grok-free</option>
+                  <option value="gemini-free" className="bg-slate-900">
+                    gemini-free (Free • Always Available — Default)
+                  </option>
+                  <option value="openrouter-free" className="bg-slate-900">
+                    openrouter-free (Free • Always Available)
+                  </option>
+                  <option value="chatgpt" className="bg-slate-900">
+                    chatgpt (OpenAI — No Longer Free •{' '}
+                    {isEngineKeyConfigured('chatgpt', byokProviders)
+                      ? '✓ Key Ready'
+                      : 'Requires Key in BYOK Vault'}
+                    )
+                  </option>
+                  <option value="claude" className="bg-slate-900">
+                    claude (Anthropic — No Longer Free •{' '}
+                    {isEngineKeyConfigured('claude', byokProviders)
+                      ? '✓ Key Ready'
+                      : 'Requires Key in BYOK Vault'}
+                    )
+                  </option>
+                  <option value="grok" className="bg-slate-900">
+                    grok (xAI — No Longer Free •{' '}
+                    {isEngineKeyConfigured('grok', byokProviders)
+                      ? '✓ Key Ready'
+                      : 'Requires Key in BYOK Vault'}
+                    )
+                  </option>
                 </select>
               </div>
 
@@ -1438,10 +1505,10 @@ XAI_API_KEY=`;
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               <Cpu className="w-5 h-5 text-indigo-400" />
-              <span>3-Tier AI Engine Resolution Matrix & Session Isolation</span>
+              <span>3-Tier AI Engine Resolution Matrix &amp; Session Isolation</span>
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              Every run resolves credentials in strict priority order: <strong>Tier 1 (Session BYOK `session:{sessionId.slice(0, 12)}`)</strong> ➔ <strong>Tier 2 (Server `.env`)</strong> ➔ <strong>Tier 3 (Deterministic Simulation Engine)</strong>.
+              <code className="text-emerald-300">gemini-free</code> and <code className="text-emerald-300">openrouter-free</code> are always free (with <code className="text-emerald-300">gemini-free</code> as default fallback). <strong>ChatGPT, Claude, and Grok are no longer free</strong> — choosing any of them requires an API key and opens the <strong>Session BYOK Vault</strong>.
             </p>
           </div>
 
@@ -1452,7 +1519,7 @@ XAI_API_KEY=`;
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-mono"
             >
               <Terminal className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Local `.env` & `pnpm` Quickstart</span>
+              <span>Local `.env` &amp; `pnpm` Quickstart</span>
             </button>
 
             <button
@@ -1473,17 +1540,24 @@ XAI_API_KEY=`;
                 <th className="py-2 pr-3">Engine ID</th>
                 <th className="py-2 px-3">Tier 1: Session BYOK Vault</th>
                 <th className="py-2 px-3">Tier 2: Server `.env` Key</th>
-                <th className="py-2 px-3">Tier 3: Simulation Fallback</th>
+                <th className="py-2 px-3">Availability &amp; Requirement</th>
                 <th className="py-2 px-3">Active Resolution Tier</th>
                 <th className="py-2 pl-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
               {providers.map((p) => {
-                const engineId = `${p.provider}-free`;
-                const isSelected = selectedEngine === engineId;
+                const isAlwaysAvailable =
+                  p.provider === 'gemini' || p.provider === 'openrouter';
+                const engineId = isAlwaysAvailable
+                  ? `${p.provider}-free`
+                  : p.provider;
+                const isSelected =
+                  selectedEngine === engineId ||
+                  selectedEngine === `${p.provider}-free`;
                 const hasByokKey = p.source === 'vault';
                 const hasServerEnvKey = p.source === 'env';
+                const isReady = isAlwaysAvailable || hasByokKey || hasServerEnvKey;
                 return (
                   <tr key={p.provider} className="text-slate-200">
                     <td className="py-2.5 pr-3">
@@ -1511,9 +1585,21 @@ XAI_API_KEY=`;
                       )}
                     </td>
                     <td className="py-2.5 px-3">
-                      <span className="px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 text-[10px]">
-                        Always Ready (Zero-Spend)
-                      </span>
+                      {isAlwaysAvailable ? (
+                        <span className="px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 text-[10px]">
+                          {p.provider === 'gemini'
+                            ? 'Free • Always Available (Default Fallback)'
+                            : 'Free • Always Available (Fallback: gemini-free)'}
+                        </span>
+                      ) : isReady ? (
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[10px]">
+                          ✓ Key Configured (Fallback: gemini-free)
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[10px]">
+                          No Longer Free — Requires {p.envVarName} to Use
+                        </span>
+                      )}
                     </td>
                     <td className="py-2.5 px-3">
                       <span
@@ -1522,14 +1608,18 @@ XAI_API_KEY=`;
                             ? 'bg-emerald-500/20 text-emerald-300'
                             : hasServerEnvKey
                               ? 'bg-sky-500/20 text-sky-300'
-                              : 'bg-amber-500/20 text-amber-300'
+                              : isAlwaysAvailable
+                                ? 'bg-indigo-500/20 text-indigo-300'
+                                : 'bg-amber-500/20 text-amber-300'
                         }`}
                       >
                         {hasByokKey
                           ? 'TIER 1: SESSION BYOK'
                           : hasServerEnvKey
                             ? 'TIER 2: SERVER .ENV'
-                            : 'TIER 3: DETERMINISTIC SIM'}
+                            : isAlwaysAvailable
+                              ? 'FREE • ALWAYS AVAILABLE (GEMINI-FREE DEFAULT)'
+                              : 'NO LONGER FREE • KEY REQUIRED (BYOK VAULT)'}
                       </span>
                     </td>
                     <td className="py-2.5 pl-3 text-right">
@@ -1539,10 +1629,16 @@ XAI_API_KEY=`;
                         className={`px-2.5 py-1 rounded text-[11px] font-bold ${
                           isSelected
                             ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                            : isReady
+                              ? 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                              : 'bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200'
                         }`}
                       >
-                        {isSelected ? '✓ Active Engine' : 'Select Engine'}
+                        {isSelected
+                          ? '✓ Active Engine'
+                          : isReady
+                            ? 'Select Engine'
+                            : '🔑 Requires Key (Open BYOK Vault)'}
                       </button>
                     </td>
                   </tr>

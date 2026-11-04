@@ -72,6 +72,8 @@ export interface DemoResetResult {
   mode: DemoResetMode;
   workspaceReset: boolean;
   clearedByokKeysCount: number;
+  defaultEngine: 'gemini-free';
+  alwaysAvailableEngines: readonly ['gemini-free', 'openrouter-free'];
   resetAt: string;
 }
 
@@ -140,8 +142,8 @@ export interface SystemDiagnosticsReport {
 /**
  * Executes the 3-choice "Reset Demo Workspace" operation:
  * - `workspace_only` (Default): Resets demo tenants (`acme-cyber-defense`, `beta-logistics`) and preserves Session BYOK keys.
- * - `factory_reset`: Resets demo tenants AND wipes Session BYOK keys.
- * - `keys_only`: Wipes Session BYOK keys only while keeping all current workspace runs, documents, and approvals untouched.
+ * - `factory_reset`: Resets demo tenants, wipes Session BYOK keys, and restores `gemini-free` as default fallback engine.
+ * - `keys_only`: Wipes Session BYOK keys only and reverts BYOK-gated engines (`chatgpt-free`, `claude-free`, `grok-free`) to `gemini-free` while keeping all current workspace runs, documents, and approvals untouched.
  */
 export async function resetDemoSandboxOnly(
   db: OrdarisDatabase,
@@ -152,7 +154,9 @@ export async function resetDemoSandboxOnly(
 
   if (mode === 'keys_only' || mode === 'factory_reset') {
     if (options?.clearAllByok) {
-      clearedByokKeysCount = clearByokScope().clearedCount;
+      clearedByokKeysCount = clearByokScope('global', {
+        clearAllDemoScopes: true,
+      }).clearedCount;
     } else if (options?.clearByokScopeKey) {
       clearedByokKeysCount = clearByokScope(options.clearByokScopeKey).clearedCount;
     }
@@ -172,6 +176,8 @@ export async function resetDemoSandboxOnly(
     mode,
     workspaceReset,
     clearedByokKeysCount,
+    defaultEngine: 'gemini-free',
+    alwaysAvailableEngines: ['gemini-free', 'openrouter-free'],
     resetAt: new Date().toISOString(),
   };
 }

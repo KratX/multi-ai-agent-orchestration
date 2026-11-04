@@ -82,6 +82,85 @@ export interface DocumentChunkRowItem {
   createdAt: string;
 }
 
+export interface RequiredByokEngineInfo {
+  engine: 'chatgpt' | 'claude' | 'grok';
+  provider: 'chatgpt' | 'claude' | 'grok';
+  providerLabel: string;
+  envVarName: string;
+  modelName: string;
+}
+
+export const ENGINE_REQUIRED_BYOK_MAP: Record<
+  'chatgpt' | 'claude' | 'grok',
+  RequiredByokEngineInfo
+> = {
+  chatgpt: {
+    engine: 'chatgpt',
+    provider: 'chatgpt',
+    providerLabel: 'OpenAI (ChatGPT)',
+    envVarName: 'OPENAI_API_KEY',
+    modelName: 'gpt-4o-mini',
+  },
+  claude: {
+    engine: 'claude',
+    provider: 'claude',
+    providerLabel: 'Anthropic (Claude)',
+    envVarName: 'ANTHROPIC_API_KEY',
+    modelName: 'claude-3-5-haiku-latest',
+  },
+  grok: {
+    engine: 'grok',
+    provider: 'grok',
+    providerLabel: 'xAI (Grok)',
+    envVarName: 'XAI_API_KEY',
+    modelName: 'grok-2-latest',
+  },
+};
+
+export function getRequiredByokForEngine(
+  engine: string
+): RequiredByokEngineInfo | null {
+  const normalized = (engine || 'gemini-free').trim().toLowerCase();
+  if (
+    normalized === 'chatgpt-free' ||
+    normalized === 'chatgpt' ||
+    normalized === 'openai'
+  ) {
+    return ENGINE_REQUIRED_BYOK_MAP.chatgpt;
+  }
+  if (
+    normalized === 'claude-free' ||
+    normalized === 'claude' ||
+    normalized === 'anthropic'
+  ) {
+    return ENGINE_REQUIRED_BYOK_MAP.claude;
+  }
+  if (
+    normalized === 'grok-free' ||
+    normalized === 'grok' ||
+    normalized === 'xai'
+  ) {
+    return ENGINE_REQUIRED_BYOK_MAP.grok;
+  }
+  return null;
+}
+
+export function isEngineKeyConfigured(
+  engine: string,
+  providers: ByokProviderStatusItem[]
+): boolean {
+  const req = getRequiredByokForEngine(engine);
+  // gemini-free, openrouter-free, and auto are always available without requiring a key first
+  if (!req) {
+    return true;
+  }
+  const found = providers.find((p) => p.provider === req.provider);
+  return Boolean(
+    found &&
+      (found.configured || found.source === 'vault' || found.source === 'env')
+  );
+}
+
 interface SessionByokVaultDrawerProps {
   open: boolean;
   onClose: () => void;
@@ -95,6 +174,9 @@ interface SessionByokVaultDrawerProps {
     tone?: 'success' | 'error' | 'info',
     details?: string
   ) => void;
+  requiredEnginePrompt?: RequiredByokEngineInfo | null;
+  onClearRequiredPrompt?: () => void;
+  onProviderKeySaved?: (providerId: string, hasKey: boolean) => void;
 }
 
 export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
@@ -106,6 +188,9 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
   providers,
   onRefreshWorkspace,
   onNotify,
+  requiredEnginePrompt,
+  onClearRequiredPrompt,
+  onProviderKeySaved,
 }) => {
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [showKeyMap, setShowKeyMap] = useState<Record<string, boolean>>({});
@@ -164,6 +249,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
         `Cipher: AES-256-GCM (ephemeral CSPRNG master key, 2h sliding TTL) • Scope: session:${demoSessionId.slice(0, 12)} • Zero disk writes`
       );
       await onRefreshWorkspace();
+      onProviderKeySaved?.(providerId, Boolean(rawKey.trim()));
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Network error saving key';
       setBanner({
@@ -247,9 +333,10 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
       onNotify?.(
         wipeMsg,
         'info',
-        'Reverted active credential resolution to Tier 2 (Server .env) / Tier 3 (Deterministic Simulation).'
+        'Reverted active credential resolution to Tier 2 (Server .env) / Default Gemini Free Fallback.'
       );
       await onRefreshWorkspace();
+      onProviderKeySaved?.('all', false);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to wipe session keys';
       setBanner({
@@ -335,16 +422,42 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
           </div>
           <div className="p-2.5 rounded-lg bg-amber-950/25 border border-amber-500/30">
             <div className="font-semibold text-amber-300 flex items-center justify-between">
-              <span>Tier 3: Deterministic</span>
+              <span>Free vs Paid BYOK</span>
               <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20">
-                Always Ready
+                gemini-free
               </span>
             </div>
             <p className="text-zinc-400 text-[10px] mt-1 leading-relaxed">
-              Zero-key offline simulation engine (<code className="text-amber-200">ordaris-mock-v1</code>).
+              <code className="text-emerald-300">gemini-free</code> &amp; <code className="text-emerald-300">openrouter-free</code> are always free. <strong>ChatGPT, Claude &amp; Grok are no longer free</strong> (API key required).
             </p>
           </div>
         </div>
+
+        {requiredEnginePrompt && (
+          <div className="mx-6 mt-3 px-4 py-3 rounded-xl border border-amber-500/50 bg-amber-950/40 text-xs text-amber-100 flex items-start justify-between gap-3 shadow-lg">
+            <div className="space-y-1">
+              <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {requiredEnginePrompt.providerLabel} (
+                  <code>{requiredEnginePrompt.engine}</code>) is No Longer Free — API Key Required to Use
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                <strong>ChatGPT, Claude, and Grok are no longer free</strong> and require your own API key (<code className="font-mono font-bold text-white">{requiredEnginePrompt.envVarName}</code>) in the Session BYOK Vault to use. Paste your <code className="font-mono font-bold text-white">{requiredEnginePrompt.envVarName}</code> below and click <strong>Save Session Key</strong> to unlock <code className="font-mono text-white">{requiredEnginePrompt.engine}</code>. Until configured, <code className="font-mono text-emerald-300">gemini-free</code> and <code className="font-mono text-emerald-300">openrouter-free</code> remain free and always available (with <code className="font-mono text-emerald-300">gemini-free</code> as default fallback).
+              </p>
+            </div>
+            {onClearRequiredPrompt && (
+              <button
+                type="button"
+                onClick={onClearRequiredPrompt}
+                className="text-amber-300/70 hover:text-white text-xs shrink-0"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
 
         {banner && (
           <div
@@ -374,27 +487,38 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
             const showSecret = Boolean(showKeyMap[item.provider]);
             const isSaving = busyProvider === item.provider;
             const isTesting = busyProvider === `test:${item.provider}`;
+            const isAlwaysAvailableProvider =
+              item.provider === 'gemini' || item.provider === 'openrouter';
+            const isSpotlighted =
+              requiredEnginePrompt?.provider === item.provider;
 
             return (
               <div
                 key={item.provider}
                 className={`p-4 rounded-xl border transition-all ${
-                  item.source === 'vault'
-                    ? 'bg-emerald-950/10 border-emerald-500/35'
-                    : item.source === 'env'
-                      ? 'bg-sky-950/10 border-sky-500/35'
-                      : 'bg-zinc-900/50 border-zinc-800'
+                  isSpotlighted
+                    ? 'bg-amber-950/20 border-amber-400 ring-2 ring-amber-500/40 shadow-lg'
+                    : item.source === 'vault'
+                      ? 'bg-emerald-950/10 border-emerald-500/35'
+                      : item.source === 'env'
+                        ? 'bg-sky-950/10 border-sky-500/35'
+                        : 'bg-zinc-900/50 border-zinc-800'
                 }`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-bold text-white">
                         {item.label}
                       </span>
                       <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
                         {item.modelName}
                       </span>
+                      {isSpotlighted && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/25 text-amber-200 border border-amber-400/50">
+                          🔑 No Longer Free — Enter Key to Use {requiredEnginePrompt.engine}
+                        </span>
+                      )}
                       {item.source === 'vault' && (
                         <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                           Tier 1: Session BYOK ({item.maskedPreview})
@@ -405,9 +529,16 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
                           Tier 2: Server .env ({item.maskedPreview})
                         </span>
                       )}
-                      {item.source === 'none' && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-zinc-800/80 text-zinc-400 border border-zinc-700">
-                          Tier 3: Deterministic Fallback
+                      {item.source === 'none' && isAlwaysAvailableProvider && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                          {item.provider === 'gemini'
+                            ? 'Free • Always Available (Default Fallback)'
+                            : 'Free • Always Available (Fallback: gemini-free)'}
+                        </span>
+                      )}
+                      {item.source === 'none' && !isAlwaysAvailableProvider && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                          No Longer Free — Requires {item.envVarName} to Use
                         </span>
                       )}
                     </div>
@@ -419,7 +550,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
                         rel="noreferrer"
                         className="text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1 font-sans"
                       >
-                        Get Free Key <ExternalLink className="w-3 h-3" />
+                        {isAlwaysAvailableProvider ? 'Get Free Key (Optional)' : 'Get Paid API Key (Required)'} <ExternalLink className="w-3 h-3" />
                       </a>
                     </div>
                   </div>
@@ -470,6 +601,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
                   <div className="relative flex-1">
                     <input
                       type={showSecret ? 'text' : 'password'}
+                      autoFocus={isSpotlighted}
                       value={inputVal}
                       onChange={(e) =>
                         setKeyInputs((prev) => ({
@@ -477,8 +609,16 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
                           [item.provider]: e.target.value,
                         }))
                       }
-                      placeholder={`Paste ${item.envVarName} for this browser session...`}
-                      className="w-full px-3 py-1.5 pr-8 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-100 font-mono focus:outline-none focus:border-emerald-500/60"
+                      placeholder={
+                        isSpotlighted
+                          ? `Required: Paste ${item.envVarName} to unlock ${requiredEnginePrompt.engine}...`
+                          : `Paste ${item.envVarName} for this browser session...`
+                      }
+                      className={`w-full px-3 py-1.5 pr-8 rounded-lg bg-zinc-950 border text-xs text-zinc-100 font-mono focus:outline-none ${
+                        isSpotlighted
+                          ? 'border-amber-400/80 focus:border-amber-300'
+                          : 'border-zinc-800 focus:border-emerald-500/60'
+                      }`}
                     />
                     <button
                       type="button"
