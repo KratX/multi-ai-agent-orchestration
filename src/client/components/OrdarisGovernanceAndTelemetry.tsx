@@ -71,6 +71,7 @@ export interface UsageLedgerEvent {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  toolCallsCount?: number;
   estimatedCostMicrodollars: number;
   createdAt: string;
 }
@@ -154,7 +155,7 @@ const RBAC_28_ACTIONS: Array<{
   { action: 'usage.view', category: 'Governance & Evals', owner: true, admin: true, developer: true, viewer: true },
 ];
 
-function computeAuditSeal(evt: AuditLedgerEvent): string {
+export function computeAuditSeal(evt: AuditLedgerEvent): string {
   const tId = evt.targetId ?? evt.resourceId ?? '';
   const raw = `${evt.id}:${evt.action}:${evt.outcome}:${tId}:${evt.createdAt}`;
   let h1 = 0xdeadbeef ^ raw.length;
@@ -167,6 +168,292 @@ function computeAuditSeal(evt: AuditLedgerEvent): string {
   h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   return `sha256:${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+export interface AuditEventFullDescription {
+  title: string;
+  whatHappened: string;
+  actorDisplayName: string;
+  actorEmail: string | null;
+  targetResourceType: string;
+  targetResourceId: string;
+  linkedRunId: string | null;
+  badges: Array<{ label: string; value: string }>;
+}
+
+/**
+ * Pure deterministic formatter that turns any `AuditLedgerEvent` and its `metadata`
+ * into a rich human-readable narrative of what happened in that action.
+ */
+export function describeAuditEventDetails(
+  evt: AuditLedgerEvent,
+  members: WorkspaceMemberItem[] = []
+): AuditEventFullDescription {
+  const meta: Record<string, unknown> =
+    evt.metadata && typeof evt.metadata === 'object' ? evt.metadata : {};
+  const action = (evt.action || 'unknown.action').trim();
+  const outcome = evt.outcome === 'denied' ? 'denied' : 'allowed';
+  const roleUpper = (evt.actorRole || 'system').toUpperCase();
+  const targetType = String(
+    evt.targetType ?? evt.resourceType ?? 'resource'
+  ).trim();
+  const targetId = String(
+    evt.targetId ?? evt.resourceId ?? 'workspace'
+  ).trim();
+
+  const matchedMember = evt.actorUserId
+    ? members.find((m) => m.userId === evt.actorUserId)
+    : members.find((m) => m.role === evt.actorRole);
+
+  const actorDisplayName =
+    matchedMember?.displayName ||
+    (evt.actorRole ? `${roleUpper} Operator` : 'System Runtime');
+  const actorEmail = matchedMember?.email ?? null;
+
+  const badges: Array<{ label: string; value: string }> = [];
+  const pushBadge = (label: string, val: unknown) => {
+    if (val === undefined || val === null || val === '') return;
+    if (Array.isArray(val)) {
+      if (val.length > 0) badges.push({ label, value: val.join(', ') });
+      return;
+    }
+    badges.push({ label, value: String(val) });
+  };
+
+  let title = action;
+  let whatHappened = '';
+
+  if (action === 'approval.decide') {
+    const decisionStr = String(meta.decision ?? (outcome === 'denied' ? 'rejected_attempt' : 'approved'));
+    const nodeStr = String(meta.nodeId ?? 'approval-gate-1');
+    const noteStr = meta.note ? String(meta.note) : null;
+    if (outcome === 'allowed') {
+      title =
+        decisionStr === 'rejected'
+          ? 'HITL Gate Rejected (Run Terminated)'
+          : 'HITL Gate Approved (DAG Resumed)';
+      whatHappened = `${actorDisplayName} (${roleUpper}) ${decisionStr.toUpperCase()} human-in-the-loop gate "${nodeStr}"${meta.runId ? ` for workflow run ${String(meta.runId).slice(0, 8)}` : ''}.${noteStr ? ` Decision Note: "${noteStr}"` : ''}`;
+    } else {
+      title = 'HITL Decision Blocked (RBAC 403)';
+      whatHappened = `Blocked unauthorized HITL ${decisionStr} attempt on gate "${nodeStr}" by ${actorDisplayName} (${roleUpper}). ${String(meta.reason ?? meta.message ?? 'Role lacks approval.decide permission.')}`;
+    }
+    pushBadge('Decision', decisionStr.toUpperCase());
+    pushBadge('DAG Node', nodeStr);
+    if (noteStr) pushBadge('Reviewer Note', noteStr);
+    if (meta.reason) pushBadge('Denial Reason', meta.reason);
+  } else if (action === 'workflow.completed') {
+    title = '6-Node DAG Workflow Completed';
+    const visited = Array.isArray(meta.visitedNodes)
+      ? (meta.visitedNodes as string[])
+      : [];
+    whatHappened = `Workflow run completed at terminal node "${String(meta.terminalNodeId ?? 'end-1')}" after executing ${visited.length || 6} DAG nodes (${visited.length > 0 ? visited.join(' → ') : 'start → calc → condition → approval → summary → end'}).`;
+    pushBadge('Terminal Node', meta.terminalNodeId ?? 'end-1');
+    pushBadge('Nodes Executed', visited.length || 6);
+  } else if (action === 'workflow.publish') {
+    title = 'Workflow Snapshot Published';
+    whatHappened = `Published immutable Workflow Snapshot v${meta.versionNumber ?? 1}${meta.snapshotHash ? ` with cryptographic seal ${String(meta.snapshotHash).slice(0, 18)}...` : ''}.`;
+    pushBadge('Version', `v${meta.versionNumber ?? 1}`);
+    if (meta.snapshotHash) {
+      pushBadge('Snapshot Hash', `${String(meta.snapshotHash).slice(0, 18)}...`);
+    }
+  } else if (action === 'workflow.edit') {
+    const op = String(meta.operation ?? 'update_draft');
+    title =
+      op === 'create_draft'
+        ? 'Workflow DAG Draft Created'
+        : 'Workflow DAG Draft Updated';
+    whatHappened = `${op === 'create_draft' ? 'Created' : 'Updated'} workflow draft "${String(meta.slug ?? targetId)}" by ${actorDisplayName} (${roleUpper}).`;
+    pushBadge('Workflow Slug', meta.slug);
+    pushBadge('Operation', op);
+  } else if (action === 'eval.suite.created') {
+    title = 'Evaluation Benchmark Suite Created';
+    whatHappened = `Created deterministic evaluation suite "${String(meta.name ?? targetId)}" with ${meta.caseCount ?? 2} golden assertion cases.`;
+    pushBadge('Suite Name', meta.name);
+    pushBadge('Golden Cases', meta.caseCount);
+  } else if (action === 'eval.experiment.completed') {
+    title = 'Evaluation Benchmark Run Completed';
+    whatHappened = `Executed evaluation suite benchmark against Agent Snapshot v${meta.versionNumber ?? 1}: passed ${meta.passedCases ?? 0}/${meta.totalCases ?? 0} golden cases (${meta.passRate ?? 100}% pass rate).`;
+    pushBadge('Snapshot', `v${meta.versionNumber ?? 1}`);
+    pushBadge('Pass Rate', `${meta.passRate ?? 100}%`);
+    pushBadge(
+      'Cases Passed',
+      `${meta.passedCases ?? 0}/${meta.totalCases ?? 0}`
+    );
+  } else if (action === 'eval.execute' || action === 'eval.manage') {
+    title =
+      outcome === 'denied'
+        ? `Eval ${action === 'eval.execute' ? 'Execution' : 'Management'} Blocked (403)`
+        : `Eval ${action}`;
+    whatHappened =
+      outcome === 'denied'
+        ? `Blocked ${action} attempt on evaluation suite ${targetId.slice(0, 8)} by ${actorDisplayName} (${roleUpper}). ${String(meta.reason ?? meta.message ?? `Role ${roleUpper} lacks ${action} permission.`)}`
+        : `Authorized ${action} on evaluation suite ${targetId.slice(0, 8)}.`;
+    pushBadge('Permission', action);
+    if (meta.reason || meta.message) {
+      pushBadge('Reason', meta.reason ?? meta.message);
+    }
+  } else if (action === 'member.upserted') {
+    const op = String(meta.operation ?? 'member_upserted');
+    const assignedRole = String(meta.role ?? 'developer').toUpperCase();
+    const prevRole = meta.previousRole
+      ? String(meta.previousRole).toUpperCase()
+      : null;
+    title =
+      op === 'role_updated'
+        ? `Member RBAC Role Updated ➔ ${assignedRole}`
+        : `Team Member Invited ➔ ${assignedRole}`;
+    whatHappened = `${op === 'role_updated' ? 'Updated existing member' : 'Invited member'} ${meta.displayName ? `${meta.displayName} (${meta.email})` : meta.email || targetId} to role ${assignedRole}${prevRole ? ` (previously ${prevRole})` : ''}.`;
+    pushBadge('Member Email', meta.email);
+    pushBadge('Assigned Role', assignedRole);
+    if (prevRole) pushBadge('Previous Role', prevRole);
+  } else if (action === 'member.removed') {
+    title = 'Team Member Removed';
+    whatHappened = `Revoked workspace membership for ${meta.displayName ? `${meta.displayName} (${meta.email})` : meta.email || targetId}${meta.removedRole ? ` (held role ${String(meta.removedRole).toUpperCase()})` : ''}.`;
+    pushBadge('Removed Email', meta.email);
+    if (meta.removedRole) {
+      pushBadge('Previous Role', String(meta.removedRole).toUpperCase());
+    }
+  } else if (
+    action === 'member.last_owner_safeguard' ||
+    meta.code === 'LAST_OWNER_PROTECTED'
+  ) {
+    title = 'Last-Owner Safeguard Blocked (HTTP 409)';
+    whatHappened = `Prevented tenant lock-out (HTTP 409 LAST_OWNER_PROTECTED): Blocked attempt by ${actorDisplayName} (${roleUpper}) to remove or demote the sole/primary organization Owner${meta.targetEmail ? ` (${meta.targetEmail})` : ''}. ${String(meta.message ?? 'Organization must retain at least one Owner.')}`;
+    pushBadge('HTTP Status', meta.statusCode ?? 409);
+    pushBadge('Constraint', 'LAST_OWNER_PROTECTED');
+    if (meta.targetEmail) pushBadge('Target Owner', meta.targetEmail);
+  } else if (
+    action === 'member.manage_owners' ||
+    action === 'member.manage'
+  ) {
+    title =
+      action === 'member.manage_owners'
+        ? 'Privilege Escalation Blocked (HTTP 403)'
+        : 'Member Management Blocked (HTTP 403)';
+    whatHappened = `RBAC Boundary Enforced (HTTP ${meta.statusCode ?? 403}): ${actorDisplayName} (${roleUpper}) attempted "${action}"${meta.targetEmail ? ` on ${meta.targetEmail}` : ''}${meta.attemptedRole ? ` (requested role: ${String(meta.attemptedRole).toUpperCase()})` : ''}. ${String(meta.message ?? meta.reason ?? 'Only an Owner can grant or modify Owner privileges.')}`;
+    pushBadge('HTTP Status', meta.statusCode ?? 403);
+    pushBadge('Required Permission', action);
+    if (meta.targetEmail) pushBadge('Target Email', meta.targetEmail);
+    if (meta.attemptedRole) {
+      pushBadge('Attempted Role', String(meta.attemptedRole).toUpperCase());
+    }
+  } else if (action === 'run.start') {
+    if (outcome === 'allowed') {
+      title = 'Agent / Workflow Run Executed';
+      whatHappened = `Executed governed run ${targetId.slice(0, 8)} on engine "${String(meta.aiEngine ?? 'gemini-free')}"${meta.versionNumber ? ` (Snapshot v${meta.versionNumber})` : ''}: status=${String(meta.status ?? 'succeeded')}, consumed ${meta.totalTokens ?? 0} tokens across ${meta.toolCallCount ?? 0} tool call(s).${meta.promptPreview ? ` Prompt: "${String(meta.promptPreview)}"` : ''}`;
+      pushBadge('Engine', meta.aiEngine ?? 'gemini-free');
+      if (meta.versionNumber) pushBadge('Snapshot', `v${meta.versionNumber}`);
+      pushBadge('Tokens', meta.totalTokens ?? 0);
+      pushBadge('Tool Calls', meta.toolCallCount ?? 0);
+    } else {
+      title = 'Run Execution Blocked (RBAC 403)';
+      whatHappened = `Blocked unauthorized run start attempt by ${actorDisplayName} (${roleUpper}) on ${targetType} "${targetId.slice(0, 12)}". ${String(meta.reason ?? meta.message ?? 'Role lacks run.start permission.')}`;
+      pushBadge('HTTP Status', meta.statusCode ?? 403);
+      pushBadge('Required Permission', 'run.start');
+      if (meta.riskOverrideExpression) {
+        pushBadge('Override Expr', meta.riskOverrideExpression);
+      }
+    }
+  } else if (
+    action === 'agent.create' ||
+    action === 'agent.edit' ||
+    action === 'agent.publish'
+  ) {
+    title =
+      action === 'agent.create'
+        ? 'Agent Draft Created'
+        : action === 'agent.publish'
+          ? 'Agent Immutable Snapshot Published'
+          : 'Agent Configuration Updated';
+    whatHappened =
+      action === 'agent.publish'
+        ? `Published immutable Snapshot v${meta.versionNumber ?? 1} for agent "${String(meta.agentName ?? meta.name ?? targetId)}" with ToolGateway allowlist [${Array.isArray(meta.toolAllowlist) ? meta.toolAllowlist.join(', ') : 'calculator, knowledge_search'}].`
+        : `${action === 'agent.create' ? 'Created new agent' : 'Updated agent'} "${String(meta.name ?? meta.slug ?? targetId)}" with ToolGateway allowlist [${Array.isArray(meta.toolAllowlist) ? meta.toolAllowlist.join(', ') : 'calculator, knowledge_search'}].`;
+    pushBadge('Agent', meta.agentName ?? meta.name ?? meta.slug);
+    if (meta.versionNumber) pushBadge('Version', `v${meta.versionNumber}`);
+    pushBadge('Allowlist', meta.toolAllowlist);
+  } else if (action === 'document.upload' || action === 'document.deleted' || action === 'document.delete') {
+    if (outcome === 'denied') {
+      title = 'Knowledge Document Action Blocked (RBAC 403)';
+      whatHappened = `Blocked ${action} attempt by ${actorDisplayName} (${roleUpper}). ${String(meta.message ?? meta.reason ?? 'Insufficient document permissions.')}`;
+    } else if (action === 'document.upload') {
+      title = 'Knowledge Document Ingested & Indexed';
+      whatHappened = `Ingested knowledge document "${String(meta.title ?? targetId)}" (${meta.sourceFilename ?? 'markdown'}) and indexed ${meta.chunkCount ?? 1} hybrid FTS + 64-d vector chunk(s).`;
+      pushBadge('Title', meta.title);
+      pushBadge('Chunks', meta.chunkCount);
+    } else {
+      title = 'Knowledge Document Deleted';
+      whatHappened = `Deleted knowledge document "${String(meta.title ?? targetId)}" and cascaded removal of its vector chunks.`;
+      pushBadge('Title', meta.title);
+    }
+  } else if (action === 'security.guardrail_blocked') {
+    title = 'Security Guardrail Blocked Prompt Injection (HTTP 422)';
+    whatHappened = `Intercepted adversarial prompt injection / secret exfiltration directive prior to model dispatch: "${String(meta.promptPreview ?? 'redacted')}". ${String(meta.reason ?? '')}`;
+    pushBadge('Guardrail', 'Prompt Injection / Exfiltration');
+    pushBadge('Prompt Preview', meta.promptPreview);
+  } else if (action === 'finops.budget_cap_exceeded') {
+    title = 'FinOps Per-Run Budget Ceiling Exceeded (HTTP 422)';
+    whatHappened = `Halted agent run prior to token spend: projected cost $${meta.estimatedCostUsd ?? 0} (${meta.estimatedTokens ?? 0} tokens) exceeded max per-run budget cap of $${meta.maxBudgetUsd ?? 0.001}.`;
+    pushBadge('Projected Spend', `$${meta.estimatedCostUsd}`);
+    pushBadge('Budget Cap', `$${meta.maxBudgetUsd}`);
+  } else if (action === 'security.pii_redacted') {
+    title = 'Automatic PII & Secret Scrubbing Applied';
+    whatHappened = `Redacted sensitive patterns [${Array.isArray(meta.redactedTypes) ? meta.redactedTypes.join(', ') : 'PII/Secret'}] from user prompt prior to persistence and model execution.`;
+    pushBadge('Redacted Types', meta.redactedTypes);
+  } else if (action === 'security.isolation_verified') {
+    title = '4-Point Cross-Tenant Isolation Suite Verified';
+    whatHappened = `Executed live 4-point cross-tenant boundary probes (Acme Cyber Defense ⇄ Beta Logistics): ${meta.passedChecks ?? 4}/${meta.totalChecks ?? 4} invariants verified.`;
+    pushBadge(
+      'Checks Passed',
+      `${meta.passedChecks ?? 4}/${meta.totalChecks ?? 4}`
+    );
+  } else if (action === 'org.data_exported' || action === 'org.data_imported') {
+    title =
+      action === 'org.data_exported'
+        ? 'Tenant Workspace Bundle Exported'
+        : 'Tenant Workspace Bundle Imported';
+    whatHappened =
+      action === 'org.data_exported'
+        ? `Exported sanitized JSON workspace bundle for organization ${targetId.slice(0, 8)} by ${actorDisplayName} (${roleUpper}).`
+        : `Imported ${meta.importedAgentsCount ?? 0} agent(s) and ${meta.importedDocumentsCount ?? 0} knowledge document(s) into workspace.`;
+  } else {
+    title =
+      outcome === 'denied'
+        ? `Security Policy Denied: ${action}`
+        : `Governance Event: ${action}`;
+    const fallbackReason =
+      meta.message ||
+      meta.reason ||
+      (Object.keys(meta).length > 0
+        ? Object.entries(meta)
+            .map(([k, v]) => `${k}=${ typeof v === 'object' ? JSON.stringify(v) : String(v) }`)
+            .join(', ')
+        : `${outcome.toUpperCase()} action "${action}" on ${targetType} (${targetId.slice(0, 12)}) by ${actorDisplayName} (${roleUpper}).`);
+    whatHappened = String(fallbackReason);
+    if (meta.statusCode) pushBadge('HTTP Status', meta.statusCode);
+    if (meta.code) pushBadge('Code', meta.code);
+  }
+
+  const candidateRunId =
+    typeof meta.runId === 'string' && meta.runId
+      ? meta.runId
+      : (targetType === 'agent_run' ||
+          targetType === 'run' ||
+          targetType === 'workflow_run') &&
+          targetId.length >= 20
+        ? targetId
+        : null;
+
+  return {
+    title,
+    whatHappened,
+    actorDisplayName,
+    actorEmail,
+    targetResourceType: targetType,
+    targetResourceId: targetId,
+    linkedRunId: candidateRunId,
+    badges,
+  };
 }
 
 interface OrdarisGovernanceAndFinopsProps {
@@ -246,6 +533,8 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
   // Sub-Tab 4D: Security Audit Ledger & Isolation Verifier state
   const [auditOutcomeFilter, setAuditOutcomeFilter] = useState<'all' | 'allowed' | 'denied'>('all');
   const [auditSearch, setAuditSearch] = useState<string>('');
+  const [expandedAuditIds, setExpandedAuditIds] = useState<Record<string, boolean>>({});
+  const [expandAllAuditDetails, setExpandAllAuditDetails] = useState<boolean>(false);
   const [showIsolationModal, setShowIsolationModal] = useState<boolean>(false);
   const [verifyingIsolation, setVerifyingIsolation] = useState<boolean>(false);
   const [isolationReport, setIsolationReport] = useState<{
@@ -276,7 +565,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         onNotify(
           `Eval Run Blocked (HTTP ${res.status}): ${json?.error?.message || json?.detail || 'Forbidden'}`,
           'error',
-          `Active Role: ${activeActorRole.toUpperCase()} • Required Permission: eval.manage • Logged to Security Audit Ledger.`
+          `Active Role: ${activeActorRole.toUpperCase()} • Required Permission: eval.execute • Logged to Security Audit Ledger.`
         );
         await onWorkspaceRefresh();
         return;
@@ -345,18 +634,28 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
     }
   };
 
-  const handleRemoveMember = async (userId: string, email: string) => {
+  const handleRemoveMember = async (
+    userId: string,
+    email: string,
+    personaOverride?: string,
+  ) => {
     setSavingMember(true);
     try {
+      const headers: Record<string, string> = {};
+      if (personaOverride) {
+        headers['x-actor-id'] = personaOverride;
+        headers['x-demo-actor'] = personaOverride;
+      }
       const res = await apiFetch(`/api/v1/members/${userId}`, {
         method: 'DELETE',
+        headers,
       });
       const json = await res.json();
       if (!res.ok) {
         onNotify(
           `Safeguard / RBAC Blocked Member Removal (HTTP ${res.status})`,
           'error',
-          `${json?.error?.message || json?.detail || 'Cannot remove member'} • Target: ${email}`
+          `${json?.error?.message || json?.detail || 'Cannot remove member'} • Target: ${email} • Logged to Security Audit Ledger.`
         );
         await onWorkspaceRefresh();
         return;
@@ -409,13 +708,17 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
     }
     if (!auditSearch.trim()) return true;
     const q = auditSearch.toLowerCase();
-    const tType = (evt.targetType ?? evt.resourceType ?? '').toLowerCase();
-    const tId = (evt.targetId ?? evt.resourceId ?? '').toLowerCase();
+    const desc = describeAuditEventDetails(evt, members);
     return (
       (evt.action || '').toLowerCase().includes(q) ||
-      tType.includes(q) ||
-      tId.includes(q) ||
-      (evt.actorRole || '').toLowerCase().includes(q)
+      desc.title.toLowerCase().includes(q) ||
+      desc.whatHappened.toLowerCase().includes(q) ||
+      desc.actorDisplayName.toLowerCase().includes(q) ||
+      (desc.actorEmail || '').toLowerCase().includes(q) ||
+      desc.targetResourceType.toLowerCase().includes(q) ||
+      desc.targetResourceId.toLowerCase().includes(q) ||
+      (evt.actorRole || '').toLowerCase().includes(q) ||
+      JSON.stringify(evt.metadata || {}).toLowerCase().includes(q)
     );
   });
 
@@ -423,19 +726,27 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
     const content =
       format === 'json'
         ? JSON.stringify(
-            filteredAuditEvents.map((e) => ({
-              ...e,
-              integritySeal: computeAuditSeal(e),
-            })),
+            filteredAuditEvents.map((e) => {
+              const desc = describeAuditEventDetails(e, members);
+              return {
+                ...e,
+                actorDisplayName: desc.actorDisplayName,
+                actorEmail: desc.actorEmail,
+                actionTitle: desc.title,
+                whatHappened: desc.whatHappened,
+                integritySeal: computeAuditSeal(e),
+              };
+            }),
             null,
             2,
           )
         : [
-            'id,createdAt,actorRole,action,targetType,targetId,outcome,integritySeal',
-            ...filteredAuditEvents.map(
-              (e) =>
-                `"${e.id}","${e.createdAt}","${e.actorRole || ''}","${e.action}","${e.targetType ?? e.resourceType ?? ''}","${e.targetId ?? e.resourceId ?? ''}","${e.outcome}","${computeAuditSeal(e)}"`,
-            ),
+            'id,createdAt,actorRole,actorName,actorEmail,action,actionTitle,targetType,targetId,outcome,whatHappened,integritySeal',
+            ...filteredAuditEvents.map((e) => {
+              const desc = describeAuditEventDetails(e, members);
+              const safeNarrative = desc.whatHappened.replace(/"/g, '""');
+              return `"${e.id}","${e.createdAt}","${e.actorRole || ''}","${desc.actorDisplayName}","${desc.actorEmail || ''}","${e.action}","${desc.title}","${desc.targetResourceType}","${desc.targetResourceId}","${e.outcome}","${safeNarrative}","${computeAuditSeal(e)}"`;
+            }),
           ].join('\n');
 
     const blob = new Blob([content], {
@@ -450,7 +761,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
     onNotify(
       `Exported ${filteredAuditEvents.length} Audit Events as ${format.toUpperCase()}`,
       'success',
-      `Included SHA-256 event integrity seals for ${activeOrgName}.`
+      `Included full action narratives, metadata, and SHA-256 event integrity seals for ${activeOrgName}.`
     );
   };
 
@@ -911,24 +1222,35 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
           {/* Usage Events Ledger Table */}
           {usageSummary.events && usageSummary.events.length > 0 && (
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-3">
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                Recent Metered `usage_events` Ledger ({usageSummary.events.length})
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  Recent Metered `usage_events` Ledger ({usageSummary.events.length})
+                </div>
+                <span className="text-[11px] font-mono text-slate-400">
+                  Cumulative Spend: <strong className="text-amber-300">${usageSummary.estimatedCostUsd}</strong>
+                </span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-slate-800 text-[11px] font-mono text-slate-400">
-                      <th className="py-2 pr-3">Provider / Model</th>
+                      <th className="py-2 pr-3">Timestamp</th>
+                      <th className="py-2 px-3">Provider / Model</th>
                       <th className="py-2 px-3">Source Attribution</th>
                       <th className="py-2 px-3">Prompt / Completion</th>
                       <th className="py-2 px-3">Total Tokens</th>
-                      <th className="py-2 pl-3 text-right">Microdollars</th>
+                      <th className="py-2 px-3">Tool Calls</th>
+                      <th className="py-2 px-3 text-right">Microdollars</th>
+                      <th className="py-2 pl-3 text-right">Trace</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-mono">
-                    {usageSummary.events.slice(0, 12).map((ev) => (
-                      <tr key={ev.id} className="text-slate-300">
-                        <td className="py-2 pr-3">
+                    {usageSummary.events.slice(0, 15).map((ev) => (
+                      <tr key={ev.id} className="text-slate-300 hover:bg-slate-800/30">
+                        <td className="py-2 pr-3 text-[11px] text-slate-400 whitespace-nowrap">
+                          {new Date(ev.createdAt).toLocaleTimeString()}
+                        </td>
+                        <td className="py-2 px-3">
                           <span className="text-white font-semibold">{ev.provider}</span>{' '}
                           <span className="text-slate-500">({ev.model})</span>
                         </td>
@@ -949,8 +1271,24 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                         <td className="py-2 px-3 text-white font-bold">
                           {ev.totalTokens}
                         </td>
-                        <td className="py-2 pl-3 text-right text-amber-300">
+                        <td className="py-2 px-3 text-indigo-300">
+                          {ev.toolCallsCount ?? 0}
+                        </td>
+                        <td className="py-2 px-3 text-right text-amber-300 font-bold">
                           {ev.estimatedCostMicrodollars} µ$
+                        </td>
+                        <td className="py-2 pl-3 text-right whitespace-nowrap">
+                          {ev.runId && onSelectRunToInspect ? (
+                            <button
+                              type="button"
+                              onClick={() => onSelectRunToInspect(ev.runId!)}
+                              className="text-[11px] text-indigo-400 hover:text-indigo-300"
+                            >
+                              Inspect Run ➔
+                            </button>
+                          ) : (
+                            <span className="text-slate-600">—</span>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1027,7 +1365,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                     Boundary Test 2: Last-Owner Demotion Safeguard (`409 Conflict`)
                   </div>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Attempts to remove or demote the sole organization `Owner`, proving the server prevents tenant lock-out.
+                    Attempts to remove the primary organization `Owner` as `Owner`, proving the server blocks tenant lock-out with `HTTP 409 LAST_OWNER_PROTECTED`.
                   </p>
                 </div>
                 <button
@@ -1036,7 +1374,15 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   onClick={() => {
                     const soleOwner = members.find((m) => m.role === 'owner');
                     if (soleOwner) {
-                      handleRemoveMember(soleOwner.userId, soleOwner.email);
+                      const ownerPersona =
+                        activeOrgSlug === 'beta-logistics'
+                          ? 'beta-owner'
+                          : 'acme-owner';
+                      void handleRemoveMember(
+                        soleOwner.userId,
+                        soleOwner.email,
+                        activeActorRole !== 'owner' ? ownerPersona : undefined
+                      );
                     }
                   }}
                   className="px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-mono font-bold shrink-0"
@@ -1091,9 +1437,9 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
               </div>
               <button
                 type="button"
-                disabled={savingMember}
+                disabled={savingMember || !newMemberEmail.trim()}
                 onClick={() => handleUpsertMember()}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all"
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold transition-all"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>{savingMember ? 'Saving...' : 'Invite / Update Role'}</span>
@@ -1107,46 +1453,81 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   <tr className="border-b border-slate-800 text-[11px] font-mono text-slate-400">
                     <th className="py-2 pr-3">Member</th>
                     <th className="py-2 px-3">Email</th>
-                    <th className="py-2 px-3">RBAC Role</th>
-                    <th className="py-2 pl-3 text-right">Actions</th>
+                    <th className="py-2 px-3">RBAC Role &amp; Permissions</th>
+                    <th className="py-2 pl-3 text-right">Governance Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {members.map((m) => (
-                    <tr key={m.userId} className="text-slate-200">
-                      <td className="py-2.5 pr-3 font-semibold text-white">
-                        {m.displayName}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-slate-400">
-                        {m.email}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold ${
-                            m.role === 'owner'
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                              : m.role === 'admin'
-                                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
-                                : m.role === 'developer'
-                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                  : 'bg-slate-800 text-slate-300 border border-slate-700'
-                          }`}
-                        >
-                          {m.role}
-                        </span>
-                      </td>
-                      <td className="py-2.5 pl-3 text-right">
-                        <button
-                          type="button"
-                          disabled={savingMember}
-                          onClick={() => handleRemoveMember(m.userId, m.email)}
-                          className="text-[11px] font-mono text-rose-400 hover:text-rose-300"
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {members.map((m) => {
+                    const permCount =
+                      m.role === 'owner'
+                        ? '28/28'
+                        : m.role === 'admin'
+                          ? '26/28'
+                          : m.role === 'developer'
+                            ? '18/28'
+                            : '9/28';
+                    return (
+                      <tr key={m.userId} className="text-slate-200 hover:bg-slate-800/30">
+                        <td className="py-2.5 pr-3 font-semibold text-white">
+                          <div className="flex items-center gap-2">
+                            <span>{m.displayName}</span>
+                            {m.role === 'owner' && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-[10px] font-mono text-amber-300">
+                                Protected Owner
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-slate-400">
+                          {m.email}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold ${
+                                m.role === 'owner'
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                  : m.role === 'admin'
+                                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                                    : m.role === 'developer'
+                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                      : 'bg-slate-800 text-slate-300 border border-slate-700'
+                              }`}
+                            >
+                              {m.role}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-500">
+                              ({permCount} perms)
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-2.5 pl-3 text-right">
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewMemberEmail(m.email);
+                                setNewMemberName(m.displayName);
+                                setNewMemberRole(m.role);
+                              }}
+                              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-mono text-indigo-300"
+                            >
+                              Load into Form
+                            </button>
+                            <button
+                              type="button"
+                              disabled={savingMember}
+                              onClick={() => handleRemoveMember(m.userId, m.email)}
+                              className="px-2 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-[11px] font-mono text-rose-300"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1161,14 +1542,30 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                <span>Append-Only Security Audit Ledger & Integrity Seals</span>
+                <span>Append-Only Security Audit Ledger &amp; Full Action Forensics</span>
               </h3>
               <p className="text-xs text-slate-400 mt-1">
-                Captures every `allowed` mutation and every `403` / `404` `denied` access attempt with deterministic SHA-256 event hashes.
+                Captures every `allowed` mutation and every `403` / `404` / `409` / `422` `denied` security event with full action narratives, structured `metadata_json`, and deterministic SHA-256 event seals.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setExpandAllAuditDetails((prev) => !prev)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${
+                  expandAllAuditDetails
+                    ? 'bg-indigo-600/25 border-indigo-500/50 text-indigo-200 font-bold'
+                    : 'bg-slate-950 hover:bg-slate-800 border-slate-700 text-slate-200'
+                }`}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>
+                  {expandAllAuditDetails
+                    ? 'Collapse Forensic Payloads'
+                    : 'Expand All Forensic Payloads'}
+                </span>
+              </button>
               <button
                 type="button"
                 onClick={() => handleExportAudit('json')}
@@ -1187,6 +1584,38 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
               </button>
             </div>
           </div>
+
+          {/* RBAC Notice when active persona is Developer or Viewer (audit.view restricted to Owner/Admin) */}
+          {activeActorRole !== 'owner' && activeActorRole !== 'admin' && (
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                  <Lock className="w-4 h-4" />
+                  <span>
+                    Zero-Trust RBAC Guard: `audit.view` Restricted to `Owner` &amp; `Admin` Roles
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300 mt-1">
+                  Active role <strong className="font-mono uppercase text-white">{activeActorRole}</strong> does not hold `audit.view` permission. Switch to <strong className="text-emerald-300">Owner</strong> or <strong className="text-indigo-300">Admin</strong> in the top persona selector to inspect all {activeOrgName} audit events, or click below to test the live `403 Forbidden` boundary.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await apiFetch('/api/v1/audit-events');
+                  const json = await res.json();
+                  onNotify(
+                    `RBAC Blocked audit.view (HTTP ${res.status})`,
+                    'error',
+                    `${json?.detail || json?.error?.message || 'Insufficient permissions for audit.view'} • Active Role: ${activeActorRole.toUpperCase()}`
+                  );
+                }}
+                className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-mono font-bold shrink-0"
+              >
+                Test Live 403 `audit.view`
+              </button>
+            </div>
+          )}
 
           {/* Filter & Search Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1213,13 +1642,13 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
               ))}
             </div>
 
-            <div className="relative flex-1 max-w-xs">
+            <div className="relative flex-1 max-w-md">
               <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
               <input
                 type="text"
                 value={auditSearch}
                 onChange={(e) => setAuditSearch(e.target.value)}
-                placeholder="Filter by action, role, or target..."
+                placeholder="Search action, actor, narrative, or metadata..."
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200"
               />
             </div>
@@ -1230,47 +1659,205 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
               <thead>
                 <tr className="border-b border-slate-800 text-[11px] font-mono text-slate-400">
                   <th className="py-2 pr-3">Timestamp</th>
-                  <th className="py-2 px-3">Role</th>
-                  <th className="py-2 px-3">Action</th>
-                  <th className="py-2 px-3">Target</th>
+                  <th className="py-2 px-3">Actor &amp; Role</th>
+                  <th className="py-2 px-3">Action &amp; Target</th>
+                  <th className="py-2 px-3">What Happened (Full Action Details)</th>
                   <th className="py-2 px-3">Outcome</th>
-                  <th className="py-2 pl-3 text-right">Event Integrity Seal</th>
+                  <th className="py-2 pl-3 text-right">Integrity Seal &amp; Forensics</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono">
-                {filteredAuditEvents.slice(0, 25).map((evt) => (
-                  <tr key={evt.id} className="text-slate-300">
-                    <td className="py-2 pr-3 text-[11px] text-slate-400">
-                      {new Date(evt.createdAt).toLocaleTimeString()}
-                    </td>
-                    <td className="py-2 px-3">
-                      <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-[10px] uppercase">
-                        {evt.actorRole || 'system'}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 font-semibold text-white">
-                      {evt.action}
-                    </td>
-                    <td className="py-2 px-3 text-slate-400">
-                      {evt.targetType ?? evt.resourceType ?? 'resource'}:
-                      {String(evt.targetId ?? evt.resourceId ?? 'workspace').slice(0, 14)}
-                    </td>
-                    <td className="py-2 px-3">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          evt.outcome === 'denied'
-                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                            : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                        }`}
-                      >
-                        {evt.outcome}
-                      </span>
-                    </td>
-                    <td className="py-2 pl-3 text-right text-[11px] text-indigo-300/80">
-                      {computeAuditSeal(evt)}
+                {filteredAuditEvents.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-slate-400 font-sans">
+                      {activeActorRole !== 'owner' && activeActorRole !== 'admin'
+                        ? `Audit Ledger hidden for role "${activeActorRole.toUpperCase()}" (requires audit.view permission).`
+                        : 'No audit events match the active filter.'}
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  filteredAuditEvents.slice(0, 40).map((evt) => {
+                    const desc = describeAuditEventDetails(evt, members);
+                    const seal = computeAuditSeal(evt);
+                    const isExpanded =
+                      expandAllAuditDetails || Boolean(expandedAuditIds[evt.id]);
+                    const hasMetadata =
+                      evt.metadata && Object.keys(evt.metadata).length > 0;
+
+                    return (
+                      <React.Fragment key={evt.id}>
+                        <tr className="text-slate-300 hover:bg-slate-800/35 align-top">
+                          <td className="py-3 pr-3 text-[11px] text-slate-400 whitespace-nowrap">
+                            <div>{new Date(evt.createdAt).toLocaleTimeString()}</div>
+                            <div className="text-[10px] text-slate-500">
+                              {new Date(evt.createdAt).toLocaleDateString()}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold ${
+                                  evt.actorRole === 'owner'
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    : evt.actorRole === 'admin'
+                                      ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                      : evt.actorRole === 'developer'
+                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                        : 'bg-slate-800 text-slate-200 border border-slate-700'
+                                }`}
+                              >
+                                {evt.actorRole || 'system'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] font-sans font-medium text-slate-200 mt-1">
+                              {desc.actorDisplayName}
+                            </div>
+                            {desc.actorEmail && (
+                              <div className="text-[10px] text-slate-500">
+                                {desc.actorEmail}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="font-sans font-bold text-white text-xs">
+                              {desc.title}
+                            </div>
+                            <div className="text-[11px] text-indigo-300 mt-0.5">
+                              {evt.action}
+                            </div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              {desc.targetResourceType}:{' '}
+                              <span className="text-slate-300">
+                                {desc.targetResourceId.slice(0, 18)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 max-w-md font-sans">
+                            <p className="text-xs text-slate-200 leading-relaxed">
+                              {desc.whatHappened}
+                            </p>
+                            {desc.badges.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1.5 mt-2 font-mono">
+                                {desc.badges.map((b, bIdx) => (
+                                  <span
+                                    key={`${evt.id}-b-${bIdx}`}
+                                    className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-[10px] text-slate-300"
+                                  >
+                                    <span className="text-slate-500">{b.label}:</span>{' '}
+                                    <span className="text-indigo-200">{b.value}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {desc.linkedRunId && onSelectRunToInspect && (
+                              <div className="mt-2 font-mono">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onSelectRunToInspect(desc.linkedRunId!)
+                                  }
+                                  className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold"
+                                >
+                                  Inspect Linked Run Trace ({desc.linkedRunId.slice(0, 8)}) ➔
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                evt.outcome === 'denied'
+                                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                  : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                              }`}
+                            >
+                              {evt.outcome}
+                            </span>
+                          </td>
+                          <td className="py-3 pl-3 text-right whitespace-nowrap">
+                            <div className="text-[11px] text-indigo-300/80">
+                              {seal}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedAuditIds((prev) => ({
+                                  ...prev,
+                                  [evt.id]: !prev[evt.id],
+                                }))
+                              }
+                              className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-950 hover:bg-slate-800 border border-slate-700 text-[10px] text-slate-200"
+                            >
+                              <span>
+                                {isExpanded ? 'Hide Record ▴' : 'Full Record ▾'}
+                              </span>
+                            </button>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="bg-slate-950/90 border-b border-slate-800">
+                            <td colSpan={6} className="p-3.5">
+                              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-[11px] font-mono">
+                                <div className="space-y-1.5 bg-slate-900/80 border border-slate-800 rounded-lg p-3">
+                                  <div className="text-xs font-bold text-white mb-1">
+                                    Immutable Audit Envelope
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500">Event ID:</span>{' '}
+                                    <span className="text-slate-200">{evt.id}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500">Timestamp (ISO):</span>{' '}
+                                    <span className="text-slate-200">{evt.createdAt}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500">Actor Identity:</span>{' '}
+                                    <span className="text-slate-200">
+                                      {desc.actorDisplayName}
+                                      {desc.actorEmail ? ` <${desc.actorEmail}>` : ''}{' '}
+                                      (Role: {(evt.actorRole || 'system').toUpperCase()} • UserID:{' '}
+                                      {evt.actorUserId || 'system'})
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500">Target Resource:</span>{' '}
+                                    <span className="text-indigo-300">
+                                      {desc.targetResourceType} / {desc.targetResourceId}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500">Cryptographic Seal:</span>{' '}
+                                    <span className="text-emerald-300">{seal}</span>
+                                  </div>
+                                </div>
+                                <div className="space-y-1.5 bg-slate-900/80 border border-slate-800 rounded-lg p-3">
+                                  <div className="text-xs font-bold text-white mb-1">
+                                    Structured `metadata_json` Payload
+                                  </div>
+                                  <pre className="text-[11px] text-emerald-300 overflow-x-auto whitespace-pre-wrap">
+                                    {hasMetadata
+                                      ? JSON.stringify(evt.metadata, null, 2)
+                                      : JSON.stringify(
+                                          {
+                                            action: evt.action,
+                                            outcome: evt.outcome,
+                                            targetType: desc.targetResourceType,
+                                            targetId: desc.targetResourceId,
+                                            summary: desc.whatHappened,
+                                          },
+                                          null,
+                                          2
+                                        )}
+                                  </pre>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -1287,7 +1874,8 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   Ordaris 28-Action Enterprise RBAC Policy Matrix
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Enforced centrally by `src/server/policies/authorization.ts` across all HTTP routes.
+                  Enforced centrally by `src/server/policies/authorization.ts` across all HTTP routes. Active Role:{' '}
+                  <strong className="text-indigo-300 uppercase font-mono">{activeActorRole}</strong>
                 </p>
               </div>
               <button
@@ -1304,27 +1892,35 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
                   <tr className="border-b border-slate-800 text-slate-400">
                     <th className="py-2">Permission Action</th>
                     <th className="py-2">Domain</th>
-                    <th className="py-2 text-center">Owner (28/28)</th>
-                    <th className="py-2 text-center">Admin (26/28)</th>
-                    <th className="py-2 text-center">Developer (18/28)</th>
-                    <th className="py-2 text-center">Viewer (9/28)</th>
+                    <th className={`py-2 text-center ${activeActorRole === 'owner' ? 'text-amber-300 font-bold' : ''}`}>
+                      Owner (28/28)
+                    </th>
+                    <th className={`py-2 text-center ${activeActorRole === 'admin' ? 'text-indigo-300 font-bold' : ''}`}>
+                      Admin (26/28)
+                    </th>
+                    <th className={`py-2 text-center ${activeActorRole === 'developer' ? 'text-emerald-300 font-bold' : ''}`}>
+                      Developer (18/28)
+                    </th>
+                    <th className={`py-2 text-center ${activeActorRole === 'viewer' ? 'text-sky-300 font-bold' : ''}`}>
+                      Viewer (9/28)
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {RBAC_28_ACTIONS.map((row) => (
-                    <tr key={row.action} className="text-slate-200">
+                    <tr key={row.action} className="text-slate-200 hover:bg-slate-800/30">
                       <td className="py-1.5 font-bold text-indigo-300">{row.action}</td>
                       <td className="py-1.5 text-slate-400">{row.category}</td>
-                      <td className="py-1.5 text-center text-emerald-400">
-                        {row.owner ? '✓' : '—'}
+                      <td className={`py-1.5 text-center ${row.owner ? 'text-emerald-400 font-bold' : 'text-rose-400/70'}`}>
+                        {row.owner ? '✓' : '✗'}
                       </td>
-                      <td className="py-1.5 text-center text-emerald-400">
+                      <td className={`py-1.5 text-center ${row.admin ? 'text-emerald-400 font-bold' : 'text-rose-400/70'}`}>
                         {row.admin ? '✓' : '✗'}
                       </td>
-                      <td className="py-1.5 text-center text-emerald-400">
+                      <td className={`py-1.5 text-center ${row.developer ? 'text-emerald-400 font-bold' : 'text-rose-400/70'}`}>
                         {row.developer ? '✓' : '✗'}
                       </td>
-                      <td className="py-1.5 text-center text-emerald-400">
+                      <td className={`py-1.5 text-center ${row.viewer ? 'text-emerald-400 font-bold' : 'text-rose-400/70'}`}>
                         {row.viewer ? '✓' : '✗'}
                       </td>
                     </tr>

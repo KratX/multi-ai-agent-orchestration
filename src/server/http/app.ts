@@ -70,6 +70,7 @@ import {
   listAuditEvents,
   publishWorkflowVersion,
   recordAuditEvent,
+  recordUsageEvent,
   startWorkflowRun,
   WorkflowResourceNotFoundError,
 } from '../modules/workflows/workflow-engine';
@@ -85,6 +86,7 @@ import {
 import type { ReadinessCheckResult } from '../../app/api/v1/health/route';
 import { RuntimeWorker } from '../worker/main';
 import { agents, agentVersions } from '../db/schema/agents';
+import { evalSuites } from '../db/schema/evals';
 import { knowledgeDocuments } from '../db/schema/knowledge';
 import { usageEvents, workflows, workflowVersions } from '../db/schema/workflows';
 import { WorkflowDagValidationError } from '../modules/workflows/dag-validator';
@@ -659,6 +661,20 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         draftSystemPrompt: body.draftSystemPrompt,
         draftToolAllowlist: body.draftToolAllowlist,
       });
+      await recordAuditEvent(db, {
+        organizationId: actor.organizationId,
+        actorUserId: actor.userId,
+        actorRole: actor.role,
+        action: 'agent.create',
+        resourceType: 'agent',
+        resourceId: created.id,
+        outcome: 'allowed',
+        metadata: {
+          name: created.name,
+          slug: created.slug,
+          toolAllowlist: created.draftToolAllowlist,
+        },
+      });
       res.status(201).json({ data: created });
     } catch (err) {
       next(err);
@@ -680,6 +696,20 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           organizationId: actor.organizationId,
           agentId: String(req.params.id),
           ...body,
+        });
+        await recordAuditEvent(db, {
+          organizationId: actor.organizationId,
+          actorUserId: actor.userId,
+          actorRole: actor.role,
+          action: 'agent.edit',
+          resourceType: 'agent',
+          resourceId: updated.id,
+          outcome: 'allowed',
+          metadata: {
+            name: updated.name,
+            slug: updated.slug,
+            toolAllowlist: updated.draftToolAllowlist,
+          },
         });
         res.status(200).json({ data: updated });
       } catch (err) {
@@ -710,6 +740,22 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           targetOrgId,
           String(req.params.id)
         );
+        await recordAuditEvent(db, {
+          organizationId: targetOrgId,
+          actorUserId: actor.userId,
+          actorRole: actor.role,
+          action: 'agent.publish',
+          resourceType: 'agent_version',
+          resourceId: published.version.id,
+          outcome: 'allowed',
+          metadata: {
+            agentId: published.agent.id,
+            agentName: published.agent.name,
+            versionNumber: published.version.versionNumber,
+            snapshotHash: published.version.snapshotHash,
+            toolAllowlist: published.version.toolAllowlist,
+          },
+        });
         res.status(201).json({ data: published });
       } catch (err) {
         next(err);
@@ -877,6 +923,48 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           targetOrgId,
           enqueued.run.id
         );
+
+        if (
+          !enqueued.deduplicated &&
+          body.processImmediately &&
+          env.NODE_ENV !== 'test'
+        ) {
+          await recordUsageEvent(db, {
+            organizationId: targetOrgId,
+            runId: details.run.id,
+            agentVersionId: details.run.agentVersionId,
+            providerMode:
+              details.run.usageSource === 'local' ? 'live' : 'mock',
+            modelId: effectiveAiEngine ?? 'gemini-free',
+            inputTokens: details.run.promptTokens ?? 0,
+            outputTokens: details.run.completionTokens ?? 0,
+            totalTokens: details.run.totalTokens ?? 0,
+            toolCallsCount: details.run.toolCallCount ?? 0,
+            isEstimated: details.run.usageSource !== 'local',
+          });
+        }
+
+        await recordAuditEvent(db, {
+          organizationId: targetOrgId,
+          actorUserId: actor.userId,
+          actorRole: actor.role,
+          action: 'run.start',
+          resourceType: 'agent_run',
+          resourceId: details.run.id,
+          outcome: 'allowed',
+          metadata: {
+            agentId: String(req.params.id),
+            agentVersionId: details.run.agentVersionId,
+            versionNumber: details.version?.versionNumber ?? null,
+            aiEngine: effectiveAiEngine ?? 'gemini-free',
+            resolutionTier,
+            status: details.run.status,
+            totalTokens: details.run.totalTokens ?? 0,
+            toolCallCount: details.run.toolCallCount ?? 0,
+            deduplicated: enqueued.deduplicated,
+            promptPreview: redaction.scrubbedPrompt.slice(0, 140),
+          },
+        });
 
         res.status(202).json({
           data: {
@@ -1192,6 +1280,22 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
             maxUploadBytes: env.MAX_UPLOAD_BYTES,
           }
         );
+
+        await recordAuditEvent(db, {
+          organizationId: actor.organizationId,
+          actorUserId: actor.userId,
+          actorRole: actor.role,
+          action: 'document.upload',
+          resourceType: 'knowledge_document',
+          resourceId: result.document.id,
+          outcome: 'allowed',
+          metadata: {
+            title: result.document.title,
+            sourceFilename: result.document.sourceFilename,
+            chunkCount: result.document.chunkCount,
+            contentBytes: result.document.byteSize,
+          },
+        });
 
         res.status(201).json({ data: result });
       } catch (err) {
@@ -1510,17 +1614,37 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           : undefined;
 
       if (!agentVersionId) {
+        const [suiteRow] = await db
+          .select()
+          .from(evalSuites)
+          .where(
+            and(
+              eq(evalSuites.id, suiteId),
+              eq(evalSuites.organizationId, actor.organizationId)
+            )
+          )
+          .limit(1);
+
         const candidateVersions = await db
           .select()
           .from(agentVersions)
-          .where(eq(agentVersions.organizationId, actor.organizationId))
+          .where(
+            suiteRow
+              ? and(
+                  eq(agentVersions.organizationId, actor.organizationId),
+                  eq(agentVersions.agentId, suiteRow.agentId)
+                )
+              : eq(agentVersions.organizationId, actor.organizationId)
+          )
           .orderBy(asc(agentVersions.versionNumber));
-        const fullToolVer = candidateVersions.find(
-          (v) =>
-            Array.isArray(v.toolAllowlist) &&
-            v.toolAllowlist.includes('calculator') &&
-            v.toolAllowlist.includes('knowledge_search')
-        );
+        const fullToolVer = [...candidateVersions]
+          .reverse()
+          .find(
+            (v) =>
+              Array.isArray(v.toolAllowlist) &&
+              v.toolAllowlist.includes('calculator') &&
+              v.toolAllowlist.includes('knowledge_search')
+          );
         agentVersionId =
           fullToolVer?.id ??
           candidateVersions[candidateVersions.length - 1]?.id;
@@ -1647,32 +1771,69 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         req as Request & { resolvedActor?: AuthenticatedActor | null }
       ).resolvedActor;
 
+      const alreadyAuditedByService =
+        req.path.endsWith('/decision') ||
+        req.path.endsWith('/execute') ||
+        req.path.includes('/evals/suites/') ||
+        req.path.includes('/eval-suites/');
+
       if (
         resolvedActor &&
-        !req.path.endsWith('/decision') &&
+        !alreadyAuditedByService &&
         (err instanceof AuthorizationError ||
           err instanceof TenantConstraintError ||
           err instanceof KnowledgeConstraintError)
       ) {
         try {
           const { db } = await contextProvider();
+          const isLastOwnerError =
+            err instanceof TenantConstraintError &&
+            err.code === 'LAST_OWNER_PROTECTED';
           const actionLabel =
             err instanceof AuthorizationError
               ? err.action
-              : `${req.method.toLowerCase()}:${req.path}`;
+              : isLastOwnerError
+                ? 'member.last_owner_safeguard'
+                : `${req.method.toLowerCase()}:${req.path}`;
+          const resourceTypeLabel = isLastOwnerError
+            ? 'membership'
+            : err instanceof AuthorizationError && req.path.includes('/members')
+              ? 'membership'
+              : err instanceof KnowledgeConstraintError
+                ? 'knowledge_document'
+                : 'http_endpoint';
+          const resourceIdLabel =
+            (typeof req.params?.userId === 'string' && req.params.userId) ||
+            (typeof req.params?.id === 'string' && req.params.id) ||
+            (typeof req.body?.email === 'string' && req.body.email) ||
+            req.path;
+
           await recordAuditEvent(db, {
             organizationId: resolvedActor.organizationId,
             actorUserId: resolvedActor.userId,
             actorRole: resolvedActor.role,
             action: actionLabel,
-            resourceType: 'http_endpoint',
-            resourceId: req.path,
+            resourceType: resourceTypeLabel,
+            resourceId: resourceIdLabel,
             outcome: 'denied',
             metadata: {
               statusCode: err.statusCode,
               code: err.code,
               message: err.message,
               method: req.method,
+              path: req.path,
+              ...(typeof req.body?.email === 'string'
+                ? { targetEmail: req.body.email }
+                : {}),
+              ...(typeof req.body?.displayName === 'string'
+                ? { targetDisplayName: req.body.displayName }
+                : {}),
+              ...(typeof req.body?.role === 'string'
+                ? { attemptedRole: req.body.role }
+                : {}),
+              ...(typeof req.params?.userId === 'string'
+                ? { targetUserId: req.params.userId }
+                : {}),
             },
           });
         } catch {

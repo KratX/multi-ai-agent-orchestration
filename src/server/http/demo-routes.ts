@@ -67,6 +67,7 @@ import {
   getOrganizationUsageSummary,
   listApprovalRequests,
   listAuditEvents,
+  recordAuditEvent,
   startWorkflowRun,
 } from '../modules/workflows/workflow-engine';
 import { compareEvalExperiments } from '../modules/evals/eval-harness';
@@ -75,7 +76,7 @@ import { agents, agentVersions } from '../db/schema/agents';
 import { knowledgeDocuments } from '../db/schema/knowledge';
 import { memberships, organizations, users } from '../db/schema/tenant';
 import { usageEvents, workflows, workflowVersions } from '../db/schema/workflows';
-import { evalCases, evalExperiments, evalSuites } from '../db/schema/evals';
+import { evalCaseResults, evalCases, evalExperiments, evalSuites } from '../db/schema/evals';
 
 /**
  * Ordaris Demo Governance, Session BYOK Vault, 2-Engine Arena, Workspace & Diagnostics HTTP Routes
@@ -511,6 +512,11 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
         .where(eq(evalExperiments.organizationId, requestedOrgId))
         .orderBy(asc(evalExperiments.createdAt));
 
+      const orgCaseResults = await db
+        .select()
+        .from(evalCaseResults)
+        .where(eq(evalCaseResults.organizationId, requestedOrgId));
+
       let evalComparison = null;
       if (orgExperiments.length >= 2) {
         try {
@@ -588,6 +594,7 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
           evalSuites: orgSuites,
           evalCases: orgCases,
           evalExperiments: orgExperiments,
+          evalCaseResults: orgCaseResults,
           evalComparison,
           usageSummary,
           usageEvents: recentUsageEvents,
@@ -798,6 +805,21 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
           throw unauthenticatedError();
         }
         const report = await verifyMultiTenantIsolation(db);
+        await recordAuditEvent(db, {
+          organizationId: actor.organizationId,
+          actorUserId: actor.userId,
+          actorRole: actor.role,
+          action: 'security.isolation_verified',
+          resourceType: 'organization',
+          resourceId: actor.organizationId,
+          outcome: 'allowed',
+          metadata: {
+            passedChecks: report.passedChecks ?? report.passedCount,
+            totalChecks: report.totalChecks ?? report.checksCount,
+            verifiedAt: report.verifiedAt,
+            probes: report.checks.map((c) => `${c.id}:${c.httpStatus}`),
+          },
+        });
         res.status(200).json({ data: report });
       } catch (err) {
         next(err);

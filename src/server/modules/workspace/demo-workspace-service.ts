@@ -482,13 +482,55 @@ export async function inviteOrUpdateWorkspaceMember(
   }
 ): Promise<OrganizationMemberDetail[]> {
   const cleanEmail = input.email.trim().toLowerCase();
-  const authSubject = `demo_member_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`;
+  const [existingByEmail] = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, cleanEmail))
+    .limit(1);
+
+  const authSubject =
+    existingByEmail?.authSubject ??
+    `demo_member_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`;
 
   const targetUser = await ensureUser(db, {
     authSubject,
     email: cleanEmail,
-    displayName: input.displayName.trim(),
+    displayName: input.displayName.trim() || existingByEmail?.displayName || cleanEmail,
   });
+
+  const [existingMembership] = await db
+    .select()
+    .from(memberships)
+    .where(
+      and(
+        eq(memberships.organizationId, input.organizationId),
+        eq(memberships.userId, targetUser.id)
+      )
+    )
+    .limit(1);
+
+  // Protect primary seeded owner from being demoted even if a secondary owner was invited
+  if (
+    existingMembership?.role === 'owner' &&
+    input.role !== 'owner' &&
+    (targetUser.authSubject === 'seed_acme_owner' ||
+      targetUser.authSubject === 'seed_beta_owner')
+  ) {
+    requireAuthorization(actor, 'member.manage_owners', {
+      organizationId: input.organizationId,
+      resourceType: 'membership',
+      resourceId: targetUser.id,
+      targetMemberRole: 'owner',
+    });
+    const { TenantConstraintError } = await import(
+      '../../db/repositories/tenant-repository'
+    );
+    throw new TenantConstraintError(
+      'LAST_OWNER_PROTECTED',
+      'Cannot demote the primary owner of an organization. Promote another member or retain owner role.',
+      409
+    );
+  }
 
   await upsertMembership(db, actor, {
     organizationId: input.organizationId,
@@ -504,7 +546,13 @@ export async function inviteOrUpdateWorkspaceMember(
     resourceType: 'membership',
     resourceId: targetUser.id,
     outcome: 'allowed',
-    metadata: { email: cleanEmail, role: input.role },
+    metadata: {
+      email: cleanEmail,
+      displayName: targetUser.displayName,
+      role: input.role,
+      previousRole: existingMembership?.role ?? null,
+      operation: existingMembership ? 'role_updated' : 'member_invited',
+    },
   });
 
   return listOrganizationMembers(db, actor, input.organizationId);
@@ -519,6 +567,45 @@ export async function removeWorkspaceMemberForActor(
   organizationId: string,
   targetUserId: string
 ): Promise<OrganizationMemberDetail[]> {
+  const [targetUser] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, targetUserId))
+    .limit(1);
+
+  const [existingMembership] = await db
+    .select()
+    .from(memberships)
+    .where(
+      and(
+        eq(memberships.organizationId, organizationId),
+        eq(memberships.userId, targetUserId)
+      )
+    )
+    .limit(1);
+
+  // Protect primary seeded owner from removal even if another member was granted owner
+  if (
+    existingMembership?.role === 'owner' &&
+    (targetUser?.authSubject === 'seed_acme_owner' ||
+      targetUser?.authSubject === 'seed_beta_owner')
+  ) {
+    requireAuthorization(actor, 'member.manage_owners', {
+      organizationId,
+      resourceType: 'membership',
+      resourceId: targetUserId,
+      targetMemberRole: 'owner',
+    });
+    const { TenantConstraintError } = await import(
+      '../../db/repositories/tenant-repository'
+    );
+    throw new TenantConstraintError(
+      'LAST_OWNER_PROTECTED',
+      'Cannot remove the last owner of an organization.',
+      409
+    );
+  }
+
   await removeMembership(db, actor, organizationId, targetUserId);
   await recordAuditEvent(db, {
     organizationId,
@@ -528,6 +615,11 @@ export async function removeWorkspaceMemberForActor(
     resourceType: 'membership',
     resourceId: targetUserId,
     outcome: 'allowed',
+    metadata: {
+      email: targetUser?.email ?? null,
+      displayName: targetUser?.displayName ?? null,
+      removedRole: existingMembership?.role ?? null,
+    },
   });
   return listOrganizationMembers(db, actor, organizationId);
 }

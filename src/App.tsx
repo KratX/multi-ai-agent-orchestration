@@ -642,6 +642,9 @@ export function App() {
       const rawSuites = Array.isArray(d.evalSuites) ? d.evalSuites : [];
       const rawCases = Array.isArray(d.evalCases) ? d.evalCases : [];
       const rawExps = Array.isArray(d.evalExperiments) ? d.evalExperiments : [];
+      const rawCaseResults = Array.isArray(d.evalCaseResults)
+        ? d.evalCaseResults
+        : [];
       setEvalSuites(
         rawSuites.map((s: { id: string; name: string; description?: string }) => {
           const suiteCases = rawCases.filter(
@@ -650,18 +653,28 @@ export function App() {
           const suiteExps = rawExps.filter(
             (e: { suiteId: string }) => e.suiteId === s.id
           );
+          // If the user triggered a new interactive eval run (suiteExps.length > 2), show the most recent run;
+          // on initial seed (v1 100% baseline + v2 50% regression demo), default to the 100% baseline while exposing the v1 vs v2 regression diff
           const latestExp =
-            suiteExps.length > 0
-              ? [...suiteExps].sort(
-                  (a, b) => Number(b.passRate ?? 0) - Number(a.passRate ?? 0)
-                )[0]
-              : null;
+            suiteExps.length > 2
+              ? suiteExps[suiteExps.length - 1]
+              : suiteExps.length > 0
+                ? [...suiteExps].sort(
+                    (a, b) => Number(b.passRate ?? 0) - Number(a.passRate ?? 0)
+                  )[0]
+                : null;
           const passedCount = Number(
             latestExp?.passedCases ?? suiteCases.length
           );
           const rawPassRate = Number(latestExp?.passRate ?? 1);
           const normalizedPassRate =
             rawPassRate > 1 ? rawPassRate / 100 : rawPassRate;
+          const expCaseResults = latestExp
+            ? rawCaseResults.filter(
+                (r: { experimentId?: string }) => r.experimentId === latestExp.id
+              )
+            : [];
+
           return {
             id: s.id,
             name: s.name,
@@ -687,6 +700,25 @@ export function App() {
                       },
                       idx: number
                     ) => {
+                      const matchedResult = expCaseResults.find(
+                        (r: { caseId?: string }) => r.caseId === c.id
+                      ) as
+                        | {
+                            runId?: string;
+                            passed?: boolean;
+                            score?: number;
+                            actualOutput?: string;
+                            latencyMs?: number;
+                            totalTokens?: number;
+                            assertionResultsJson?: Array<{
+                              type: string;
+                              passed: boolean;
+                              message?: string;
+                              reason?: string;
+                            }>;
+                          }
+                        | undefined;
+
                       const assertions = Array.isArray(c.assertionsJson)
                         ? c.assertionsJson
                         : [];
@@ -719,10 +751,23 @@ export function App() {
                               })
                               .join(' • ')
                           : String(c.assertionType ?? 'verified');
-                      const casePassed = idx < passedCount;
-                      const detailStr = casePassed
-                        ? `Grader [${assertionTypesLabel}] verified (${expectedVal}).`
-                        : `Assertion [${assertionTypesLabel}] failed for target (${expectedVal}).`;
+                      const casePassed =
+                        matchedResult?.passed !== undefined
+                          ? Boolean(matchedResult.passed)
+                          : idx < passedCount;
+                      const realMessages = Array.isArray(
+                        matchedResult?.assertionResultsJson
+                      )
+                        ? matchedResult.assertionResultsJson
+                            .map((ar) => ar.message || ar.reason || ar.type)
+                            .filter(Boolean)
+                            .join(' • ')
+                        : '';
+                      const detailStr =
+                        realMessages ||
+                        (casePassed
+                          ? `Grader [${assertionTypesLabel}] verified (${expectedVal}).`
+                          : `Assertion [${assertionTypesLabel}] failed for target (${expectedVal}).`);
                       const caseDisplayTitle = c.name
                         ? `${c.name}: "${c.inputPrompt}"`
                         : c.inputPrompt;
@@ -733,9 +778,26 @@ export function App() {
                         assertionType: assertionTypesLabel,
                         expectedValue: expectedVal,
                         passed: casePassed,
-                        score: casePassed ? 1 : 0,
+                        score:
+                          matchedResult?.score !== undefined
+                            ? Number(matchedResult.score)
+                            : casePassed
+                              ? 1
+                              : 0,
+                        runId: matchedResult?.runId
+                          ? String(matchedResult.runId)
+                          : undefined,
                         details: detailStr,
                         reason: detailStr,
+                        assertionResults: Array.isArray(
+                          matchedResult?.assertionResultsJson
+                        )
+                          ? matchedResult.assertionResultsJson.map((ar) => ({
+                              type: ar.type,
+                              passed: ar.passed,
+                              reason: ar.message || ar.reason,
+                            }))
+                          : undefined,
                       };
                     }
                   ),
@@ -745,26 +807,67 @@ export function App() {
         })
       );
 
-      // Normalize Usage Summary & Events
+      // Normalize Usage Summary & Events with microdollar precision accounting
       const rawUsage = d.usageSummary ?? {};
       const rawUsageEvents = Array.isArray(d.usageEvents) ? d.usageEvents : [];
       const normalizedUsageEvents = rawUsageEvents.map(
         (e: Record<string, unknown>) => {
           const isLive =
             e.usageSource === 'live_api' || e.providerMode === 'live';
-          const modelStr = String(e.model ?? e.modelId ?? 'ordaris-mock-v1');
+          const modelStr = String(e.model ?? e.modelId ?? 'gemini-2.5-flash');
+          const lowerModel = modelStr.toLowerCase();
           const providerStr = String(
             e.provider ??
-              (modelStr.includes('gemini')
+              (lowerModel.includes('gemini')
                 ? 'gemini'
-                : modelStr.includes('gpt')
+                : lowerModel.includes('gpt') || lowerModel.includes('openai')
                   ? 'openai'
-                  : modelStr.includes('claude')
+                  : lowerModel.includes('claude') || lowerModel.includes('anthropic')
                     ? 'anthropic'
-                    : isLive
-                      ? 'live'
-                      : 'mock')
+                    : lowerModel.includes('grok') || lowerModel.includes('xai')
+                      ? 'xai'
+                      : lowerModel.includes('openrouter') || lowerModel.includes('llama')
+                        ? 'openrouter'
+                        : isLive
+                          ? 'gemini'
+                          : 'ordaris-sim')
           );
+          const promptTok = Number(e.promptTokens ?? e.inputTokens ?? 0);
+          const completionTok = Number(e.completionTokens ?? e.outputTokens ?? 0);
+          const totalTok = Number(e.totalTokens ?? promptTok + completionTok);
+
+          // Microdollar rate calculation: 1 microdollar (µ$) = $0.000001 = $1.00 per 1M tokens
+          let microdollars = Number(e.estimatedCostMicrodollars ?? 0);
+          if (microdollars <= 0 && totalTok > 0) {
+            if (providerStr === 'anthropic') {
+              microdollars = Math.max(
+                1,
+                Math.round(promptTok * 0.8 + completionTok * 4.0)
+              );
+            } else if (providerStr === 'openai') {
+              microdollars = Math.max(
+                1,
+                Math.round(promptTok * 0.3 + completionTok * 1.2)
+              );
+            } else if (providerStr === 'xai') {
+              microdollars = Math.max(
+                1,
+                Math.round(promptTok * 0.3 + completionTok * 0.5)
+              );
+            } else if (providerStr === 'openrouter') {
+              microdollars = Math.max(
+                1,
+                Math.round(promptTok * 0.1 + completionTok * 0.2)
+              );
+            } else {
+              // Gemini 3 Flash / Baseline reference rate ($0.15/1M input, $0.60/1M output)
+              microdollars = Math.max(
+                1,
+                Math.round(promptTok * 0.15 + completionTok * 0.6)
+              );
+            }
+          }
+
           return {
             id: String(e.id ?? ''),
             runId: (e.runId as string | null) ?? null,
@@ -773,10 +876,11 @@ export function App() {
             usageSource: (isLive ? 'live_api' : 'mock_estimate') as
               | 'live_api'
               | 'mock_estimate',
-            promptTokens: Number(e.promptTokens ?? e.inputTokens ?? 0),
-            completionTokens: Number(e.completionTokens ?? e.outputTokens ?? 0),
-            totalTokens: Number(e.totalTokens ?? 0),
-            estimatedCostMicrodollars: Number(e.estimatedCostMicrodollars ?? 0),
+            promptTokens: promptTok,
+            completionTokens: completionTok,
+            totalTokens: totalTok,
+            toolCallsCount: Number(e.toolCallsCount ?? 0),
+            estimatedCostMicrodollars: microdollars,
             createdAt: String(e.createdAt ?? new Date().toISOString()),
           };
         }
@@ -812,11 +916,18 @@ export function App() {
         rawUsage.totalTokens !== undefined
           ? Number(rawUsage.totalTokens)
           : liveTokens + mockTokens;
+      const computedEventsMicro = normalizedUsageEvents.reduce(
+        (acc: number, e: { estimatedCostMicrodollars: number }) =>
+          acc + e.estimatedCostMicrodollars,
+        0
+      );
       const totalCostMicro =
-        rawUsage.totalCostMicrodollars !== undefined
+        rawUsage.totalCostMicrodollars !== undefined &&
+        Number(rawUsage.totalCostMicrodollars) > 0
           ? Number(rawUsage.totalCostMicrodollars)
-          : Number(rawUsage.live?.estimatedCostMicrodollars ?? 0) +
-            Number(rawUsage.mock?.estimatedCostMicrodollars ?? 0);
+          : computedEventsMicro > 0
+            ? computedEventsMicro
+            : Math.max(1, Math.round(totalTok * 0.35));
       const totalRunsCount =
         rawUsage.totalRuns !== undefined
           ? Number(rawUsage.totalRuns)
@@ -835,17 +946,25 @@ export function App() {
 
       const rawAudit = Array.isArray(d.auditEvents) ? d.auditEvents : [];
       setAuditEvents(
-        rawAudit.map((evt: Record<string, unknown>) => ({
-          id: String(evt.id ?? ''),
-          actorUserId: (evt.actorUserId as string | null) ?? null,
-          actorRole: (evt.actorRole as string | null) ?? null,
-          action: String(evt.action ?? ''),
-          targetType: String(evt.targetType ?? evt.resourceType ?? 'resource'),
-          targetId: String(evt.targetId ?? evt.resourceId ?? 'workspace'),
-          outcome: String(evt.outcome ?? 'allowed'),
-          metadata: (evt.metadata as Record<string, unknown> | undefined) ?? undefined,
-          createdAt: String(evt.createdAt ?? new Date().toISOString()),
-        }))
+        rawAudit.map((evt: Record<string, unknown>) => {
+          const rawMeta = (evt.metadata ?? evt.metadataJson) as
+            | Record<string, unknown>
+            | undefined;
+          return {
+            id: String(evt.id ?? ''),
+            actorUserId: (evt.actorUserId as string | null) ?? null,
+            actorRole: (evt.actorRole as string | null) ?? null,
+            action: String(evt.action ?? ''),
+            targetType: String(evt.targetType ?? evt.resourceType ?? 'resource'),
+            targetId: String(evt.targetId ?? evt.resourceId ?? 'workspace'),
+            resourceType: String(evt.resourceType ?? evt.targetType ?? 'resource'),
+            resourceId: String(evt.resourceId ?? evt.targetId ?? 'workspace'),
+            outcome: String(evt.outcome ?? 'allowed'),
+            metadata:
+              rawMeta && typeof rawMeta === 'object' ? rawMeta : undefined,
+            createdAt: String(evt.createdAt ?? new Date().toISOString()),
+          };
+        })
       );
       setMembers(Array.isArray(d.members) ? d.members : []);
       setByokProviders(Array.isArray(d.byokProviders) ? d.byokProviders : []);
@@ -2672,8 +2791,13 @@ export function App() {
             onWorkspaceRefresh={fetchWorkspace}
             onNotify={notify}
             onSelectRunToInspect={(runId) => {
-              setInspectedRunId(runId);
+              void inspectRunById(runId);
               setActiveTab('studio');
+              notify(
+                'Opened Run Trace in Agent Studio',
+                'info',
+                `Inspecting Run ID: ${runId}`
+              );
             }}
           />
         )}
@@ -2695,8 +2819,13 @@ export function App() {
             onWorkspaceRefresh={fetchWorkspace}
             onNotify={notify}
             onSelectRunToInspect={(runId) => {
-              setInspectedRunId(runId);
+              void inspectRunById(runId);
               setActiveTab('studio');
+              notify(
+                'Opened Run Trace in Agent Studio',
+                'info',
+                `Inspecting Run ID: ${runId}`
+              );
             }}
           />
         )}
