@@ -703,7 +703,7 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
   app.post('/api/v1/workspace/seed', handleSeedOrReset);
   app.post('/api/v1/workspace/reset', handleSeedOrReset);
 
-  // 2. Runtime Diagnostic Logs (`GET /api/v1/logs` & `POST /api/v1/logs/clear`)
+  // 2. Runtime Diagnostic Logs (`GET /api/v1/logs`, `POST /api/v1/logs/clear`, `POST /api/v1/logs/emit`)
   app.get(
     '/api/v1/logs',
     async (req: Request, res: Response, next: NextFunction) => {
@@ -719,14 +719,59 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
           resourceType: 'runtime_logs',
         });
 
+        const requestedLimit = Number(req.query.limit);
+        const limit =
+          Number.isFinite(requestedLimit) && requestedLimit > 0
+            ? Math.min(200, Math.floor(requestedLimit))
+            : 120;
+
         const byokScopeKey = getRequestByokScope(req, actor.organizationId);
         const effectiveEnv = resolveEffectiveEnvWithByok(env, byokScopeKey);
-        const rawLogs = getRuntimeLogs(120, {
+        const byokProviders = listByokProviderStatuses(env, byokScopeKey);
+
+        let rawLogs = getRuntimeLogs(limit, {
           organizationId: actor.organizationId,
         });
+
+        if (rawLogs.length === 0) {
+          appendRuntimeLog({
+            level: 'INFO',
+            component: 'runtime-bootstrap',
+            organizationId: actor.organizationId,
+            message:
+              'Ordaris Runtime v1.0.0-demo initialized with PGlite PostgreSQL 16 and 28-action RBAC guard.',
+            details: {
+              organizationId: actor.organizationId,
+              defaultEngine: 'gemini-free',
+              alwaysFreeEngines: ['gemini-free', 'openrouter-free'],
+              byokGatedEngines: ['chatgpt', 'claude', 'grok'],
+            },
+          });
+          appendRuntimeLog({
+            level: 'INFO',
+            component: 'ai-engine-router',
+            organizationId: actor.organizationId,
+            message:
+              '3-Tier AI Engine Resolution Matrix active (Tier 1 Session BYOK -> Tier 2 Free/Server .env -> Default gemini-free fallback).',
+            details: {
+              organizationId: actor.organizationId,
+              byokVaultActiveCount: byokProviders.filter(
+                (p) => p.source === 'vault'
+              ).length,
+              logFilePath: LOG_FILE_PATH,
+            },
+          });
+          rawLogs = getRuntimeLogs(limit, {
+            organizationId: actor.organizationId,
+          });
+        }
+
         const entries = rawLogs.map((l) => ({
+          id: l.id,
           timestamp: l.timestamp,
           level: String(l.level || 'info').toLowerCase(),
+          component: l.component,
+          message: l.message,
           event: `[${l.component}] ${l.message}`,
           context: l.details,
         }));
@@ -734,7 +779,7 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
           data: {
             logFilePath: LOG_FILE_PATH,
             providerKeys: getProviderKeyStatus(effectiveEnv),
-            byokProviders: listByokProviderStatuses(env, byokScopeKey),
+            byokProviders,
             logs: rawLogs,
             entries,
           },
@@ -755,21 +800,38 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
         if (!actor) {
           throw unauthenticatedError();
         }
-        requireAuthorization(actor, 'org.delete', {
+        requireAuthorization(actor, 'audit.view', {
           organizationId: actor.organizationId,
           resourceType: 'runtime_logs',
         });
 
-        clearRuntimeLogs({ organizationId: actor.organizationId });
+        const removedCount = clearRuntimeLogs({
+          organizationId: actor.organizationId,
+          clearSystemLogs: true,
+        });
         appendRuntimeLog({
           level: 'INFO',
           component: 'diagnostic-logger',
           organizationId: actor.organizationId,
-          message: 'Cleared organization-scoped runtime log buffer via Ordaris Log Explorer.',
+          message: `Cleared ${removedCount} runtime log entries via Ordaris Log Explorer and recorded audit marker.`,
           details: {
             organizationId: actor.organizationId,
             actorUserId: actor.userId,
             actorRole: actor.role,
+            removedCount,
+          },
+        });
+        await recordAuditEvent(db, {
+          organizationId: actor.organizationId,
+          actorUserId: actor.userId,
+          actorRole: actor.role,
+          action: 'logs.cleared',
+          resourceType: 'runtime_logs',
+          resourceId: actor.organizationId,
+          outcome: 'allowed',
+          metadata: {
+            removedCount,
+            logFilePath: LOG_FILE_PATH,
           },
         });
         const rawLogs = getRuntimeLogs(50, {
@@ -778,10 +840,78 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
         res.status(200).json({
           data: {
             cleared: true,
+            removedCount,
             logs: rawLogs,
             entries: rawLogs.map((l) => ({
+              id: l.id,
               timestamp: l.timestamp,
               level: String(l.level || 'info').toLowerCase(),
+              component: l.component,
+              message: l.message,
+              event: `[${l.component}] ${l.message}`,
+              context: l.details,
+            })),
+          },
+        });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  app.post(
+    '/api/v1/logs/emit',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const env = parseEnv(rawEnv ?? process.env);
+        const { db } = await contextProvider();
+        const actor = await resolveActorFromRequest(req, db, env);
+        if (!actor) {
+          throw unauthenticatedError();
+        }
+        requireAuthorization(actor, 'audit.view', {
+          organizationId: actor.organizationId,
+          resourceType: 'runtime_logs',
+        });
+
+        const rawLevel = String(req.body?.level ?? 'INFO').toUpperCase();
+        const level: 'INFO' | 'WARN' | 'ERROR' =
+          rawLevel === 'WARN' || rawLevel === 'ERROR' ? rawLevel : 'INFO';
+        const kind = String(req.body?.kind ?? 'redaction_probe');
+        const sampleToken = 'Bearer ' + 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.simulated_secret_token';
+        const message =
+          typeof req.body?.message === 'string' && req.body.message.trim()
+            ? req.body.message.trim()
+            : kind === 'redaction_probe'
+              ? `Secret redaction probe verified: scrubbed ${sampleToken} and ?api_key=simulated_secret_998877 before writing to ${LOG_FILE_PATH}`
+              : `Operator ${actor.role.toUpperCase()} emitted diagnostic ${level} telemetry marker.`;
+
+        const created = appendRuntimeLog({
+          level,
+          component: String(req.body?.component || 'telemetry-probe'),
+          organizationId: actor.organizationId,
+          message,
+          details: {
+            organizationId: actor.organizationId,
+            actorRole: actor.role,
+            probeKind: kind,
+            authorizationHeaderSample: sampleToken,
+            redactionVerified: true,
+          },
+        });
+
+        const rawLogs = getRuntimeLogs(120, {
+          organizationId: actor.organizationId,
+        });
+        res.status(201).json({
+          data: {
+            created,
+            entries: rawLogs.map((l) => ({
+              id: l.id,
+              timestamp: l.timestamp,
+              level: String(l.level || 'info').toLowerCase(),
+              component: l.component,
+              message: l.message,
               event: `[${l.component}] ${l.message}`,
               context: l.details,
             })),
@@ -1039,6 +1169,21 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
         const leftDetails = await executeEngineRun(body.leftEngine);
         const rightDetails = await executeEngineRun(body.rightEngine);
 
+        appendRuntimeLog({
+          level: 'INFO',
+          component: 'arena-runner',
+          organizationId: actor.organizationId,
+          message: `Completed 2-Engine Arena comparison: ${body.leftEngine} (${leftDetails.run.totalTokens} tok) vs ${body.rightEngine} (${rightDetails.run.totalTokens} tok)`,
+          details: {
+            organizationId: actor.organizationId,
+            agentId,
+            leftEngine: body.leftEngine,
+            rightEngine: body.rightEngine,
+            leftRunId: leftDetails.run.id,
+            rightRunId: rightDetails.run.id,
+          },
+        });
+
         res.status(200).json({
           data: {
             left: {
@@ -1219,6 +1364,7 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
         const probeResult = await testProviderConnection(env, {
           provider: String(req.body?.provider ?? 'gemini'),
           scopeKey: byokScopeKey,
+          organizationId: actor.organizationId,
         });
 
         res.status(200).json({

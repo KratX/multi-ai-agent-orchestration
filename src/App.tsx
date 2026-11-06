@@ -967,7 +967,39 @@ export function App() {
         })
       );
       setMembers(Array.isArray(d.members) ? d.members : []);
-      setByokProviders(Array.isArray(d.byokProviders) ? d.byokProviders : []);
+      const rawByok = Array.isArray(d.byokProviders) ? d.byokProviders : [];
+      setByokProviders(
+        rawByok.map((p: Record<string, unknown>) => {
+          const verifyStatus =
+            p.lastVerifyStatus === 'ok' || p.lastVerifyStatus === 'failed'
+              ? p.lastVerifyStatus
+              : p.lastVerificationOk === true
+                ? 'ok'
+                : p.lastVerificationOk === false
+                  ? 'failed'
+                  : null;
+          const verifyMessage =
+            typeof p.lastVerifyMessage === 'string'
+              ? p.lastVerifyMessage
+              : typeof p.lastVerificationMessage === 'string'
+                ? p.lastVerificationMessage
+                : null;
+          return {
+            ...(p as unknown as ByokProviderStatusItem),
+            lastVerifyStatus: verifyStatus,
+            lastVerifyMessage: verifyMessage,
+            lastVerificationOk:
+              typeof p.lastVerificationOk === 'boolean'
+                ? p.lastVerificationOk
+                : verifyStatus === 'ok'
+                  ? true
+                  : verifyStatus === 'failed'
+                    ? false
+                    : null,
+            lastVerificationMessage: verifyMessage,
+          };
+        })
+      );
     } catch (err) {
       notify(
         err instanceof Error ? err.message : 'Network error loading workspace',
@@ -2833,6 +2865,9 @@ export function App() {
         {activeTab === 'engines' && (
           <OrdarisEngineMatrixAndLogsPanel
             sessionId={sessionId}
+            activeActorId={activeActorId}
+            activeActorRole={activePersona.role}
+            activeOrgName={activePersona.orgName}
             providers={byokProviders}
             selectedEngine={selectedEngine}
             onSelectEngine={(eng) => {
@@ -2842,6 +2877,7 @@ export function App() {
               setRequiredByokPrompt(null);
               setByokDrawerOpen(true);
             }}
+            onWorkspaceRefresh={fetchWorkspace}
             apiFetch={apiFetch}
             onNotify={notify}
           />
@@ -2884,6 +2920,7 @@ export function App() {
         providers={byokProviders}
         onRefreshWorkspace={fetchWorkspace}
         onNotify={notify}
+        apiFetch={apiFetch}
         requiredEnginePrompt={requiredByokPrompt}
         onClearRequiredPrompt={() => setRequiredByokPrompt(null)}
         onProviderKeySaved={(providerId, hasKey) => {

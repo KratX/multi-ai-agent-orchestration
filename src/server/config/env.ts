@@ -169,7 +169,10 @@ export function getRuntimeLogs(
   return filtered.slice(0, limit);
 }
 
-export function clearRuntimeLogs(options?: { organizationId?: string }): number {
+export function clearRuntimeLogs(options?: {
+  organizationId?: string;
+  clearSystemLogs?: boolean;
+}): number {
   const targetOrgId = options?.organizationId?.trim();
   if (!targetOrgId) {
     const count = runtimeLogBuffer.length;
@@ -185,7 +188,7 @@ export function clearRuntimeLogs(options?: { organizationId?: string }): number 
       (typeof entry.details?.organizationId === 'string'
         ? entry.details.organizationId
         : null);
-    if (entryOrgId === targetOrgId) {
+    if (entryOrgId === targetOrgId || (options?.clearSystemLogs && !entryOrgId)) {
       runtimeLogBuffer.splice(i, 1);
       removedCount += 1;
     }

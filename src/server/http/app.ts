@@ -966,6 +966,23 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
           },
         });
 
+        appendRuntimeLog({
+          level: 'INFO',
+          component: 'agent-runner',
+          organizationId: targetOrgId,
+          message: `Completed governed agent run ${details.run.id.slice(0, 8)} on ${effectiveAiEngine ?? 'gemini-free'} (${details.run.totalTokens ?? 0} tokens, ${details.run.toolCallCount ?? 0} tool calls)`,
+          details: {
+            organizationId: targetOrgId,
+            runId: details.run.id,
+            agentId: String(req.params.id),
+            aiEngine: effectiveAiEngine ?? 'gemini-free',
+            resolutionTier,
+            status: details.run.status,
+            totalTokens: details.run.totalTokens ?? 0,
+            toolCallCount: details.run.toolCallCount ?? 0,
+          },
+        });
+
         res.status(202).json({
           data: {
             run: details.run,
@@ -1576,6 +1593,25 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
         modelProvider: activeProvider,
       });
 
+      appendRuntimeLog({
+        level:
+          started.run.status === 'waiting_approval' ? 'WARN' : 'INFO',
+        component: 'workflow-dag',
+        organizationId: actor.organizationId,
+        message:
+          started.run.status === 'waiting_approval'
+            ? `Workflow run ${started.run.id.slice(0, 8)} paused at HITL gate "${started.pendingApproval?.nodeId ?? 'approval-gate-1'}" awaiting human reviewer decision.`
+            : `Workflow run ${started.run.id.slice(0, 8)} completed DAG execution (${started.run.status}).`,
+        details: {
+          organizationId: actor.organizationId,
+          runId: started.run.id,
+          workflowId,
+          status: started.run.status,
+          pausedAtNodeId: started.pendingApproval?.nodeId ?? null,
+          approvalRequestId: started.pendingApproval?.id ?? null,
+        },
+      });
+
       res.status(201).json({
         data: {
           ...started,
@@ -1695,6 +1731,21 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
       );
 
       const rawPassRate = Number(result.experiment.passRate ?? 1);
+      appendRuntimeLog({
+        level: 'INFO',
+        component: 'eval-harness',
+        organizationId: actor.organizationId,
+        message: `Completed evaluation benchmark suite ${suiteId.slice(0, 8)} on ${requestedEngine}: ${result.experiment.passedCases}/${result.experiment.totalCases} golden cases passed (${result.experiment.passRate}%)`,
+        details: {
+          organizationId: actor.organizationId,
+          suiteId,
+          experimentId: result.experiment.id,
+          engine: requestedEngine,
+          passedCases: result.experiment.passedCases,
+          totalCases: result.experiment.totalCases,
+          passRate: result.experiment.passRate,
+        },
+      });
       res.status(201).json({
         data: {
           ...result,
@@ -1834,6 +1885,22 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
               ...(typeof req.params?.userId === 'string'
                 ? { targetUserId: req.params.userId }
                 : {}),
+            },
+          });
+          appendRuntimeLog({
+            level: 'WARN',
+            component: isLastOwnerError
+              ? 'last-owner-safeguard'
+              : 'rbac-policy-guard',
+            organizationId: resolvedActor.organizationId,
+            message: `Blocked ${req.method} ${req.path} for role ${resolvedActor.role.toUpperCase()} (HTTP ${err.statusCode} ${err.code}): ${err.message}`,
+            details: {
+              organizationId: resolvedActor.organizationId,
+              actorRole: resolvedActor.role,
+              action: actionLabel,
+              statusCode: err.statusCode,
+              code: err.code,
+              path: req.path,
             },
           });
         } catch {

@@ -67,6 +67,8 @@ export interface PublicByokProviderStatus {
   lastVerifiedAt: string | null;
   lastVerifyStatus: 'verified' | 'failed' | null;
   lastVerifyMessage: string | null;
+  lastVerificationOk: boolean | null;
+  lastVerificationMessage: string | null;
 }
 
 export const BYOK_PROVIDER_METADATA: Record<
@@ -129,12 +131,28 @@ const inMemoryScopes = new Map<
   Partial<Record<ByokProviderId, EncryptedSecretRecord>>
 >();
 
+// Pure in-RAM provider verification log so probe results persist even for built-in free engines or unconfigured BYOK engines
+const inMemoryVerificationHistory = new Map<
+  string,
+  Partial<
+    Record<
+      ByokProviderId,
+      {
+        lastVerifiedAt: string;
+        lastVerifyStatus: 'verified' | 'failed';
+        lastVerifyMessage: string;
+      }
+    >
+  >
+>();
+
 /**
  * Rotates the in-RAM 256-bit CSPRNG master key and purges any existing ciphertexts.
  */
 export function rotateEphemeralMasterKey(): void {
   ephemeralMasterKey = crypto.randomBytes(32);
   inMemoryScopes.clear();
+  inMemoryVerificationHistory.clear();
 }
 
 /**
@@ -431,17 +449,25 @@ export function saveByokProviderKey(input: {
     if (Object.keys(scopeRecords).length === 0) {
       inMemoryScopes.delete(scope);
     }
+    const verScope = inMemoryVerificationHistory.get(scope);
+    if (verScope) {
+      delete verScope[input.provider];
+    }
     const meta = BYOK_PROVIDER_METADATA[input.provider];
+    const isAlwaysFree =
+      input.provider === 'gemini' || input.provider === 'openrouter';
     return {
       provider: input.provider,
       ...meta,
       configured: false,
       configuredInVault: false,
       configuredInEnv: false,
-      effectiveActive: false,
+      effectiveActive: isAlwaysFree,
       source: 'none',
       resolutionTier: 'deterministic_fallback',
-      resolutionLabel: 'Tier 3: Deterministic Simulation Fallback',
+      resolutionLabel: isAlwaysFree
+        ? 'Free • Always Available (Default: gemini-free)'
+        : 'No Longer Free • Requires Key in Session BYOK Vault',
       maskedPreview: null,
       updatedAt: null,
       expiresAt: null,
@@ -449,6 +475,8 @@ export function saveByokProviderKey(input: {
       lastVerifiedAt: null,
       lastVerifyStatus: null,
       lastVerifyMessage: null,
+      lastVerificationOk: null,
+      lastVerificationMessage: null,
     };
   }
 
@@ -470,6 +498,10 @@ export function saveByokProviderKey(input: {
   };
 
   scopeRecords[input.provider] = record;
+  const verScope = inMemoryVerificationHistory.get(scope);
+  if (verScope) {
+    delete verScope[input.provider];
+  }
   const meta = BYOK_PROVIDER_METADATA[input.provider];
 
   return {
@@ -489,6 +521,8 @@ export function saveByokProviderKey(input: {
     lastVerifiedAt: null,
     lastVerifyStatus: null,
     lastVerifyMessage: null,
+    lastVerificationOk: null,
+    lastVerificationMessage: null,
   };
 }
 
@@ -508,12 +542,14 @@ export function clearByokScope(
       }
     }
     inMemoryScopes.clear();
+    inMemoryVerificationHistory.clear();
   } else {
     const targetRecords = inMemoryScopes.get(scopeKey);
     if (targetRecords) {
       clearedCount += Object.keys(targetRecords).length;
       inMemoryScopes.delete(scopeKey);
     }
+    inMemoryVerificationHistory.delete(scopeKey);
   }
 
   return { clearedCount, scopeKey };
@@ -530,6 +566,21 @@ export function recordByokVerificationResult(input: {
   const nowMs = input.nowMs ?? Date.now();
   sweepExpiredByokKeys(nowMs);
 
+  const isoNow = new Date(nowMs).toISOString();
+  const statusVal: 'verified' | 'failed' = input.verified ? 'verified' : 'failed';
+  const safeMsg = redactSecretsFromText(input.message).slice(0, 240);
+
+  let verScope = inMemoryVerificationHistory.get(scope);
+  if (!verScope) {
+    verScope = {};
+    inMemoryVerificationHistory.set(scope, verScope);
+  }
+  verScope[input.provider] = {
+    lastVerifiedAt: isoNow,
+    lastVerifyStatus: statusVal,
+    lastVerifyMessage: safeMsg,
+  };
+
   const existing =
     inMemoryScopes.get(scope)?.[input.provider] ??
     (scope.startsWith('session:')
@@ -537,9 +588,9 @@ export function recordByokVerificationResult(input: {
       : inMemoryScopes.get('global')?.[input.provider]);
 
   if (existing) {
-    existing.lastVerifiedAt = new Date(nowMs).toISOString();
-    existing.lastVerifyStatus = input.verified ? 'verified' : 'failed';
-    existing.lastVerifyMessage = redactSecretsFromText(input.message).slice(0, 240);
+    existing.lastVerifiedAt = isoNow;
+    existing.lastVerifyStatus = statusVal;
+    existing.lastVerifyMessage = safeMsg;
     existing.lastAccessedAtMs = nowMs;
     existing.expiresAtMs = nowMs + existing.ttlMs;
   }
@@ -626,12 +677,15 @@ export function listByokProviderStatuses(
     'grok',
   ];
 
+  const verHistory = inMemoryVerificationHistory.get(scopeKey);
+
   return providers.map((provider) => {
     const rec = scopedRecords[provider];
     const hasVault = Boolean(rec && decryptSecret(rec) !== null);
     const envRaw = envMap[provider];
     const hasEnv = isCleanEnvKey(envRaw);
     const meta = BYOK_PROVIDER_METADATA[provider];
+    const isAlwaysFree = provider === 'gemini' || provider === 'openrouter';
 
     const resolutionTier: ByokResolutionTier = hasVault
       ? 'session_byok'
@@ -644,7 +698,29 @@ export function listByokProviderStatuses(
         ? 'Tier 1: Session BYOK Key (AES-256-GCM in RAM)'
         : resolutionTier === 'server_env'
           ? 'Tier 2: Server Default Key (.env)'
-          : 'Tier 3: Deterministic Simulation Fallback';
+          : isAlwaysFree
+            ? 'Free • Always Available (Default: gemini-free)'
+            : 'No Longer Free • Requires Key in Session BYOK Vault';
+
+    const verRec = verHistory?.[provider];
+    const lastVerifiedAt =
+      (hasVault ? rec?.lastVerifiedAt : null) ??
+      verRec?.lastVerifiedAt ??
+      null;
+    const lastVerifyStatus =
+      (hasVault ? rec?.lastVerifyStatus : null) ??
+      verRec?.lastVerifyStatus ??
+      null;
+    const lastVerifyMessage =
+      (hasVault ? rec?.lastVerifyMessage : null) ??
+      verRec?.lastVerifyMessage ??
+      null;
+    const lastVerificationOk =
+      lastVerifyStatus === 'verified'
+        ? true
+        : lastVerifyStatus === 'failed'
+          ? false
+          : null;
 
     return {
       provider,
@@ -652,7 +728,7 @@ export function listByokProviderStatuses(
       configured: hasVault || hasEnv,
       configuredInVault: hasVault,
       configuredInEnv: hasEnv,
-      effectiveActive: hasVault || hasEnv,
+      effectiveActive: hasVault || hasEnv || isAlwaysFree,
       source: hasVault ? 'vault' : hasEnv ? 'env' : 'none',
       resolutionTier,
       resolutionLabel,
@@ -666,9 +742,11 @@ export function listByokProviderStatuses(
       ttlSecondsRemaining: hasVault
         ? Math.max(0, Math.floor((rec!.expiresAtMs - nowMs) / 1000))
         : null,
-      lastVerifiedAt: hasVault ? (rec!.lastVerifiedAt ?? null) : null,
-      lastVerifyStatus: hasVault ? (rec!.lastVerifyStatus ?? null) : null,
-      lastVerifyMessage: hasVault ? (rec!.lastVerifyMessage ?? null) : null,
+      lastVerifiedAt,
+      lastVerifyStatus,
+      lastVerifyMessage,
+      lastVerificationOk,
+      lastVerificationMessage: lastVerifyMessage,
     };
   });
 }

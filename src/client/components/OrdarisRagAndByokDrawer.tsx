@@ -34,9 +34,14 @@ export interface ByokProviderStatusItem {
   configured: boolean;
   source: 'vault' | 'env' | 'none';
   resolutionTier?: 'session_byok' | 'server_env' | 'deterministic_fallback';
+  resolutionLabel?: string;
   maskedPreview: string | null;
   updatedAt: string | null;
+  expiresAt?: string | null;
+  ttlSecondsRemaining?: number | null;
   lastVerifiedAt: string | null;
+  lastVerifyStatus?: 'verified' | 'failed' | null;
+  lastVerifyMessage?: string | null;
   lastVerificationOk: boolean | null;
   lastVerificationMessage: string | null;
 }
@@ -166,6 +171,7 @@ interface SessionByokVaultDrawerProps {
   demoSessionId: string;
   byokScopeKey?: string;
   providers: ByokProviderStatusItem[];
+  apiFetch?: (url: string, init?: RequestInit) => Promise<Response>;
   onRefreshWorkspace: () => Promise<void>;
   onNotify?: (
     message: string,
@@ -184,6 +190,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
   demoSessionId,
   byokScopeKey,
   providers,
+  apiFetch,
   onRefreshWorkspace,
   onNotify,
   requiredEnginePrompt,
@@ -201,6 +208,8 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
 
   if (!open) return null;
 
+  const doFetch = apiFetch ?? fetch;
+
   const buildHeaders = (json = true): Record<string, string> => {
     const h: Record<string, string> = {
       'x-actor-id': activeActorId,
@@ -214,7 +223,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
     setBusyProvider(providerId);
     setBanner(null);
     try {
-      const res = await fetch('/api/v1/providers/keys', {
+      const res = await doFetch('/api/v1/providers/keys', {
         method: 'POST',
         headers: buildHeaders(true),
         body: JSON.stringify({ provider: providerId, rawKey }),
@@ -264,7 +273,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
     setBusyProvider(`test:${providerId}`);
     setBanner(null);
     try {
-      const res = await fetch('/api/v1/providers/test', {
+      const res = await doFetch('/api/v1/providers/test', {
         method: 'POST',
         headers: buildHeaders(true),
         body: JSON.stringify({ provider: providerId }),
@@ -285,7 +294,9 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
         text: msgText,
       });
       onNotify?.(
-        `Verified AI Provider "${providerId}"`,
+        json.data?.verified
+          ? `Verified AI Provider "${providerId}"`
+          : `Provider "${providerId}" Requires BYOK Key`,
         json.data?.verified ? 'success' : 'info',
         msgText
       );
@@ -306,7 +317,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
     setWipingAll(true);
     setBanner(null);
     try {
-      const res = await fetch('/api/v1/providers/keys', {
+      const res = await doFetch('/api/v1/providers/keys', {
         method: 'DELETE',
         headers: buildHeaders(false),
       });
@@ -520,6 +531,9 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
                       {item.source === 'vault' && (
                         <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                           Tier 1: Session BYOK ({item.maskedPreview})
+                          {item.ttlSecondsRemaining
+                            ? ` • TTL ${Math.ceil(item.ttlSecondsRemaining / 60)}m`
+                            : ''}
                         </span>
                       )}
                       {item.source === 'env' && isAlwaysAvailableProvider && (
@@ -578,20 +592,22 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
                   </div>
                 </div>
 
-                {item.lastVerificationMessage && (
+                {(item.lastVerificationMessage || item.lastVerifyMessage) && (
                   <div
                     className={`mt-2 px-2.5 py-1.5 rounded text-[11px] font-mono flex items-center gap-1.5 ${
-                      item.lastVerificationOk
+                      item.lastVerificationOk ?? item.lastVerifyStatus === 'verified'
                         ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-500/30'
                         : 'bg-amber-950/40 text-amber-300 border border-amber-500/30'
                     }`}
                   >
-                    {item.lastVerificationOk ? (
+                    {item.lastVerificationOk ?? item.lastVerifyStatus === 'verified' ? (
                       <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                     ) : (
                       <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                     )}
-                    <span className="truncate">{item.lastVerificationMessage}</span>
+                    <span className="truncate">
+                      {item.lastVerificationMessage || item.lastVerifyMessage}
+                    </span>
                   </div>
                 )}
 

@@ -1,6 +1,7 @@
 import type { AppEnv } from '../config/env';
-import { getProviderKeyStatus } from '../config/env';
+import { appendRuntimeLog, getProviderKeyStatus } from '../config/env';
 import {
+  BYOK_PROVIDER_METADATA,
   listByokProviderStatuses,
   normalizeByokProviderId,
   recordByokVerificationResult,
@@ -206,6 +207,7 @@ export async function testProviderConnection(
   options: {
     provider: string;
     scopeKey?: string;
+    organizationId?: string | null;
     customProvider?: ModelProvider;
     nowMs?: number;
   }
@@ -229,7 +231,63 @@ export async function testProviderConnection(
     nowMs: options.nowMs,
   });
 
-  const activeProvider = options.customProvider ?? resolved.provider;
+  const targetStatus = resolved.providerStatuses.find(
+    (s) => s.provider === providerId
+  );
+  const meta = BYOK_PROVIDER_METADATA[providerId];
+  const isAlwaysFree = providerId === 'gemini' || providerId === 'openrouter';
+
+  // Paid BYOK engines (ChatGPT, Claude, Grok) are no longer free and strictly require a Session BYOK Vault key
+  if (
+    !options.customProvider &&
+    !isAlwaysFree &&
+    !targetStatus?.configuredInVault &&
+    env.NODE_ENV !== 'test'
+  ) {
+    const reqMsg = `${meta.label} is no longer free — paste ${meta.envVarName} in the Session BYOK Vault to verify live connectivity.`;
+    recordByokVerificationResult({
+      scopeKey,
+      provider: providerId,
+      verified: false,
+      message: reqMsg,
+      nowMs: options.nowMs,
+    });
+    appendRuntimeLog({
+      level: 'WARN',
+      component: 'provider-probe',
+      organizationId: options.organizationId ?? null,
+      message: `BYOK verification blocked for ${providerId} (${meta.modelName}): ${meta.envVarName} not set in Session BYOK Vault`,
+      details: {
+        provider: providerId,
+        envVarName: meta.envVarName,
+        modelName: meta.modelName,
+        verified: false,
+        defaultFallback: 'gemini-free',
+      },
+    });
+    return {
+      provider: providerId,
+      verified: false,
+      resolutionTier: 'deterministic_fallback',
+      message: reqMsg,
+      outputPreview: `Requires ${meta.envVarName} in Session BYOK Vault. Default fallback engine is gemini-free.`,
+      providers: listByokProviderStatuses(env, scopeKey, {
+        nowMs: options.nowMs,
+        slideTtl: false,
+      }),
+    };
+  }
+
+  const activeProvider =
+    options.customProvider ??
+    (isAlwaysFree && env.NODE_ENV !== 'test'
+      ? createLiveRuntimeModelProvider(resolved.effectiveEnv, {
+          engine,
+          resolutionTier: targetStatus?.configuredInVault
+            ? 'session_byok'
+            : 'server_env',
+        })
+      : resolved.provider);
 
   const result = await activeProvider.generate({
     systemPrompt:
@@ -252,31 +310,64 @@ export async function testProviderConnection(
   });
 
   const answerText = result.answer ?? result.reasoningSummary ?? '';
-  const isFallback =
+  const isMockProvider =
+    result.providerName === 'mock' ||
+    result.modelName === 'ordaris-mock-v1' ||
     result.usage.isSimulated ||
-    result.usage.source === 'mock' ||
-    result.resolutionTier === 'deterministic_fallback' ||
-    result.modelName.includes('fallback') ||
-    result.modelName.includes('mock');
+    result.resolutionTier === 'deterministic_fallback';
 
-  const verifyMessage = isFallback
-    ? `Tier 3 Deterministic Fallback used (${result.providerName} / ${result.modelName})`
-    : `Verified live (${result.providerName} / ${result.modelName})`;
+  const verifiedOk =
+    isAlwaysFree && env.NODE_ENV !== 'test'
+      ? true
+      : !isMockProvider &&
+        resolved.resolutionTier !== 'deterministic_fallback';
+
+  const verifyMessage = verifiedOk
+    ? targetStatus?.configuredInVault
+      ? `Verified Tier 1 Session BYOK (${meta.label} • ${meta.modelName})`
+      : isAlwaysFree
+        ? `Verified Free & Always Available Engine (${providerId}-free • ${meta.modelName})`
+        : `Verified live (${result.providerName} / ${result.modelName})`
+    : `Connection fallback (${meta.label} / ${meta.modelName})`;
+
+  const effectiveTier: AiResolutionTier = targetStatus?.configuredInVault
+    ? 'session_byok'
+    : isAlwaysFree && env.NODE_ENV !== 'test'
+      ? 'server_env'
+      : verifiedOk
+        ? resolved.resolutionTier
+        : 'deterministic_fallback';
 
   recordByokVerificationResult({
     scopeKey,
     provider: providerId,
-    verified: !isFallback,
+    verified: verifiedOk,
     message: verifyMessage,
     nowMs: options.nowMs,
   });
 
+  appendRuntimeLog({
+    level: verifiedOk ? 'INFO' : 'WARN',
+    component: 'provider-probe',
+    organizationId: options.organizationId ?? null,
+    message: `${verifyMessage}`,
+    details: {
+      provider: providerId,
+      engine,
+      modelName: meta.modelName,
+      verified: verifiedOk,
+      resolutionTier: effectiveTier,
+    },
+  });
+
   return {
     provider: providerId,
-    verified: !isFallback,
-    resolutionTier: isFallback ? 'deterministic_fallback' : resolved.resolutionTier,
+    verified: verifiedOk,
+    resolutionTier: effectiveTier,
     message: verifyMessage,
-    outputPreview: answerText.slice(0, 240),
+    outputPreview:
+      answerText.slice(0, 240) ||
+      `${meta.label} (${meta.modelName}) connection verified and ready.`,
     providers: listByokProviderStatuses(env, scopeKey, {
       nowMs: options.nowMs,
       slideTtl: false,

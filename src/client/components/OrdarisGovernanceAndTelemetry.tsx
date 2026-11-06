@@ -407,6 +407,11 @@ export function describeAuditEventDetails(
       'Checks Passed',
       `${meta.passedChecks ?? 4}/${meta.totalChecks ?? 4}`
     );
+  } else if (action === 'logs.cleared') {
+    title = 'Structured Runtime Logs Cleared';
+    whatHappened = `Cleared ${meta.removedCount ?? 0} structured runtime log entries from ${String(meta.logFilePath ?? '.local/logs/ordaris-runtime.log')} by ${actorDisplayName} (${roleUpper}).`;
+    pushBadge('Cleared Entries', meta.removedCount ?? 0);
+    pushBadge('Log File', meta.logFilePath ?? '.local/logs/ordaris-runtime.log');
   } else if (action === 'org.data_exported' || action === 'org.data_imported') {
     title =
       action === 'org.data_exported'
@@ -2007,18 +2012,25 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
  * ============================================================================ */
 
 interface ServerLogEntry {
+  id?: string;
   timestamp: string;
   level: 'info' | 'warn' | 'error' | string;
+  component?: string;
+  message?: string;
   event: string;
   context?: Record<string, unknown>;
 }
 
 interface OrdarisEngineMatrixAndLogsProps {
   sessionId: string;
+  activeActorId?: string;
+  activeActorRole?: 'owner' | 'admin' | 'developer' | 'viewer';
+  activeOrgName?: string;
   providers: ByokProviderStatusItem[];
   selectedEngine: string;
   onSelectEngine: (engine: string) => void;
   onOpenByokDrawer: () => void;
+  onWorkspaceRefresh?: () => Promise<void>;
   apiFetch: (url: string, init?: RequestInit) => Promise<Response>;
   onNotify: (
     message: string,
@@ -2029,10 +2041,14 @@ interface OrdarisEngineMatrixAndLogsProps {
 
 export const OrdarisEngineMatrixAndLogsPanel: React.FC<OrdarisEngineMatrixAndLogsProps> = ({
   sessionId,
+  activeActorId,
+  activeActorRole = 'owner',
+  activeOrgName = 'Acme Cyber Defense',
   providers,
   selectedEngine,
   onSelectEngine,
   onOpenByokDrawer,
+  onWorkspaceRefresh,
   apiFetch,
   onNotify,
 }) => {
@@ -2041,33 +2057,176 @@ export const OrdarisEngineMatrixAndLogsPanel: React.FC<OrdarisEngineMatrixAndLog
   const [logLevelFilter, setLogLevelFilter] = useState<'all' | 'info' | 'warn' | 'error'>('all');
   const [logSearch, setLogSearch] = useState<string>('');
   const [loadingLogs, setLoadingLogs] = useState<boolean>(false);
+  const [logsForbiddenReason, setLogsForbiddenReason] = useState<string | null>(null);
+  const [testingProviderId, setTestingProviderId] = useState<string | null>(null);
+  const [emittingProbe, setEmittingProbe] = useState<boolean>(false);
+  const [expandedLogKeys, setExpandedLogKeys] = useState<Record<string, boolean>>({});
+  const [expandAllLogs, setExpandAllLogs] = useState<boolean>(false);
   const [showEnvModal, setShowEnvModal] = useState<boolean>(false);
   const [copiedEnv, setCopiedEnv] = useState<boolean>(false);
 
-  const fetchServerLogs = useCallback(async () => {
-    setLoadingLogs(true);
-    try {
-      const res = await apiFetch('/api/v1/logs?limit=120');
-      const json = await res.json();
-      if (res.ok && json.data) {
-        setLogs(json.data.entries || []);
-        if (json.data.logFilePath) setLogFilePath(json.data.logFilePath);
+  const fetchServerLogs = useCallback(
+    async (showForbiddenToast = false) => {
+      setLoadingLogs(true);
+      try {
+        const res = await apiFetch('/api/v1/logs?limit=120');
+        const json = await res.json();
+        if (!res.ok) {
+          const reason =
+            json?.detail ||
+            json?.error?.message ||
+            `Role "${activeActorRole.toUpperCase()}" lacks audit.view permission to inspect runtime logs.`;
+          setLogs([]);
+          setLogsForbiddenReason(reason);
+          if (showForbiddenToast) {
+            onNotify(
+              `Runtime Log Access Blocked (HTTP ${res.status})`,
+              'error',
+              `${reason} • Logged to Security Audit Ledger.`
+            );
+            await onWorkspaceRefresh?.();
+          }
+          return;
+        }
+        setLogsForbiddenReason(null);
+        if (json.data) {
+          setLogs(Array.isArray(json.data.entries) ? json.data.entries : []);
+          if (json.data.logFilePath) setLogFilePath(json.data.logFilePath);
+        }
+      } finally {
+        setLoadingLogs(false);
       }
-    } finally {
-      setLoadingLogs(false);
-    }
-  }, [apiFetch]);
+    },
+    [apiFetch, activeActorRole, onNotify, onWorkspaceRefresh]
+  );
 
   useEffect(() => {
-    fetchServerLogs();
-  }, [fetchServerLogs]);
+    void fetchServerLogs(false);
+  }, [fetchServerLogs, activeActorId, selectedEngine]);
+
+  const handleProbeEngineConnection = async (providerId: string) => {
+    setTestingProviderId(providerId);
+    try {
+      const res = await apiFetch('/api/v1/providers/test', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: providerId }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        onNotify(
+          `Provider Probe Failed (${providerId})`,
+          'error',
+          json?.detail || json?.error?.message || 'Verification failed'
+        );
+        return;
+      }
+      const verified = Boolean(json.data?.verified);
+      const msg = String(json.data?.message ?? 'Tested');
+      const preview = String(json.data?.outputPreview ?? '');
+      onNotify(
+        verified
+          ? `Verified AI Engine "${providerId}"`
+          : `Engine "${providerId}" Requires Session BYOK Key`,
+        verified ? 'success' : 'info',
+        `${msg}${preview ? ` • "${preview}"` : ''}`
+      );
+      await onWorkspaceRefresh?.();
+      await fetchServerLogs(false);
+    } finally {
+      setTestingProviderId(null);
+    }
+  };
+
+  const handleEmitRedactionProbe = async () => {
+    setEmittingProbe(true);
+    try {
+      const res = await apiFetch('/api/v1/logs/emit', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          level: 'INFO',
+          kind: 'redaction_probe',
+          component: 'secret-redactor',
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        onNotify(
+          `Emit Telemetry Probe Blocked (HTTP ${res.status})`,
+          'error',
+          `${json?.detail || 'Requires audit.view permission'} • Logged to Security Audit Ledger.`
+        );
+        await onWorkspaceRefresh?.();
+        return;
+      }
+      if (Array.isArray(json.data?.entries)) {
+        setLogs(json.data.entries);
+      } else {
+        await fetchServerLogs(false);
+      }
+      onNotify(
+        'Emitted Secret-Redaction Telemetry Probe',
+        'success',
+        `Verified automatic scrubbing of Bearer tokens and ?api_key= parameters in ${logFilePath}.`
+      );
+    } finally {
+      setEmittingProbe(false);
+    }
+  };
 
   const handleClearLogs = async () => {
     const res = await apiFetch('/api/v1/logs/clear', { method: 'POST' });
-    if (res.ok) {
-      await fetchServerLogs();
-      onNotify('Cleared structured runtime logs and recorded audit marker.', 'info');
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      onNotify(
+        `Clear Logs Blocked (HTTP ${res.status})`,
+        'error',
+        `${json?.detail || 'Requires audit.view permission'} • Active Role: ${activeActorRole.toUpperCase()} • Logged to Security Audit Ledger.`
+      );
+      await onWorkspaceRefresh?.();
+      return;
     }
+    await fetchServerLogs(false);
+    await onWorkspaceRefresh?.();
+    onNotify(
+      `Cleared ${json?.data?.removedCount ?? 0} Runtime Log Entries`,
+      'info',
+      `Purged ${activeOrgName} log buffer and recorded "logs.cleared" event in the Security Audit Ledger.`
+    );
+  };
+
+  const handleExportLogsJsonl = () => {
+    const lines = filteredLogs
+      .map((entry) =>
+        JSON.stringify({
+          timestamp: entry.timestamp,
+          level: entry.level.toUpperCase(),
+          component: entry.component || 'runtime',
+          event: entry.event,
+          context: entry.context ?? {},
+        })
+      )
+      .join('\n');
+    const blob = new Blob([lines], { type: 'application/x-ndjson' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ordaris-runtime-logs-${Date.now()}.jsonl`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onNotify(
+      `Exported ${filteredLogs.length} Log Entries (.jsonl)`,
+      'success',
+      `Downloaded sanitized JSONL runtime log bundle from ${logFilePath}.`
+    );
+  };
+
+  const levelCounts = {
+    all: logs.length,
+    info: logs.filter((l) => l.level.toLowerCase() === 'info').length,
+    warn: logs.filter((l) => l.level.toLowerCase() === 'warn').length,
+    error: logs.filter((l) => l.level.toLowerCase() === 'error').length,
   };
 
   const filteredLogs = logs.filter((entry) => {
@@ -2078,9 +2237,15 @@ export const OrdarisEngineMatrixAndLogsPanel: React.FC<OrdarisEngineMatrixAndLog
     const q = logSearch.toLowerCase();
     return (
       entry.event.toLowerCase().includes(q) ||
+      (entry.component && entry.component.toLowerCase().includes(q)) ||
       JSON.stringify(entry.context || {}).toLowerCase().includes(q)
     );
   });
+
+  const sessionVaultCount = providers.filter((p) => p.source === 'vault').length;
+  const serverEnvCount = providers.filter(
+    (p) => (p.provider === 'gemini' || p.provider === 'openrouter') && p.source === 'env'
+  ).length;
 
   const envTemplateText = `# Ordaris Runtime v1.0.0-demo Local Environment Configuration
 NODE_ENV=development
@@ -2105,13 +2270,37 @@ XAI_API_KEY=`;
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               <Cpu className="w-5 h-5 text-indigo-400" />
               <span>3-Tier AI Engine Resolution Matrix &amp; Session Isolation</span>
+              <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                Active: {selectedEngine}
+              </span>
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              <code className="text-emerald-300">gemini-free</code> and <code className="text-emerald-300">openrouter-free</code> are always free (with <code className="text-emerald-300">gemini-free</code> as default fallback). <strong>ChatGPT, Claude, and Grok are no longer free</strong> — choosing any of them requires an API key and opens the <strong>Session BYOK Vault</strong>.
+              <code className="text-emerald-300">gemini-free</code> and{' '}
+              <code className="text-emerald-300">openrouter-free</code> are always free (with{' '}
+              <code className="text-emerald-300">gemini-free</code> as default fallback).{' '}
+              <strong>ChatGPT, Claude, and Grok are no longer free</strong> — choosing any of them requires an API key and opens the{' '}
+              <strong>Session BYOK Vault</strong>.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onSelectEngine('auto')}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-mono transition ${
+                selectedEngine === 'auto'
+                  ? 'bg-indigo-600 border-indigo-400 text-white font-bold'
+                  : 'bg-slate-950 hover:bg-slate-800 border-slate-700 text-slate-200'
+              }`}
+            >
+              <Cpu className="w-3.5 h-3.5 text-indigo-300" />
+              <span>
+                {selectedEngine === 'auto'
+                  ? '✓ Auto Smart Router (Default: gemini-free)'
+                  : 'Use Auto Smart Router'}
+              </span>
+            </button>
+
             <button
               type="button"
               onClick={() => setShowEnvModal(true)}
@@ -2127,8 +2316,51 @@ XAI_API_KEY=`;
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
             >
               <Key className="w-3.5 h-3.5" />
-              <span>Open Session BYOK Key Vault</span>
+              <span>Open Session BYOK Key Vault ({sessionVaultCount}/5)</span>
             </button>
+          </div>
+        </div>
+
+        {/* 3-Tier Architecture Summary Strip */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/30">
+            <div className="flex items-center justify-between font-bold text-emerald-300">
+              <span>Tier 1: Session BYOK Vault (RAM)</span>
+              <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-emerald-500/20">
+                {sessionVaultCount} configured
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-1">
+              AES-256-GCM encrypted in server memory under session scope{' '}
+              <code className="text-emerald-200 font-mono">{sessionId.slice(0, 14)}…</code> with a 2-hour sliding TTL.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-xl bg-indigo-950/25 border border-indigo-500/30">
+            <div className="flex items-center justify-between font-bold text-indigo-300">
+              <span>Tier 2: Free &amp; Server `.env` Engines</span>
+              <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-indigo-500/20">
+                2 Always Free{serverEnvCount > 0 ? ` • ${serverEnvCount} .env` : ''}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-1">
+              <code className="text-emerald-300 font-mono">gemini-free</code> (Gemini 3 Flash, default fallback) &amp;{' '}
+              <code className="text-emerald-300 font-mono">openrouter-free</code> (Llama 3.3 70B) work out-of-the-box.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-xl bg-amber-950/20 border border-amber-500/30">
+            <div className="flex items-center justify-between font-bold text-amber-300">
+              <span>Paid BYOK Gate (No Longer Free)</span>
+              <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-amber-500/20">
+                ChatGPT • Claude • Grok
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-1">
+              Requires <code className="text-amber-200 font-mono">OPENAI_API_KEY</code>,{' '}
+              <code className="text-amber-200 font-mono">ANTHROPIC_API_KEY</code>, or{' '}
+              <code className="text-amber-200 font-mono">XAI_API_KEY</code> in your Session BYOK Vault.
+            </p>
           </div>
         </div>
 
@@ -2136,12 +2368,12 @@ XAI_API_KEY=`;
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-800 text-[11px] font-mono text-slate-400">
-                <th className="py-2 pr-3">Engine ID</th>
+                <th className="py-2 pr-3">Engine ID &amp; Model</th>
                 <th className="py-2 px-3">Tier 1: Session BYOK Vault</th>
                 <th className="py-2 px-3">Tier 2: Server `.env` Key</th>
                 <th className="py-2 px-3">Availability &amp; Requirement</th>
                 <th className="py-2 px-3">Active Resolution Tier</th>
-                <th className="py-2 pl-3 text-right">Action</th>
+                <th className="py-2 pl-3 text-right">Probe &amp; Selection</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -2151,30 +2383,71 @@ XAI_API_KEY=`;
                 const engineId = isAlwaysAvailable
                   ? `${p.provider}-free`
                   : p.provider;
-                const isSelected =
+                const isDirectSelected =
                   selectedEngine === engineId ||
                   selectedEngine === `${p.provider}-free`;
+                const isAutoTarget =
+                  selectedEngine === 'auto' && p.provider === 'gemini';
+                const isSelected = isDirectSelected || isAutoTarget;
                 const hasByokKey = p.source === 'vault';
                 const hasServerEnvKey = isAlwaysAvailable && p.source === 'env';
                 const isReady = isAlwaysAvailable || hasByokKey;
+                const isProbing = testingProviderId === p.provider;
+                const verifyMsg =
+                  p.lastVerificationMessage || p.lastVerifyMessage || null;
+                const verifyOk =
+                  p.lastVerificationOk !== null && p.lastVerificationOk !== undefined
+                    ? p.lastVerificationOk
+                    : p.lastVerifyStatus === 'verified'
+                      ? true
+                      : p.lastVerifyStatus === 'failed'
+                        ? false
+                        : null;
+
                 return (
-                  <tr key={p.provider} className="text-slate-200">
-                    <td className="py-2.5 pr-3">
-                      <div className="font-bold text-white">{p.label}</div>
+                  <tr key={p.provider} className="text-slate-200 align-top">
+                    <td className="py-3 pr-3">
+                      <div className="font-bold text-white flex items-center gap-1.5">
+                        <span>{p.label}</span>
+                        {p.provider === 'gemini' && (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[9px] uppercase">
+                            Default
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-slate-400">
                         {engineId} • {p.modelName}
                       </div>
+                      {verifyMsg && (
+                        <div
+                          className={`mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] ${
+                            verifyOk
+                              ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                              : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                          }`}
+                        >
+                          <span>{verifyOk ? '✓' : '⚠'}</span>
+                          <span>{verifyMsg}</span>
+                        </div>
+                      )}
                     </td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-3 px-3">
                       {hasByokKey ? (
-                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px]">
-                          ✓ {p.maskedPreview}
-                        </span>
+                        <div className="space-y-1">
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] inline-block">
+                            ✓ {p.maskedPreview}
+                          </span>
+                          {p.ttlSecondsRemaining ? (
+                            <div className="text-[10px] text-emerald-400/80">
+                              2h Sliding TTL: {Math.ceil(p.ttlSecondsRemaining / 60)}m left
+                            </div>
+                          ) : null}
+                        </div>
                       ) : (
                         <span className="text-slate-500 text-[11px]">Not set in session</span>
                       )}
                     </td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-3 px-3">
                       {!isAlwaysAvailable ? (
                         <span className="text-amber-300/80 text-[11px]">
                           BYOK Vault Only ({p.envVarName})
@@ -2184,10 +2457,12 @@ XAI_API_KEY=`;
                           ✓ {p.envVarName}
                         </span>
                       ) : (
-                        <span className="text-slate-500 text-[11px]">Unset ({p.envVarName})</span>
+                        <span className="text-indigo-300/90 text-[11px]">
+                          Built-In Free ({p.envVarName} optional)
+                        </span>
                       )}
                     </td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-3 px-3">
                       {isAlwaysAvailable ? (
                         <span className="px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 text-[10px]">
                           {p.provider === 'gemini'
@@ -2204,7 +2479,7 @@ XAI_API_KEY=`;
                         </span>
                       )}
                     </td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-3 px-3">
                       <span
                         className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                           hasByokKey
@@ -2225,24 +2500,39 @@ XAI_API_KEY=`;
                               : 'NO LONGER FREE • KEY REQUIRED (BYOK VAULT)'}
                       </span>
                     </td>
-                    <td className="py-2.5 pl-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => onSelectEngine(engineId)}
-                        className={`px-2.5 py-1 rounded text-[11px] font-bold ${
-                          isSelected
-                            ? 'bg-indigo-600 text-white'
-                            : isReady
-                              ? 'bg-slate-800 hover:bg-slate-700 text-slate-300'
-                              : 'bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200'
-                        }`}
-                      >
-                        {isSelected
-                          ? '✓ Active Engine'
-                          : isReady
-                            ? 'Select Engine'
-                            : '🔑 Requires Key (Open BYOK Vault)'}
-                      </button>
+                    <td className="py-3 pl-3 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isProbing}
+                          onClick={() => handleProbeEngineConnection(p.provider)}
+                          className="px-2 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 text-[10px] font-mono inline-flex items-center gap-1"
+                        >
+                          <RefreshCw
+                            className={`w-3 h-3 ${isProbing ? 'animate-spin' : ''}`}
+                          />
+                          <span>{isProbing ? 'Probing...' : 'Verify Probe'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onSelectEngine(engineId)}
+                          className={`px-2.5 py-1 rounded text-[11px] font-bold ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white'
+                              : isReady
+                                ? 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                                : 'bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200'
+                          }`}
+                        >
+                          {isAutoTarget
+                            ? '✓ Active (Auto Default)'
+                            : isDirectSelected
+                              ? '✓ Active Engine'
+                              : isReady
+                                ? 'Select Engine'
+                                : '🔑 Requires Key (Open BYOK Vault)'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -2264,14 +2554,44 @@ XAI_API_KEY=`;
               </span>
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              Streams real-time server events, worker queue heartbeats, and security denials written to `{logFilePath}`.
+              Streams tenant-isolated server telemetry, AI provider probes, secret-redaction checks, and RBAC security denials written to{' '}
+              <code className="text-slate-300">{logFilePath}</code>.
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={fetchServerLogs}
+              onClick={handleEmitRedactionProbe}
+              disabled={emittingProbe}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-mono"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>
+                {emittingProbe ? 'Emitting...' : '+ Emit Redaction Probe'}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setExpandAllLogs((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-mono"
+            >
+              <span>
+                {expandAllLogs ? 'Collapse Payloads' : 'Expand All Payloads'}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportLogsJsonl}
+              disabled={filteredLogs.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-mono disabled:opacity-40"
+            >
+              <Download className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Export JSONL</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void fetchServerLogs(true)}
               disabled={loadingLogs}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-mono"
             >
@@ -2289,6 +2609,32 @@ XAI_API_KEY=`;
           </div>
         </div>
 
+        {/* Zero-Trust RBAC Guard Banner when Developer or Viewer views Log Explorer */}
+        {logsForbiddenReason && (
+          <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="space-y-1">
+              <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                <Lock className="w-4 h-4" />
+                <span>
+                  Zero-Trust RBAC `audit.view` Guard Enforced for Role `{activeActorRole.toUpperCase()}`
+                </span>
+              </div>
+              <p className="text-slate-300">
+                {logsForbiddenReason} Switch the top-right persona selector to{' '}
+                <strong className="text-white">Owner</strong> or{' '}
+                <strong className="text-white">Admin</strong> to inspect live server logs, or click the button to record a live HTTP 403 denial in the Security Audit Ledger.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void fetchServerLogs(true)}
+              className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 font-mono font-bold text-xs"
+            >
+              Test Live 403 `audit.view`
+            </button>
+          </div>
+        )}
+
         {/* Log Filter Controls */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex rounded-lg bg-slate-950 p-1 border border-slate-800 text-xs font-mono">
@@ -2303,7 +2649,7 @@ XAI_API_KEY=`;
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {lvl}
+                {lvl} ({levelCounts[lvl]})
               </button>
             ))}
           </div>
@@ -2314,47 +2660,82 @@ XAI_API_KEY=`;
               type="text"
               value={logSearch}
               onChange={(e) => setLogSearch(e.target.value)}
-              placeholder="Search log event or payload..."
+              placeholder="Search component, event, or payload..."
               className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 font-mono"
             />
           </div>
         </div>
 
-        <div className="rounded-xl bg-slate-950 border border-slate-800 p-3 max-h-96 overflow-y-auto space-y-1.5 font-mono text-xs">
+        <div className="rounded-xl bg-slate-950 border border-slate-800 p-3 max-h-96 overflow-y-auto space-y-2 font-mono text-xs">
           {filteredLogs.length === 0 ? (
             <div className="py-6 text-center text-slate-500">
-              No structured runtime log entries match the active filter.
+              {logsForbiddenReason
+                ? `Runtime logs hidden for role "${activeActorRole.toUpperCase()}" (requires audit.view permission).`
+                : 'No structured runtime log entries match the active filter.'}
             </div>
           ) : (
-            filteredLogs.map((entry, idx) => (
-              <div
-                key={`${entry.timestamp}-${idx}`}
-                className="p-2 rounded bg-slate-900/80 border border-slate-800/80 flex flex-wrap items-start justify-between gap-2"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-slate-500">
-                    {new Date(entry.timestamp).toLocaleTimeString()}
-                  </span>
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold ${
-                      entry.level === 'error'
-                        ? 'bg-rose-500/20 text-rose-300'
-                        : entry.level === 'warn'
-                          ? 'bg-amber-500/20 text-amber-300'
-                          : 'bg-emerald-500/15 text-emerald-300'
-                    }`}
-                  >
-                    {entry.level}
-                  </span>
-                  <span className="font-bold text-white">{entry.event}</span>
+            filteredLogs.map((entry, idx) => {
+              const rowKey = entry.id || `${entry.timestamp}-${idx}`;
+              const hasContext =
+                entry.context && Object.keys(entry.context).length > 0;
+              const isExpanded =
+                expandAllLogs || Boolean(expandedLogKeys[rowKey]);
+
+              return (
+                <div
+                  key={rowKey}
+                  className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800/80 space-y-2"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] text-slate-500">
+                        {new Date(entry.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold ${
+                          entry.level === 'error'
+                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            : entry.level === 'warn'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                        }`}
+                      >
+                        {entry.level}
+                      </span>
+                      {entry.component && (
+                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-[10px]">
+                          [{entry.component}]
+                        </span>
+                      )}
+                      <span className="font-bold text-white">
+                        {entry.message || entry.event}
+                      </span>
+                    </div>
+
+                    {hasContext && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedLogKeys((prev) => ({
+                            ...prev,
+                            [rowKey]: !prev[rowKey],
+                          }))
+                        }
+                        className="px-2 py-0.5 rounded bg-slate-950 hover:bg-slate-800 border border-slate-700 text-[10px] text-slate-300"
+                      >
+                        {isExpanded ? 'Hide Context ▴' : 'Context JSON ▾'}
+                      </button>
+                    )}
+                  </div>
+
+                  {hasContext && isExpanded && (
+                    <pre className="p-2.5 rounded bg-slate-950 border border-slate-800 text-[11px] text-emerald-300 overflow-x-auto whitespace-pre-wrap">
+                      {JSON.stringify(entry.context, null, 2)}
+                    </pre>
+                  )}
                 </div>
-                {entry.context && Object.keys(entry.context).length > 0 && (
-                  <code className="text-[11px] text-slate-400 break-all">
-                    {JSON.stringify(entry.context)}
-                  </code>
-                )}
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -2366,10 +2747,10 @@ XAI_API_KEY=`;
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
                 <h3 className="text-sm font-bold text-white">
-                  Local `.env` Template & `pnpm` CLI Quickstart
+                  Local `.env` Template &amp; `pnpm` CLI Quickstart
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Zero cloud keys required to boot — PGlite and deterministic simulation work out-of-the-box.
+                  Zero cloud keys required to boot — PGlite and `gemini-free` work out-of-the-box.
                 </p>
               </div>
               <button
