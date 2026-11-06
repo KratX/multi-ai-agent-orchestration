@@ -551,7 +551,13 @@ export function resolveEffectiveEnvWithByok(
   options?: { nowMs?: number; slideTtl?: boolean }
 ): AppEnv {
   const scopedRecords = getActiveScopeRecords(scopeKey, options);
-  const resolved: AppEnv = { ...env };
+  // Paid BYOK engines (ChatGPT, Claude, Grok) are no longer free and must strictly require a Session BYOK Vault key
+  const resolved: AppEnv = {
+    ...env,
+    OPENAI_API_KEY: '',
+    ANTHROPIC_API_KEY: '',
+    XAI_API_KEY: '',
+  };
 
   const geminiRec = scopedRecords.gemini;
   if (geminiRec) {
@@ -602,11 +608,13 @@ export function listByokProviderStatuses(
     return Boolean(v && v !== 'replace-me' && v !== 'MY_GEMINI_API_KEY');
   };
 
+  // Only gemini-free and openrouter-free use server .env keys.
+  // ChatGPT, Claude, and Grok are no longer free and strictly require a Session BYOK Vault key.
   const envMap: Record<ByokProviderId, string | undefined> = {
     gemini: env.GEMINI_API_KEY || env.AI_PROVIDER_API_KEY,
-    chatgpt: env.OPENAI_API_KEY,
-    claude: env.ANTHROPIC_API_KEY,
-    grok: env.XAI_API_KEY,
+    chatgpt: undefined,
+    claude: undefined,
+    grok: undefined,
     openrouter: env.OPENROUTER_API_KEY,
   };
 

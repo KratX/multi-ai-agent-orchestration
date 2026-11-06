@@ -484,27 +484,33 @@ export function App() {
     async (url: string, init?: RequestInit): Promise<Response> => {
       const headers = new Headers(init?.headers ?? {});
       const targetPersona = headers.get('x-actor-id') || activeActorId;
+      const hadCustomAuth = headers.has('authorization');
 
-      if (!headers.has('authorization') && url !== '/api/v1/auth/token') {
-        let jwt = tokenCacheRef.current[targetPersona];
-        if (!jwt) {
-          try {
-            const tokRes = await fetch('/api/v1/auth/token', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ personaId: targetPersona }),
-            });
-            if (tokRes.ok) {
-              const tokJson = await tokRes.json();
-              const issued = tokJson?.data?.token;
-              if (typeof issued === 'string' && issued.length > 0) {
-                jwt = issued;
-                tokenCacheRef.current[targetPersona] = issued;
-              }
+      const mintPersonaToken = async (): Promise<string | undefined> => {
+        try {
+          const tokRes = await fetch('/api/v1/auth/token', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ personaId: targetPersona }),
+          });
+          if (tokRes.ok) {
+            const tokJson = await tokRes.json();
+            const issued = tokJson?.data?.token;
+            if (typeof issued === 'string' && issued.length > 0) {
+              tokenCacheRef.current[targetPersona] = issued;
+              return issued;
             }
-          } catch {
-            // Fall back to explicit header in non-production demo mode if token endpoint is unreachable
           }
+        } catch {
+          // Fall back to explicit header in non-production demo mode if token endpoint is unreachable
+        }
+        return undefined;
+      };
+
+      if (!hadCustomAuth && url !== '/api/v1/auth/token') {
+        let jwt: string | undefined = tokenCacheRef.current[targetPersona];
+        if (!jwt) {
+          jwt = await mintPersonaToken();
         }
         if (jwt) {
           headers.set('authorization', `Bearer ${jwt}`);
@@ -521,10 +527,31 @@ export function App() {
         headers.set('content-type', 'application/json');
       }
       headers.set('x-ordaris-demo-session', sessionId);
-      return fetch(url, {
+
+      const firstRes = await fetch(url, {
         ...init,
         headers,
       });
+
+      // If a sandbox reset rotated tenant/user UUIDs, evict cached JWT and retry once with a freshly minted token
+      if (
+        firstRes.status === 401 &&
+        !hadCustomAuth &&
+        url !== '/api/v1/auth/token'
+      ) {
+        delete tokenCacheRef.current[targetPersona];
+        const refreshedJwt = await mintPersonaToken();
+        if (refreshedJwt) {
+          const retryHeaders = new Headers(headers);
+          retryHeaders.set('authorization', `Bearer ${refreshedJwt}`);
+          return fetch(url, {
+            ...init,
+            headers: retryHeaders,
+          });
+        }
+      }
+
+      return firstRes;
     },
     [activeActorId, sessionId]
   );
@@ -922,6 +949,27 @@ export function App() {
     setArenaComparisonResult(null);
 
     try {
+      // Auto-publish initial Snapshot v1 if the selected agent is still an unpublished draft (latestVersionNumber < 1)
+      if ((selectedAgent?.latestVersionNumber ?? 0) < 1 && activePersona.role !== 'viewer') {
+        const autoPubRes = await apiFetch(
+          `/api/v1/agents/${selectedAgentId}/publish`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+          }
+        );
+        if (!autoPubRes.ok) {
+          const autoPubBody = await autoPubRes.json().catch(() => ({}));
+          notify(
+            `Snapshot Publish Required (HTTP ${autoPubRes.status})`,
+            'error',
+            autoPubBody?.detail ||
+              'Failed to publish initial immutable Snapshot v1 before starting run.'
+          );
+          return;
+        }
+      }
+
       if (!arenaMode) {
         const payload: Record<string, unknown> = {
           inputPrompt: promptInput.trim(),
@@ -1100,18 +1148,32 @@ export function App() {
         );
         return;
       }
+      const createdId = body.data?.id as string | undefined;
+      let publishedVer = 1;
+      if (createdId) {
+        // Automatically publish initial immutable Snapshot v1 so the new agent can execute runs & Arena immediately
+        const pubRes = await apiFetch(`/api/v1/agents/${createdId}/publish`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+        });
+        if (pubRes.ok) {
+          const pubBody = await pubRes.json().catch(() => ({}));
+          publishedVer = Number(pubBody?.data?.versionNumber ?? 1);
+        }
+      }
+
       notify(
-        `Created Governed Agent Draft "${body.data?.name}"`,
+        `Created & Published Governed Agent "${body.data?.name}" (Snapshot v${publishedVer})`,
         'success',
-        `Slug: ${body.data?.slug} • Tenant: ${activePersona.orgName} • Allowlist: ${newAgentTools.length > 0 ? newAgentTools.join(', ') : 'none'}`
+        `Slug: ${body.data?.slug} • Tenant: ${activePersona.orgName} • Allowlist: ${newAgentTools.length > 0 ? newAgentTools.join(', ') : 'none'} • Pinned Snapshot v${publishedVer} ready for runs.`
       );
       setShowCreateAgentModal(false);
       setNewAgentName('');
       setNewAgentSlug('');
       setNewAgentTools(['calculator', 'knowledge_search']);
       await fetchWorkspace();
-      if (body.data?.id) {
-        setSelectedAgentId(body.data.id);
+      if (createdId) {
+        setSelectedAgentId(createdId);
       }
     } finally {
       setCreatingAgent(false);
@@ -1234,6 +1296,11 @@ export function App() {
         : [];
       if (nextByokProviders.length > 0) {
         setByokProviders(nextByokProviders);
+      }
+
+      // Clear cached persona JWTs whenever the database is re-seeded so new tenant/user UUIDs are minted cleanly
+      if (mode === 'factory_reset' || mode === 'workspace_only') {
+        tokenCacheRef.current = {};
       }
 
       // Sync engine selection and UI state according to reset mode
@@ -2030,7 +2097,10 @@ export function App() {
                 >
                   {agents.map((ag) => (
                     <option key={ag.id} value={ag.id}>
-                      {ag.name} ({ag.slug}) — Snapshot v{ag.latestVersionNumber ?? 1}
+                      {ag.name} ({ag.slug}) —{' '}
+                      {(ag.latestVersionNumber ?? 0) > 0
+                        ? `Snapshot v${ag.latestVersionNumber}`
+                        : 'Draft (Auto-pins v1 on Run)'}
                     </option>
                   ))}
                 </select>
@@ -2039,7 +2109,12 @@ export function App() {
                   <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800/90 space-y-3 text-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-slate-300">
                       <span>
-                        Pinned Versions: <strong>{selectedAgentVersions.length || 1}</strong>
+                        Pinned Versions:{' '}
+                        <strong>
+                          {selectedAgentVersions.length ||
+                            selectedAgent.latestVersionNumber ||
+                            0}
+                        </strong>
                       </span>
                       <span className="text-emerald-400 font-semibold">
                         Allowlist:{' '}

@@ -1556,8 +1556,8 @@ XAI_API_KEY=`;
                   selectedEngine === engineId ||
                   selectedEngine === `${p.provider}-free`;
                 const hasByokKey = p.source === 'vault';
-                const hasServerEnvKey = p.source === 'env';
-                const isReady = isAlwaysAvailable || hasByokKey || hasServerEnvKey;
+                const hasServerEnvKey = isAlwaysAvailable && p.source === 'env';
+                const isReady = isAlwaysAvailable || hasByokKey;
                 return (
                   <tr key={p.provider} className="text-slate-200">
                     <td className="py-2.5 pr-3">
@@ -1576,7 +1576,11 @@ XAI_API_KEY=`;
                       )}
                     </td>
                     <td className="py-2.5 px-3">
-                      {hasServerEnvKey ? (
+                      {!isAlwaysAvailable ? (
+                        <span className="text-amber-300/80 text-[11px]">
+                          BYOK Vault Only ({p.envVarName})
+                        </span>
+                      ) : hasServerEnvKey ? (
                         <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px]">
                           ✓ {p.envVarName}
                         </span>
@@ -1593,11 +1597,11 @@ XAI_API_KEY=`;
                         </span>
                       ) : isReady ? (
                         <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[10px]">
-                          ✓ Key Configured (Fallback: gemini-free)
+                          ✓ Key Configured in BYOK Vault (Fallback: gemini-free)
                         </span>
                       ) : (
                         <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[10px]">
-                          No Longer Free — Requires {p.envVarName} to Use
+                          No Longer Free — Requires {p.envVarName} in BYOK Vault
                         </span>
                       )}
                     </td>

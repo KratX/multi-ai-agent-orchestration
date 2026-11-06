@@ -252,6 +252,29 @@ async function resolveActorFromRequest(
   db: OrdarisDatabase,
   env: AppEnv
 ): Promise<AuthenticatedActor | null> {
+  const resolveVerifiedClaimsActor = async (claims: {
+    sub: string;
+    org: string;
+    personaId?: string;
+  }): Promise<AuthenticatedActor | null> => {
+    const byUuid = await resolveActorContext(db, claims.sub, claims.org);
+    if (byUuid) {
+      return byUuid;
+    }
+    // If a demo sandbox reset rotated the demo user/organization UUIDs, re-resolve the verified demo persona
+    if (isPublicDemoModeAllowed(env)) {
+      const personaAlias =
+        claims.personaId ||
+        req.header('x-actor-id')?.trim() ||
+        req.header('x-demo-actor')?.trim() ||
+        '';
+      if (personaAlias && personaAlias !== 'anonymous') {
+        return resolvePersonaActor(db, personaAlias as DemoPersonaId);
+      }
+    }
+    return null;
+  };
+
   // 1. Explicit Cryptographic Token Header (`Authorization: Bearer <jwt>` or `x-ordaris-auth-token: <jwt>`)
   const extracted = extractTokenFromRequest(req);
   if (
@@ -265,7 +288,7 @@ async function resolveActorFromRequest(
     if (!claims) {
       return null;
     }
-    const resolved = await resolveActorContext(db, claims.sub, claims.org);
+    const resolved = await resolveVerifiedClaimsActor(claims);
     (
       req as Request & {
         resolvedActor?: AuthenticatedActor | null;
@@ -286,7 +309,7 @@ async function resolveActorFromRequest(
     if (!claims) {
       return null;
     }
-    const resolved = await resolveActorContext(db, claims.sub, claims.org);
+    const resolved = await resolveVerifiedClaimsActor(claims);
     (
       req as Request & {
         resolvedActor?: AuthenticatedActor | null;

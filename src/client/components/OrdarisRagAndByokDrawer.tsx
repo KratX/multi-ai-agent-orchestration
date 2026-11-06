@@ -154,11 +154,9 @@ export function isEngineKeyConfigured(
   if (!req) {
     return true;
   }
+  // ChatGPT, Claude, and Grok are no longer free and strictly require a Session BYOK Vault key (`source === 'vault'`)
   const found = providers.find((p) => p.provider === req.provider);
-  return Boolean(
-    found &&
-      (found.configured || found.source === 'vault' || found.source === 'env')
-  );
+  return Boolean(found && found.source === 'vault');
 }
 
 interface SessionByokVaultDrawerProps {
@@ -524,7 +522,7 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
                           Tier 1: Session BYOK ({item.maskedPreview})
                         </span>
                       )}
-                      {item.source === 'env' && (
+                      {item.source === 'env' && isAlwaysAvailableProvider && (
                         <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30">
                           Tier 2: Server .env ({item.maskedPreview})
                         </span>
@@ -536,9 +534,9 @@ export const SessionByokVaultDrawer: React.FC<SessionByokVaultDrawerProps> = ({
                             : 'Free • Always Available (Fallback: gemini-free)'}
                         </span>
                       )}
-                      {item.source === 'none' && !isAlwaysAvailableProvider && (
+                      {item.source !== 'vault' && !isAlwaysAvailableProvider && (
                         <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                          No Longer Free — Requires {item.envVarName} to Use
+                          No Longer Free — Requires {item.envVarName} in BYOK Vault to Use
                         </span>
                       )}
                     </div>
