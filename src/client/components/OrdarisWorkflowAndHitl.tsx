@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   GitBranch,
   Play,
@@ -34,6 +34,8 @@ export interface ApprovalQueueItem {
   reason: string;
   status: 'pending' | 'approved' | 'rejected' | 'expired';
   decisionNote: string | null;
+  decidedByUserId?: string | null;
+  decidedAt?: string | null;
   createdAt: string;
 }
 
@@ -176,19 +178,35 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [batchApproving, setBatchApproving] = useState(false);
 
+  // Sync default trigger note and clear stale workflow run banner when switching tenants
+  useEffect(() => {
+    setLastWorkflowResult(null);
+    setSelectedWorkflowId(workflows[0]?.id || '');
+    setRiskPresetMode('high');
+    setCustomRiskExpr('25 * 6');
+    setWorkflowTriggerNote(
+      isLogistics
+        ? 'Approve express air shipping for Chilled Box #402 due to port delay.'
+        : 'Approve $1,500 server upgrade for the customer support team.'
+    );
+  }, [activeOrgSlug, isLogistics]);
+
   const activeWorkflow =
     workflows.find((w) => w.id === selectedWorkflowId) || workflows[0] || null;
   const inspectedNode =
     STANDARD_6_NODE_DAG.find((n) => n.id === selectedNodeId) || STANDARD_6_NODE_DAG[3];
 
-  const pendingApprovals = approvals.filter((a) => a.status === 'pending');
-  const resolvedApprovals = approvals.filter((a) => a.status !== 'pending');
+  const sortedApprovals = [...approvals].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  const pendingApprovals = sortedApprovals.filter((a) => a.status === 'pending');
+  const resolvedApprovals = sortedApprovals.filter((a) => a.status !== 'pending');
   const visibleApprovals =
     approvalFilter === 'pending'
       ? pendingApprovals
       : approvalFilter === 'resolved'
         ? resolvedApprovals
-        : approvals;
+        : [...pendingApprovals, ...resolvedApprovals];
 
   const canExecuteWorkflow = activeActorRole !== 'viewer';
   const canDecideApproval = activeActorRole === 'owner' || activeActorRole === 'admin';
@@ -223,6 +241,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
     try {
       const res = await apiFetch(`/api/v1/workflows/${targetWorkflowId}/execute`, {
         method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           engine: selectedEngine,
           riskOverrideExpression: customRiskExpr.trim() || '25 * 6',
@@ -234,7 +253,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
         onNotify(
           `RBAC / Execution Rejected (HTTP ${res.status}): ${json?.error?.message || json?.detail || 'Permission denied'}`,
           'error',
-          `Active Role: ${activeActorRole.toUpperCase()} • Required Permission: workflows:execute • Logged to Security Audit Ledger.`
+          `Active Role: ${activeActorRole.toUpperCase()} • Required Permission: run.start • Logged to Security Audit Ledger.`
         );
         await onWorkspaceRefresh();
         return;
@@ -246,7 +265,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
         status: data.status,
         runId: data.runId,
         riskScoreLabel: customRiskExpr.trim() || '25 * 6',
-        pausedAtNodeId: data.pausedAtNodeId ?? (isWaiting ? 'approval-high-risk' : null),
+        pausedAtNodeId: isWaiting ? 'approval-high-risk' : null,
         approvalRequestId: data.approvalRequestId ?? null,
         completedNodes: isWaiting
           ? ['input-sanitize', 'calc-risk', 'branch-risk']
@@ -307,6 +326,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
 
       const res = await apiFetch('/api/v1/workflows/validate-dag', {
         method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ nodes: nodesPayload }),
       });
       const json = await res.json();
@@ -357,6 +377,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
   ) => {
     setDecidingId(approvalId);
     try {
+      const targetApproval = approvals.find((a) => a.id === approvalId);
       const defaultNote =
         decision === 'approved'
           ? `Approved by ${activeActorRole.toUpperCase()} after verifying containment blast radius and SOP compliance.`
@@ -365,21 +386,62 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
 
       const res = await apiFetch(`/api/v1/approvals/${approvalId}/decision`, {
         method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           decision,
           note,
           engine: selectedEngine,
         }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
+        const errDetail =
+          json?.detail ||
+          json?.error?.message ||
+          `Role "${activeActorRole.toUpperCase()}" lacks permission "approval.decide" (Owner or Admin required).`;
         onNotify(
-          `RBAC Guardrail Blocked HITL Decision (HTTP ${res.status})`,
+          res.status === 403
+            ? `RBAC Guardrail Blocked HITL Decision (HTTP 403)`
+            : `HITL Decision Failed (HTTP ${res.status})`,
           'error',
-          `Role "${activeActorRole.toUpperCase()}" lacks permission "workflow.approve" (Owner or Admin required). Logged to Audit Ledger.`
+          `${errDetail} • Active Role: ${activeActorRole.toUpperCase()} • Logged to Security Audit Ledger.`
         );
         await onWorkspaceRefresh();
         return;
+      }
+
+      const decidedRunId =
+        json?.data?.run?.id ||
+        targetApproval?.runId ||
+        lastWorkflowResult?.runId ||
+        '';
+      setDecisionNotes((prev) => {
+        const next = { ...prev };
+        delete next[approvalId];
+        return next;
+      });
+
+      setLastWorkflowResult((prev) => ({
+        status: decision === 'approved' ? 'succeeded' : 'cancelled',
+        runId: decidedRunId,
+        riskScoreLabel: prev?.riskScoreLabel || customRiskExpr.trim() || '25 * 6',
+        pausedAtNodeId: null,
+        approvalRequestId: approvalId,
+        completedNodes:
+          decision === 'approved'
+            ? [
+                'input-sanitize',
+                'calc-risk',
+                'branch-risk',
+                'approval-high-risk',
+                'agent-summary',
+                'notify-audit',
+              ]
+            : ['input-sanitize', 'calc-risk', 'branch-risk'],
+      }));
+
+      if (decision === 'approved') {
+        setSelectedNodeId('notify-audit');
       }
 
       onNotify(
@@ -387,7 +449,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
           ? 'HITL Approval Granted — Resumed & Completed Remaining DAG Nodes'
           : 'HITL Approval Rejected — Workflow Run Terminated Safely',
         decision === 'approved' ? 'success' : 'info',
-        `Signed by ${activeActorRole.toUpperCase()} • Note: "${note.slice(0, 90)}"`
+        `Signed by ${activeActorRole.toUpperCase()} • Run ${String(decidedRunId).slice(0, 8)} ➔ ${decision === 'approved' ? 'SUCCEEDED' : 'CANCELLED'} • Note: "${note.slice(0, 90)}"`
       );
       await onWorkspaceRefresh();
     } catch (err) {
@@ -405,27 +467,50 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
     setBatchApproving(true);
     try {
       let approvedCount = 0;
+      let lastApprovedRunId = '';
       for (const item of pendingApprovals) {
+        const noteText =
+          (decisionNotes[item.id] || '').trim() ||
+          `Batch HITL sign-off by ${activeActorRole.toUpperCase()} in Ordaris Governance Queue.`;
         const res = await apiFetch(`/api/v1/approvals/${item.id}/decision`, {
           method: 'POST',
+          headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             decision: 'approved',
-            note: `Batch HITL sign-off by ${activeActorRole.toUpperCase()} in Ordaris Governance Queue.`,
+            note: noteText,
             engine: selectedEngine,
           }),
         });
         if (!res.ok) {
-          const json = await res.json();
+          const json = await res.json().catch(() => ({}));
           onNotify(
             `Batch Approval Halted (HTTP ${res.status})`,
             'error',
-            `Role "${activeActorRole.toUpperCase()}" is not authorized for workflow.approve (${json?.error?.message || json?.detail || 'Forbidden'}).`
+            `Role "${activeActorRole.toUpperCase()}" is not authorized for approval.decide (${json?.detail || json?.error?.message || 'Forbidden'}).`
           );
           await onWorkspaceRefresh();
           return;
         }
+        lastApprovedRunId = item.runId;
         approvedCount += 1;
       }
+      setDecisionNotes({});
+      setLastWorkflowResult((prev) => ({
+        status: 'succeeded',
+        runId: prev?.runId || lastApprovedRunId,
+        riskScoreLabel: prev?.riskScoreLabel || customRiskExpr.trim() || '25 * 6',
+        pausedAtNodeId: null,
+        approvalRequestId: null,
+        completedNodes: [
+          'input-sanitize',
+          'calc-risk',
+          'branch-risk',
+          'approval-high-risk',
+          'agent-summary',
+          'notify-audit',
+        ],
+      }));
+      setSelectedNodeId('notify-audit');
       onNotify(
         `Batch Approved ${approvedCount} Pending HITL Request(s)`,
         'success',
@@ -437,12 +522,29 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
     }
   };
 
+  const isApprovalGateNodeId = (id?: string | null): boolean =>
+    id === 'approval-high-risk' || id === 'approval-gate-1';
+
   const getNodeVisualStatus = (nodeId: string): 'completed' | 'waiting' | 'pending' | 'bypassed' => {
     if (!lastWorkflowResult) {
-      if (pendingApprovals.some((a) => a.nodeId === nodeId)) return 'waiting';
+      if (pendingApprovals.length > 0) {
+        if (nodeId === 'approval-high-risk') return 'waiting';
+        if (
+          nodeId === 'input-sanitize' ||
+          nodeId === 'calc-risk' ||
+          nodeId === 'branch-risk'
+        ) {
+          return 'completed';
+        }
+        return 'pending';
+      }
       return 'completed';
     }
-    if (lastWorkflowResult.pausedAtNodeId === nodeId) {
+    if (
+      lastWorkflowResult.pausedAtNodeId === nodeId ||
+      (nodeId === 'approval-high-risk' &&
+        isApprovalGateNodeId(lastWorkflowResult.pausedAtNodeId))
+    ) {
       return 'waiting';
     }
     if (lastWorkflowResult.completedNodes.includes(nodeId)) {
@@ -960,7 +1062,7 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
         </div>
 
         {visibleApprovals.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/50 p-8 text-center space-y-2">
+          <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/50 p-8 text-center space-y-3">
             <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
             <div className="text-sm font-semibold text-white">
               {approvalFilter === 'pending'
@@ -970,12 +1072,27 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
             <p className="text-xs text-slate-400 max-w-md mx-auto">
               Click <strong>"Preset A: High-Risk Action (Risk = 150)"</strong> and run the workflow above to trigger a live `waiting_approval` checkpoint.
             </p>
+            {approvalFilter === 'pending' && resolvedApprovals.length > 0 && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setApprovalFilter('resolved')}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-mono text-emerald-300 transition-all"
+                >
+                  View Resolved Decisions ({resolvedApprovals.length}) ➔
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">
             {visibleApprovals.map((item) => {
               const isPending = item.status === 'pending';
               const isDecidingThis = decidingId === item.id;
+              const displayNodeId =
+                item.nodeId === 'approval-gate-1'
+                  ? 'approval-high-risk (approval-gate-1)'
+                  : item.nodeId;
 
               return (
                 <div
@@ -1000,11 +1117,23 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
                         >
                           {item.status}
                         </span>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                          CRITICAL RISK &gt;= 100 • HITL GATE
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono border ${
+                            item.status === 'approved'
+                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              : item.status === 'rejected'
+                                ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                                : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                          }`}
+                        >
+                          {item.status === 'approved'
+                            ? 'APPROVED • DAG RESUMED'
+                            : item.status === 'rejected'
+                              ? 'REJECTED • RUN TERMINATED'
+                              : 'CRITICAL RISK >= 100 • HITL GATE'}
                         </span>
                         <span className="text-xs font-mono text-slate-400">
-                          Node: <strong className="text-indigo-300">{item.nodeId}</strong>
+                          Node: <strong className="text-indigo-300">{displayNodeId}</strong>
                         </span>
                         <span className="text-xs font-mono text-slate-500">
                           Run: {item.runId.slice(0, 12)}...
@@ -1013,9 +1142,24 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
                       <h4 className="text-sm font-bold text-white">{item.title}</h4>
                     </div>
 
-                    <div className="text-[11px] font-mono text-slate-400 flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-slate-500" />
-                      <span>{new Date(item.createdAt).toLocaleString()}</span>
+                    <div className="flex items-center gap-3">
+                      {isPending && onSelectRunToInspect && (
+                        <button
+                          type="button"
+                          onClick={() => onSelectRunToInspect(item.runId)}
+                          className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-mono text-indigo-300"
+                        >
+                          Inspect Run Trace ➔
+                        </button>
+                      )}
+                      <div className="text-[11px] font-mono text-slate-400 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-slate-500" />
+                        <span>
+                          {new Date(
+                            (!isPending && item.decidedAt) || item.createdAt
+                          ).toLocaleString()}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -1083,11 +1227,11 @@ export const OrdarisWorkflowAndHitl: React.FC<OrdarisWorkflowAndHitlProps> = ({
                           <Info className="w-3.5 h-3.5 text-indigo-400" />
                           {canDecideApproval ? (
                             <span>
-                              Your role (<strong className="text-emerald-300">{activeActorRole}</strong>) is authorized to sign off `approvals:decide`.
+                              Your role (<strong className="text-emerald-300">{activeActorRole}</strong>) is authorized to sign off `approval.decide`.
                             </span>
                           ) : (
                             <span>
-                              Your role (<strong className="text-amber-300">{activeActorRole}</strong>) lacks `approvals:decide` — click below to test live <strong className="text-rose-300">403 RBAC rejection</strong>.
+                              Your role (<strong className="text-amber-300">{activeActorRole}</strong>) lacks `approval.decide` — click below to test live <strong className="text-rose-300">403 RBAC rejection</strong>.
                             </span>
                           )}
                         </div>

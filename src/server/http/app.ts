@@ -23,6 +23,7 @@ import {
   type OrdarisDatabase,
 } from '../db/client';
 import {
+  authorize,
   AuthorizationError,
   requireAuthorization,
   type AuthenticatedActor,
@@ -1359,6 +1360,28 @@ export function createApiApp(deps: ApiAppDependencies = {}): Express {
       }
       const body = startWorkflowRunBodySchema.parse(req.body ?? {});
       const workflowId = String(req.params.id);
+
+      const startAuth = authorize(actor, 'run.start', {
+        organizationId: actor.organizationId,
+        resourceType: 'workflow',
+        resourceId: workflowId,
+      });
+      if (!startAuth.allowed) {
+        await recordAuditEvent(db, {
+          organizationId: actor.organizationId,
+          actorUserId: actor.userId,
+          actorRole: actor.role,
+          action: 'run.start',
+          resourceType: 'workflow',
+          resourceId: workflowId,
+          outcome: 'denied',
+          metadata: {
+            reason: startAuth.reason,
+            riskOverrideExpression: body.riskOverrideExpression ?? null,
+          },
+        });
+        throw new AuthorizationError(startAuth);
+      }
 
       let workflowVersionId = body.workflowVersionId;
 

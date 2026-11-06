@@ -242,10 +242,10 @@ export async function ensureWorkspaceSeededWithPendingHitl(
   );
   const pending = existingApprovals.find((a) => a.status === 'pending');
 
-  if (pending) {
+  if (pending || (!options?.forceReset && existingApprovals.length > 0)) {
     return {
       seedReport,
-      pendingApprovalId: pending.id,
+      pendingApprovalId: pending?.id ?? null,
       clearedByokKeysCount,
       resetMode,
     };

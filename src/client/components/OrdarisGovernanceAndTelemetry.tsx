@@ -268,6 +268,7 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
     try {
       const res = await apiFetch(`/api/v1/evals/suites/${suiteId}/run`, {
         method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ engine: evalEngine }),
       });
       const json = await res.json();
@@ -309,7 +310,9 @@ export const OrdarisGovernanceAndFinopsPanel: React.FC<OrdarisGovernanceAndFinop
         displayName: (nameOverride ?? newMemberName).trim(),
         role: roleOverride ?? newMemberRole,
       };
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+      };
       if (personaOverride) {
         headers['x-actor-id'] = personaOverride;
         headers['x-demo-actor'] = personaOverride;

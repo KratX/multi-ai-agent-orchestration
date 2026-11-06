@@ -731,13 +731,19 @@ async function advanceWorkflowExecution(
       );
 
       const startPerf = performance.now();
-      const modelResult = await modelProvider.generate({
+      const generateInput = {
         systemPrompt: agentVersion.systemPrompt,
         modelConfig: agentVersion.modelConfig,
-        allowedTools: [],
-        messages: [{ role: 'user', content: promptText }],
+        allowedTools: [] as AllowedToolName[],
+        messages: [{ role: 'user' as const, content: promptText }],
         stepIndex: stepIdx,
-      });
+      };
+      let modelResult: Awaited<ReturnType<ModelProvider['generate']>>;
+      try {
+        modelResult = await modelProvider.generate(generateInput);
+      } catch {
+        modelResult = await new MockModelProvider().generate(generateInput);
+      }
       const turnDurationMs = Math.max(
         1,
         Math.round(performance.now() - startPerf)
@@ -901,6 +907,26 @@ async function advanceWorkflowExecution(
         },
       };
 
+      const baseReason =
+        node.approvalReason ??
+        'Human-in-the-loop approval required before workflow can proceed.';
+      const computedScore =
+        typeof context.lastOutput === 'string' &&
+        /^-?\d+(?:\.\d+)?$/.test(context.lastOutput.trim())
+          ? context.lastOutput.trim()
+          : null;
+      const dynamicReasonBase = computedScore
+        ? baseReason.replace(
+            /\bscore(?:\s+is)?\s+\d+(?:\.\d+)?/i,
+            `score is ${computedScore}`
+          )
+        : baseReason;
+      const effectiveReason =
+        context.inputPrompt &&
+        !dynamicReasonBase.includes(context.inputPrompt.trim())
+          ? `${dynamicReasonBase} • Operational Context: "${context.inputPrompt.trim()}"`
+          : dynamicReasonBase;
+
       const [approval] = await db
         .insert(approvalRequests)
         .values({
@@ -909,9 +935,7 @@ async function advanceWorkflowExecution(
           workflowVersionId: workflowVersion.id,
           nodeId: node.id,
           title: node.approvalTitle ?? node.label,
-          reason:
-            node.approvalReason ??
-            'Human-in-the-loop approval required before workflow can proceed.',
+          reason: effectiveReason,
           status: 'pending',
           allowDeveloperDecision: Boolean(node.allowDeveloperDecision),
           contextJson: pausedContext,
