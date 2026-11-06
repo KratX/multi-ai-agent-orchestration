@@ -2601,10 +2601,15 @@ XAI_API_KEY=`;
             <button
               type="button"
               onClick={handleClearLogs}
+              title="Requires Owner role (org.delete permission). Clicking as Admin/Developer/Viewer tests the live 403 RBAC guard."
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-mono"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Clear Logs</span>
+              <span>
+                {activeActorRole === 'owner'
+                  ? 'Clear Logs'
+                  : 'Clear Logs (Test 403 org.delete)'}
+              </span>
             </button>
           </div>
         </div>

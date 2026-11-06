@@ -800,7 +800,7 @@ export function registerDemoRoutes(app: Express, ctx: DemoRoutesContext): void {
         if (!actor) {
           throw unauthenticatedError();
         }
-        requireAuthorization(actor, 'audit.view', {
+        requireAuthorization(actor, 'org.delete', {
           organizationId: actor.organizationId,
           resourceType: 'runtime_logs',
         });
