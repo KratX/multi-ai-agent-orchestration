@@ -949,8 +949,34 @@ export function App() {
     setArenaComparisonResult(null);
 
     try {
-      // Auto-publish initial Snapshot v1 if the selected agent is still an unpublished draft (latestVersionNumber < 1)
-      if ((selectedAgent?.latestVersionNumber ?? 0) < 1 && activePersona.role !== 'viewer') {
+      const activeAgent =
+        agents.find((a) => a.id === selectedAgentId) ?? agents[0] ?? null;
+      const activeAgentVersions = agentVersions.filter(
+        (v) => v.agentId === activeAgent?.id
+      );
+      const latestPublishedSnap =
+        activeAgentVersions.length > 0
+          ? [...activeAgentVersions].sort(
+              (a, b) => b.versionNumber - a.versionNumber
+            )[0]
+          : null;
+      const draftTools = Array.isArray(activeAgent?.draftToolAllowlist)
+        ? [...activeAgent.draftToolAllowlist].sort()
+        : [];
+      const snapTools = Array.isArray(latestPublishedSnap?.toolAllowlist)
+        ? [...latestPublishedSnap.toolAllowlist].sort()
+        : [];
+      const allowlistOutOfSync =
+        latestPublishedSnap !== null &&
+        JSON.stringify(draftTools) !== JSON.stringify(snapTools);
+
+      // Auto-publish Snapshot if the selected agent is still an unpublished draft or its active snapshot toolAllowlist is out of sync with draftToolAllowlist
+      if (
+        ((activeAgent?.latestVersionNumber ?? 0) < 1 ||
+          activeAgentVersions.length === 0 ||
+          allowlistOutOfSync) &&
+        activePersona.role !== 'viewer'
+      ) {
         const autoPubRes = await apiFetch(
           `/api/v1/agents/${selectedAgentId}/publish`,
           {
@@ -964,7 +990,7 @@ export function App() {
             `Snapshot Publish Required (HTTP ${autoPubRes.status})`,
             'error',
             autoPubBody?.detail ||
-              'Failed to publish initial immutable Snapshot v1 before starting run.'
+              'Failed to publish immutable Snapshot before starting run.'
           );
           return;
         }

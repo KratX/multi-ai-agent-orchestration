@@ -517,6 +517,9 @@ export async function seedFlagshipWorkspace(
     candidateExperimentId: candidateExp.experiment.id,
   });
 
+  // Publish v3 with restored ['calculator', 'knowledge_search'] allowlist so active runs match the draft UI allowlist
+  await publishAgentVersion(db, acmeOwnerActor, acmeOrg.id, copilotDraft.id);
+
   const sampleEvalRunId = baselineExp.caseResults[0]!.resultRow.runId!;
 
   // ==========================================================================
@@ -684,6 +687,14 @@ export async function seedFlagshipWorkspace(
     suiteId: betaSuite.id,
     agentVersionId: betaAgentV2.id,
   });
+
+  // Publish v3 with restored ['calculator', 'knowledge_search'] allowlist for Beta Logistics primary agent
+  await publishAgentVersion(
+    db,
+    betaOwnerActor,
+    betaOrg.id,
+    betaCopilotDraft.id
+  );
 
   // 6. Verify SSE Replay Stream (Full vs Reconnect with Last-Event-ID: 2)
   const fullSse = await createRunEventsSseResponse(db, acmeOwnerActor, {

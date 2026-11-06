@@ -235,6 +235,28 @@ function parseStructuredModelJson(
     })
     .filter((tc) => !completedToolNames.has(tc.name));
 
+  // If the user prompt includes an explicit arithmetic expression and calculator is allowed + not yet run,
+  // ensure calculator is included when the live model only requested knowledge_search on a compound prompt
+  if (
+    input.allowedTools.includes('calculator') &&
+    !completedToolNames.has('calculator') &&
+    normalizedToolCalls.length > 0 &&
+    !normalizedToolCalls.some((tc) => tc.name === 'calculator')
+  ) {
+    const lastUserText =
+      [...input.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+    const mathMatch = lastUserText.match(
+      /(?:\(\s*\d+(?:\.\d+)?(?:\s*[+\-*/]\s*\d+(?:\.\d+)?)+\s*\)|(?:\d+(?:\.\d+)?\s*[+\-*/]\s*)+\d+(?:\.\d+)?)/
+    );
+    if (mathMatch?.[0]?.trim()) {
+      normalizedToolCalls.unshift({
+        id: `live_call_${stepIndex}_calc`,
+        name: 'calculator',
+        arguments: { expression: mathMatch[0].trim() },
+      });
+    }
+  }
+
   const retrievedChunks = extractRetrievedChunksFromMessages(input.messages);
   let { verifiedCitations } = verifyModelCitations(
     parsedPayload.citations ?? [],
@@ -257,6 +279,33 @@ function parseStructuredModelJson(
   const finishReason: 'tool_calls' | 'stop' =
     normalizedToolCalls.length > 0 ? 'tool_calls' : 'stop';
 
+  let finalAnswer: string | null =
+    finishReason === 'stop'
+      ? parsedPayload.answer || rawText.trim() || 'Completed.'
+      : null;
+
+  if (finishReason === 'stop' && finalAnswer) {
+    const calcMsg = [...input.messages]
+      .reverse()
+      .find((m) => m.role === 'tool' && m.toolName === 'calculator');
+    if (calcMsg?.content) {
+      try {
+        const parsedCalc = JSON.parse(calcMsg.content) as {
+          result?: number | string;
+          formattedResult?: string;
+        };
+        const calcValue =
+          parsedCalc.formattedResult ??
+          (parsedCalc.result !== undefined ? String(parsedCalc.result) : null);
+        if (calcValue && !finalAnswer.includes(calcValue)) {
+          finalAnswer = `Calculation result: ${calcValue}. ${finalAnswer}`;
+        }
+      } catch {
+        // Ignore non-JSON tool content
+      }
+    }
+  }
+
   return {
     finishReason,
     reasoningSummary:
@@ -267,10 +316,7 @@ function parseStructuredModelJson(
             .join(', ')}`
         : 'Live AI synthesized final grounded response.'),
     toolCalls: normalizedToolCalls,
-    answer:
-      finishReason === 'stop'
-        ? parsedPayload.answer || rawText.trim() || 'Completed.'
-        : null,
+    answer: finalAnswer,
     verifiedCitations,
   };
 }
